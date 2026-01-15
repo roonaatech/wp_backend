@@ -43,7 +43,7 @@ app.use((req, res, next) => {
 
 // Test route
 app.get('/', (req, res) => {
-    res.json({ message: 'Welcome to the Attendance System API. Visit /api-docs for documentation.' });
+    res.json({ message: 'Welcome to the WorkPulse API. Visit /api-docs for documentation.' });
 });
 
 // Routes

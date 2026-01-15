@@ -121,8 +121,69 @@ module.exports = function (app) {
 
     app.post("/api/onduty/start", [authJwt.verifyToken], controller.startOnDuty);
     app.post("/api/onduty/end", [authJwt.verifyToken], controller.endOnDuty);
+
+    /**
+     * @swagger
+     * /api/onduty/active-all:
+     *   get:
+     *     tags: [On-Duty]
+     *     summary: Get all active on-duty sessions
+     *     description: Retrieve all currently active on-duty sessions (Manager/Admin only)
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: List of active on-duty sessions retrieved
+     */
     app.get("/api/onduty/active-all", [authJwt.verifyToken, authJwt.isManagerOrAdmin], controller.getAllActiveOnDuty);
+
     app.get("/api/onduty/active", [authJwt.verifyToken], controller.getActiveOnDuty);
+
+    /**
+     * @swagger
+     * /api/onduty:
+     *   get:
+     *     tags: [On-Duty]
+     *     summary: Get on-duty logs by status
+     *     description: Retrieve on-duty logs filtered by status (Manager/Admin only)
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - name: status
+     *         in: query
+     *         schema:
+     *           type: string
+     *           enum: [Pending, Approved, Rejected]
+     *     responses:
+     *       200:
+     *         description: On-duty logs retrieved successfully
+     */
     app.get("/api/onduty", [authJwt.verifyToken, authJwt.isManagerOrAdmin], controller.getOnDutyByStatus);
+
+    /**
+     * @swagger
+     * /api/onduty/{id}:
+     *   put:
+     *     tags: [On-Duty]
+     *     summary: Update on-duty session details
+     *     description: Modify an existing on-duty log
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - name: id
+     *         in: path
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *     responses:
+     *       200:
+     *         description: On-duty details updated successfully
+     */
     app.put("/api/onduty/:id", [authJwt.verifyToken], controller.updateOnDutyDetails);
 };

@@ -10,18 +10,100 @@ module.exports = function (app) {
         next();
     });
 
-    // Mobile app activity logging (no auth required - token optional)
+    /**
+     * @swagger
+     * tags:
+     *   name: Activities
+     *   description: API for tracking user activities
+     */
+
+    /**
+     * @swagger
+     * /api/activities/mobile-log:
+     *   post:
+     *     summary: Log activity from mobile app
+     *     description: Submit activity logs from the mobile application
+     *     tags: [Activities]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               activity_type:
+     *                 type: string
+     *               details:
+     *                 type: string
+     *     responses:
+     *       200:
+     *         description: Activity logged successfully
+     */
     app.post("/api/activities/mobile-log", controller.logActivityFromMobile);
 
-    // Get activity summary (must be before other routes to avoid param collision)
+    /**
+     * @swagger
+     * /api/activities/summary:
+     *   get:
+     *     summary: Get activity summary
+     *     description: Retrieve a summary of all activities (Admin only)
+     *     tags: [Activities]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: Activity summary retrieved successfully
+     */
     app.get("/api/activities/summary", [verifyToken, isAdmin], controller.getActivitySummary);
 
-    // Export activities as CSV
+    /**
+     * @swagger
+     * /api/activities/export/csv:
+     *   get:
+     *     summary: Export activities as CSV
+     *     description: Download activity logs in CSV format (Admin only)
+     *     tags: [Activities]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: CSV file download
+     */
     app.get("/api/activities/export/csv", [verifyToken, isAdmin], controller.exportActivities);
 
-    // Get user activity history (admin only)
+    /**
+     * @swagger
+     * /api/activities/user/{userId}:
+     *   get:
+     *     summary: Get user activity history
+     *     description: Retrieve activity history for a specific user (Admin only)
+     *     tags: [Activities]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: userId
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     responses:
+     *       200:
+     *         description: User activity history retrieved successfully
+     */
     app.get("/api/activities/user/:userId", [verifyToken, isAdmin], controller.getUserActivityHistory);
 
-    // Get all activities (admin only)
+    /**
+     * @swagger
+     * /api/activities:
+     *   get:
+     *     summary: Get all activities
+     *     description: Retrieve all activity logs (Admin only)
+     *     tags: [Activities]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: List of all activities
+     */
     app.get("/api/activities", [verifyToken, isAdmin], controller.getAllActivities);
 };

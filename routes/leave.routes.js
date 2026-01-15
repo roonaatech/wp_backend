@@ -229,6 +229,31 @@ module.exports = function (app) {
         controller.applyLeave
     );
 
+    /**
+     * @swagger
+     * /api/leave/{id}:
+     *   put:
+     *     tags: [Leave Requests]
+     *     summary: Update leave request details
+     *     description: Modify an existing leave request that is still pending
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - name: id
+     *         in: path
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *     responses:
+     *       200:
+     *         description: Leave request updated successfully
+     */
     app.put(
         "/api/leave/:id",
         [authJwt.verifyToken],
@@ -241,6 +266,19 @@ module.exports = function (app) {
         controller.getMyLeaves
     );
 
+    /**
+     * @swagger
+     * /api/leave/pending:
+     *   get:
+     *     tags: [Leave Management]
+     *     summary: Get pending leave requests
+     *     description: Retrieve all pending leave requests (Manager/Admin only)
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: Pending leaves retrieved successfully
+     */
     app.get(
         "/api/leave/pending",
         [authJwt.verifyToken, authJwt.isManagerOrAdmin],
@@ -263,32 +301,107 @@ module.exports = function (app) {
     app.put("/api/onduty/:id/status", [authJwt.verifyToken, authJwt.isManagerOrAdmin], controller.updateOnDutyStatus);
 
     // Stats
+    /**
+     * @swagger
+     * /api/admin/stats:
+     *   get:
+     *     tags: [Leave Management]
+     *     summary: Get overall admin statistics
+     *     description: Retrieve total leave and on-duty counts (Admin only)
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: Admin stats retrieved successfully
+     */
     app.get(
         "/api/admin/stats",
         [authJwt.verifyToken, authJwt.isManagerOrAdmin],
         controller.getAdminStats
     );
+
+    /**
+     * @swagger
+     * /api/leave/my-stats:
+     *   get:
+     *     tags: [Leave Requests]
+     *     summary: Get user's leave statistics
+     *     description: Retrieve leave counts for the current user
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: User stats retrieved successfully
+     */
     app.get(
         "/api/leave/my-stats",
         [authJwt.verifyToken],
         controller.getMyStats
     );
 
-    // Delete a leave request
+    /**
+     * @swagger
+     * /api/leave/{id}:
+     *   delete:
+     *     tags: [Leave Requests]
+     *     summary: Delete a leave request
+     *     description: Remove a pending leave request
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - name: id
+     *         in: path
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     responses:
+     *       200:
+     *         description: Leave request deleted successfully
+     */
     app.delete(
         "/api/leave/:id",
         [authJwt.verifyToken],
         controller.deleteLeave
     );
 
-    // Get leave balance for a user
+    /**
+     * @swagger
+     * /api/leave/user-balance/{userId}:
+     *   get:
+     *     tags: [Leave Management]
+     *     summary: Get leave balance for a specific user
+     *     description: Retrieve available leave days for a user (Manager/Admin only)
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - name: userId
+     *         in: path
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     responses:
+     *       200:
+     *         description: User leave balance retrieved successfully
+     */
     app.get(
         "/api/leave/user-balance/:userId",
         [authJwt.verifyToken, authJwt.isManagerOrAdmin],
         controller.getUserLeaveBalance
     );
 
-    // Get current user's leave balance (for mobile app)
+    /**
+     * @swagger
+     * /api/leave/my-balance:
+     *   get:
+     *     tags: [Leave Requests]
+     *     summary: Get current user's leave balance
+     *     description: Retrieve available leave days for the current user
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: Leave balance retrieved successfully
+     */
     app.get(
         "/api/leave/my-balance",
         [authJwt.verifyToken],

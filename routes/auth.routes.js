@@ -104,6 +104,23 @@ const { verifyToken } = require("../middleware/authJwt");
  *         description: Server error
  */
 
+/**
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     tags:
+ *       - Authentication
+ *     summary: Logout user
+ *     description: Invalidate the current session
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Logout successful
+ *       401:
+ *         description: Unauthorized
+ */
+
 module.exports = function (app) {
     app.use(function (req, res, next) {
         res.header(

@@ -9,18 +9,35 @@ module.exports = function (app) {
 
     const db = require("../models");
 
-    // Debug endpoint to check database contents
+    /**
+     * @swagger
+     * tags:
+     *   name: Debug
+     *   description: API for system debugging and troubleshooting
+     */
+
+    /**
+     * @swagger
+     * /api/debug/approvals-count:
+     *   get:
+     *     summary: Get counts of various entities for debugging
+     *     description: Retrieve counts of approvals, on-duty logs, and attendance logs
+     *     tags: [Debug]
+     *     responses:
+     *       200:
+     *         description: Debug counts retrieved successfully
+     */
     app.get("/api/debug/approvals-count", async (req, res) => {
         try {
             const approvals = await db.approvals.findAll();
             const onDutyLogs = await db.on_duty_logs.findAll();
             const attendanceLogs = await db.attendance_logs.findAll();
-            
+
             console.log('\n=== DEBUG ENDPOINT ===');
             console.log('Approvals:', approvals.length);
             console.log('On-Duty Logs:', onDutyLogs.length);
             console.log('Attendance Logs:', attendanceLogs.length);
-            
+
             res.send({
                 approvals_count: approvals.length,
                 on_duty_logs_count: onDutyLogs.length,

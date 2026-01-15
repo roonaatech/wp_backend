@@ -4,9 +4,9 @@ const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Attendance Management System API',
+      title: 'WorkPulse API',
       version: '1.0.0',
-      description: 'Complete API documentation for the Attendance Management System',
+      description: 'Complete API documentation for the WorkPulse API',
       contact: {
         name: 'Support',
         email: 'support@example.com'
@@ -179,7 +179,9 @@ const options = {
     './routes/leave.routes.js',
     './routes/onduty.routes.js',
     './routes/admin.routes.js',
-    './routes/leavetype.routes.js'
+    './routes/leavetype.routes.js',
+    './routes/activity.routes.js',
+    './routes/debug.routes.js'
   ]
 };
 
