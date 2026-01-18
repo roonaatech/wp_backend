@@ -133,7 +133,8 @@ exports.updateUser = (req, res) => {
                     email: email,
                     role: parseInt(role),
                     approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
-                    gender: gender
+                    gender: gender,
+                    active: req.body.active !== undefined ? req.body.active : user.active
                 };
 
                 // Only update password if provided
@@ -170,6 +171,65 @@ exports.updateUser = (req, res) => {
                 message: err.message || "Error finding user."
             });
         });
+};
+
+// Reset user password (Admin only)
+exports.resetUserPassword = async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const { newPassword } = req.body;
+
+        // Verify admin permission
+        const currentUser = await TblStaff.findByPk(req.userId);
+        if (!currentUser || currentUser.role !== 1) {
+            return res.status(403).send({
+                message: "Access denied. Only admins can reset passwords."
+            });
+        }
+
+        // Validate new password
+        if (!newPassword || newPassword.length < 6) {
+            return res.status(400).send({
+                message: "Password must be at least 6 characters long."
+            });
+        }
+
+        // Find the user to update
+        const user = await TblStaff.findByPk(userId);
+        if (!user) {
+            return res.status(404).send({
+                message: "User not found."
+            });
+        }
+
+        // Hash the new password
+        const hashedPassword = bcrypt.hashSync(newPassword, 8);
+
+        // Update the password
+        await user.update({
+            password: hashedPassword
+        });
+
+        // Log the activity
+        await logActivity({
+            admin_id: req.userId,
+            action: 'PASSWORD_RESET',
+            entity: 'User',
+            entity_id: userId,
+            affected_user_id: userId,
+            description: `Admin ${currentUser.firstname} ${currentUser.lastname} reset password for ${user.firstname} ${user.lastname}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.send({
+            message: "Password reset successfully."
+        });
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Error resetting password."
+        });
+    }
 };
 
 exports.getAllUsers = async (req, res) => {

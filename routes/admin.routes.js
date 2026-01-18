@@ -279,6 +279,44 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/admin/users/{id}/reset-password:
+     *   post:
+     *     summary: Reset user password (Admin only)
+     *     description: Allow admins to forcefully reset a user's password
+     *     tags: [Users]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: id
+     *         required: true
+     *         schema:
+     *           type: integer
+     *         description: Staff ID
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               newPassword:
+     *                 type: string
+     *                 minLength: 6
+     *     responses:
+     *       200:
+     *         description: Password reset successfully
+     *       400:
+     *         description: Invalid password
+     *       401:
+     *         description: Unauthorized
+     *       403:
+     *         description: Access denied - Admin only
+     */
+    app.post("/api/admin/users/:id/reset-password", [verifyToken], controller.resetUserPassword);
+
+    /**
+     * @swagger
      * /api/admin/approvals:
      *   get:
      *     summary: Get pending approvals
