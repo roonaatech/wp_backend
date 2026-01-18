@@ -187,9 +187,9 @@ exports.getAllUsers = async (req, res) => {
 
         const users = await TblStaff.findAll({
             where: whereClause,
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin']
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender']
         });
-        
+
         res.send(users);
     } catch (err) {
         res.status(500).send({
@@ -216,13 +216,13 @@ exports.getManagersAndAdmins = (req, res) => {
 
 exports.getPendingApprovals = async (req, res) => {
     const { Op } = require("sequelize");
-    
+
     // Get current user from token
     const currentUserId = req.userId; // Set by authJwt middleware
-    
+
     console.log('\n=== getPendingApprovals called ===');
     console.log('Current User ID:', currentUserId);
-    
+
     try {
         // Get the current user to check their role
         const currentUser = await TblStaff.findByPk(currentUserId);
@@ -234,10 +234,10 @@ exports.getPendingApprovals = async (req, res) => {
         }
 
         console.log('Current User:', currentUser.firstname, 'Admin:', currentUser.admin);
-        
+
         // Check if user is admin (admin field = 1)
         const isAdmin = currentUser.admin === 1;
-        
+
         // Build where clause: if not admin, filter by manager_id
         let whereClause = {};
         if (!isAdmin) {
@@ -255,20 +255,20 @@ exports.getPendingApprovals = async (req, res) => {
             order: [['id', 'DESC']],
             raw: true
         });
-        
+
         console.log('Found approvals:', approvals.length);
         approvals.forEach(a => {
             console.log('  - Approval', a.id, '| Type:', a.attendance_log_id ? 'attendance' : (a.on_duty_log_id ? 'on-duty' : 'UNKNOWN'), '| Manager:', a.manager_id, '| Status:', a.status);
         });
-        
+
         // For each approval, fetch the related data
         const enrichedApprovals = await Promise.all(
             approvals.map(async (approval) => {
                 const enriched = { ...approval };
-                
+
                 // Attendance logs model doesn't exist in current schema
                 enriched.attendance_log = null;
-                
+
                 // Fetch on-duty log if exists
                 if (approval.on_duty_log_id) {
                     console.log('Fetching on_duty_log:', approval.on_duty_log_id);
@@ -292,18 +292,18 @@ exports.getPendingApprovals = async (req, res) => {
                 } else {
                     enriched.on_duty_log = null;
                 }
-                
+
                 // Fetch manager
                 const manager = await TblStaff.findByPk(
                     approval.manager_id,
                     { attributes: ['firstname', 'lastname', 'staffid'] }
                 );
                 enriched.manager = manager;
-                
+
                 return enriched;
             })
         );
-        
+
         console.log('Enriched approvals:', enrichedApprovals.length);
         console.log('=== getPendingApprovals complete ===\n');
         res.send(enrichedApprovals);
@@ -363,7 +363,7 @@ exports.getAttendanceReports = async (req, res) => {
             });
             reporteeIds = reportees.map(r => r.staffid);
             console.log(`Manager ${req.userId} - filtering reports by reportees:`, reporteeIds);
-            
+
             if (reporteeIds.length === 0) {
                 // Manager has no reportees, return empty
                 return res.send([]);
@@ -375,14 +375,14 @@ exports.getAttendanceReports = async (req, res) => {
         if (!isAdmin) {
             leaveWhere.staff_id = { [Op.in]: reporteeIds };
         }
-        
+
         // Get leave requests with approver info
         const leaveRequests = await LeaveRequest.findAll({
             where: leaveWhere,
             include: [
                 { model: db.tblstaff, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
-                { 
-                    model: db.tblstaff, 
+                {
+                    model: db.tblstaff,
                     as: 'approver',
                     attributes: ['staffid', 'firstname', 'lastname', 'email'],
                     required: false
@@ -420,8 +420,8 @@ exports.getAttendanceReports = async (req, res) => {
             where: onDutyWhere,
             include: [
                 { model: db.tblstaff, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
-                { 
-                    model: db.tblstaff, 
+                {
+                    model: db.tblstaff,
                     as: 'approver',
                     attributes: ['staffid', 'firstname', 'lastname', 'email'],
                     required: false
@@ -527,8 +527,8 @@ exports.getDashboardStats = async (req, res) => {
                 attributes: [
                     [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
                 ],
-                where: { 
-                    start_time: { [Op.gte]: today }, 
+                where: {
+                    start_time: { [Op.gte]: today },
                     end_time: { [Op.ne]: null },
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 },
@@ -539,8 +539,8 @@ exports.getDashboardStats = async (req, res) => {
                 attributes: [
                     [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
                 ],
-                where: { 
-                    start_time: { [Op.gte]: yesterday, [Op.lt]: today }, 
+                where: {
+                    start_time: { [Op.gte]: yesterday, [Op.lt]: today },
                     end_time: { [Op.ne]: null },
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 },
@@ -556,28 +556,28 @@ exports.getDashboardStats = async (req, res) => {
             }),
             // Pending leave approvals
             LeaveRequest.count({
-                where: { 
+                where: {
                     status: 'Pending',
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Approved leaves
             LeaveRequest.count({
-                where: { 
+                where: {
                     status: 'Approved',
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Rejected leaves
             LeaveRequest.count({
-                where: { 
+                where: {
                     status: 'Rejected',
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Pending on-duty approvals (only those that have ended)
             OnDutyLog.count({
-                where: { 
+                where: {
                     status: 'Pending',
                     end_time: { [Op.ne]: null },
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
@@ -585,21 +585,21 @@ exports.getDashboardStats = async (req, res) => {
             }),
             // Approved on-duty logs
             OnDutyLog.count({
-                where: { 
+                where: {
                     status: 'Approved',
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Rejected on-duty logs
             OnDutyLog.count({
-                where: { 
+                where: {
                     status: 'Rejected',
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Active on-duty logs (end_time is null)
             OnDutyLog.count({
-                where: { 
+                where: {
                     end_time: null,
                     ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
@@ -607,7 +607,7 @@ exports.getDashboardStats = async (req, res) => {
         ]);
 
         const [totalUsers, newUsersToday, newUsersYesterday, presentToday, presentYesterday, onDuty, pendingLeaves, approvedLeaves, rejectedLeaves, pendingOnDuty, approvedOnDuty, rejectedOnDuty, activeOnDuty] = results;
-        
+
         // Calculate new users trend
         let usersTrend = 0;
         if (newUsersYesterday > 0) {
@@ -685,10 +685,10 @@ exports.getDailyTrendData = async (req, res) => {
         for (let i = days - 1; i >= 0; i--) {
             const date = new Date(today);
             date.setDate(date.getDate() - i);
-            
+
             const startOfDay = new Date(date);
             startOfDay.setHours(0, 0, 0, 0);
-            
+
             const endOfDay = new Date(date);
             endOfDay.setHours(23, 59, 59, 999);
 
@@ -773,9 +773,9 @@ exports.getCalendarEvents = async (req, res) => {
                 raw: true
             });
             reporteeIds = reportees.map(r => r.staffid);
-            
+
             console.log(`Manager ${userId} query - reportees found:`, reporteeIds);
-            
+
             if (reporteeIds.length === 0) {
                 // Manager has no reportees, return empty array
                 console.log(`Manager ${userId} has no reportees - returning empty events`);
@@ -787,7 +787,7 @@ exports.getCalendarEvents = async (req, res) => {
 
         // Build the base where condition for leave requests
         const leaveWhere = {
-            status: {[Op.in]: ['Approved', 'Rejected', 'Pending']},
+            status: { [Op.in]: ['Approved', 'Rejected', 'Pending'] },
             [Op.or]: [
                 {
                     start_date: {
@@ -837,7 +837,7 @@ exports.getCalendarEvents = async (req, res) => {
         // Build the base where condition for on-duty logs
         // Include all statuses to show complete history
         const onDutyWhere = {
-            status: {[Op.in]: ['Approved', 'Rejected', 'Pending']},
+            status: { [Op.in]: ['Approved', 'Rejected', 'Pending'] },
             start_time: {
                 [Op.between]: [firstDay, lastDay]
             }
@@ -867,12 +867,12 @@ exports.getCalendarEvents = async (req, res) => {
         leaveRequests.forEach(leave => {
             const startDate = new Date(leave.start_date);
             const endDate = new Date(leave.end_date);
-            
+
             // For each day in the leave period, create an event
             for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
                 const dateStr = d.toISOString().split('T')[0];
                 const staffName = `${leave.tblstaff.firstname} ${leave.tblstaff.lastname}`;
-                
+
                 events.push({
                     date: dateStr,
                     type: 'leave',
@@ -891,11 +891,11 @@ exports.getCalendarEvents = async (req, res) => {
         onDutyLogs.forEach(onDuty => {
             const dateStr = new Date(onDuty.start_time).toISOString().split('T')[0];
             const staffName = `${onDuty.tblstaff.firstname} ${onDuty.tblstaff.lastname}`;
-            
+
             // Use purpose field if available, otherwise extract from reason
             let purpose = onDuty.purpose || '';
             let location = onDuty.location || '';
-            
+
             // If no purpose but reason exists, try to extract from reason format "purpose (location)"
             if (!purpose && onDuty.reason) {
                 const reasonMatch = onDuty.reason.match(/^(.+?)\s*\((.+?)\)$/);
