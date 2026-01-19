@@ -1,6 +1,6 @@
 const db = require("../models");
 const config = process.env;
-const TblStaff = db.tblstaff;
+const TblStaff = db.user;
 
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");

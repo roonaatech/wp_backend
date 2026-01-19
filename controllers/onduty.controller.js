@@ -1,6 +1,6 @@
 const db = require("../models");
 const OnDutyLog = db.on_duty_logs;
-const TblStaff = db.tblstaff;
+const User = db.user;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
@@ -90,7 +90,7 @@ exports.endOnDuty = (req, res) => {
                 });
 
                 // Get the staff member's approving_manager_id
-                const staff = await TblStaff.findByPk(req.userId);
+                const staff = await User.findByPk(req.userId);
 
                 console.log('Staff found:', !!staff);
                 console.log('Staff name:', staff?.firstname, staff?.lastname);
@@ -161,19 +161,19 @@ exports.getActiveOnDuty = (req, res) => {
 exports.getOnDutyByStatus = async (req, res) => {
     try {
         const { Op } = require("sequelize");
-        const Staff = db.tblstaff;
+        const User = db.user;
 
         // Get status from query, default to 'Pending'
         const status = req.query.status || 'Pending';
 
         // Get current user's role to determine filtering
-        const currentUser = await Staff.findByPk(req.userId);
+        const currentUser = await User.findByPk(req.userId);
         const isAdmin = currentUser && currentUser.admin === 1;
 
         // If manager, get their reportees
         let reporteeIds = [];
         if (!isAdmin) {
-            const reportees = await Staff.findAll({
+            const reportees = await User.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
                 raw: true
@@ -199,8 +199,7 @@ exports.getOnDutyByStatus = async (req, res) => {
         const onDutyLogs = await OnDutyLog.findAll({
             where: where,
             include: [{
-                model: Staff,
-                as: 'tblstaff',
+                model: User,
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']]
@@ -220,7 +219,7 @@ exports.getOnDutyByStatus = async (req, res) => {
             manager_id: log.manager_id,
             createdAt: log.createdAt,
             updatedAt: log.updatedAt,
-            tblstaff: log.tblstaff
+            tblstaff: log.user
         }));
 
         res.status(200).send({
@@ -235,16 +234,16 @@ exports.getOnDutyByStatus = async (req, res) => {
 exports.getAllActiveOnDuty = async (req, res) => {
     try {
         const { Op } = require("sequelize");
-        const Staff = db.tblstaff;
+        const User = db.user;
 
         // Get current user's role to determine filtering
-        const currentUser = await Staff.findByPk(req.userId);
+        const currentUser = await User.findByPk(req.userId);
         const isAdmin = currentUser && currentUser.admin === 1;
 
         // If manager, get their reportees
         let reporteeIds = [];
         if (!isAdmin) {
-            const reportees = await Staff.findAll({
+            const reportees = await User.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
                 raw: true
@@ -266,8 +265,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
         const activeOnDutyLogs = await OnDutyLog.findAll({
             where: where,
             include: [{
-                model: Staff,
-                as: 'tblstaff',
+                model: User,
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']]
@@ -291,7 +289,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
             manager_id: log.manager_id,
             createdAt: log.createdAt,
             updatedAt: log.updatedAt,
-            tblstaff: log.tblstaff
+            tblstaff: log.user
         }));
 
         res.status(200).send({

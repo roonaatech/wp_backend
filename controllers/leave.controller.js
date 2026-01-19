@@ -1,6 +1,6 @@
 const db = require("../models");
 const LeaveRequest = db.leave_requests;
-const Staff = db.tblstaff;
+const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
@@ -77,11 +77,10 @@ exports.applyLeave = async (req, res) => {
 };
 
 // Get My Leaves (History)
-// Get My Leaves (History)
 exports.getMyLeaves = async (req, res) => {
     try {
         const OnDutyLog = db.on_duty_logs;
-        const Staff = db.tblstaff;
+        const Staff = db.user;
 
         // Fetch Leaves
         const leaves = await LeaveRequest.findAll({
@@ -224,7 +223,7 @@ exports.getPendingLeaves = async (req, res) => {
             type: 'leave',
             id: l.id,
             staff_id: l.staff_id,
-            tblstaff: l.tblstaff,
+            tblstaff: l.user,
             title: l.leave_type,
             reason: l.reason,
             start_date: l.start_date,
@@ -236,7 +235,7 @@ exports.getPendingLeaves = async (req, res) => {
             type: 'on_duty',
             id: l.id,
             staff_id: l.staff_id,
-            tblstaff: l.tblstaff,
+            tblstaff: l.user,
             title: `On-Duty: ${l.client_name}`,
             reason: `${l.purpose} (${l.location})`,
             start_date: l.start_time,
@@ -506,7 +505,7 @@ exports.updateLeaveStatus = async (req, res) => {
         // Fetch approver details if approved/rejected
         let approver = null;
         if (leave.manager_id) {
-            const Staff = db.tblstaff;
+            const Staff = db.user;
             approver = await Staff.findByPk(leave.manager_id, {
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             });
@@ -687,7 +686,7 @@ exports.updateOnDutyStatus = async (req, res) => {
         // Fetch approver details if approved/rejected
         let approver = null;
         if (log.manager_id) {
-            const Staff = db.tblstaff;
+            const Staff = db.user;
             approver = await Staff.findByPk(log.manager_id, {
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             });
@@ -707,7 +706,7 @@ exports.updateOnDutyStatus = async (req, res) => {
 exports.getAdminStats = async (req, res) => {
     try {
         const OnDutyLog = db.on_duty_logs;
-        const Staff = db.tblstaff;
+        const Staff = db.user;
         const { Op } = require("sequelize");
 
         // Get current user's role to determine filtering
@@ -863,7 +862,7 @@ exports.getUserLeaveBalance = async (req, res) => {
         console.log(`[BALANCE] Fetching leave balance for user: ${userId}`);
 
         // Get user's gender
-        const TblStaff = db.tblstaff;
+        const TblStaff = db.user;
         const user = await TblStaff.findByPk(userId);
 
         if (!user) {
@@ -953,7 +952,7 @@ exports.getMyLeaveBalance = async (req, res) => {
         console.log(`[MY-BALANCE] Fetching leave balance for current user: ${userId}`);
 
         // Get user's gender
-        const TblStaff = db.tblstaff;
+        const TblStaff = db.user;
         const user = await TblStaff.findByPk(userId);
 
         if (!user) {

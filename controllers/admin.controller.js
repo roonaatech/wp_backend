@@ -1,6 +1,6 @@
 const db = require("../models");
 const bcrypt = require("bcryptjs");
-const TblStaff = db.tblstaff;
+const TblStaff = db.user;
 const OnDutyLog = db.on_duty_logs;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
@@ -405,7 +405,7 @@ exports.getAttendanceReports = async (req, res) => {
         const { Op } = require("sequelize");
         const LeaveRequest = db.leave_requests;
         const OnDutyLog = db.on_duty_logs;
-        const Staff = db.tblstaff;
+        const Staff = db.user;
 
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
@@ -440,9 +440,9 @@ exports.getAttendanceReports = async (req, res) => {
         const leaveRequests = await LeaveRequest.findAll({
             where: leaveWhere,
             include: [
-                { model: db.tblstaff, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                { model: db.user, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
                 {
-                    model: db.tblstaff,
+                    model: db.user,
                     as: 'approver',
                     attributes: ['staffid', 'firstname', 'lastname', 'email'],
                     required: false
@@ -465,7 +465,7 @@ exports.getAttendanceReports = async (req, res) => {
             status: leave.status,
             rejection_reason: leave.rejection_reason,
             on_duty: false,
-            tblstaff: leave.tblstaff,
+            tblstaff: leave.user,
             approver: leave.approver || null
         }));
 
@@ -479,9 +479,9 @@ exports.getAttendanceReports = async (req, res) => {
         const onDutyLogs = await OnDutyLog.findAll({
             where: onDutyWhere,
             include: [
-                { model: db.tblstaff, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                { model: db.user, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
                 {
-                    model: db.tblstaff,
+                    model: db.user,
                     as: 'approver',
                     attributes: ['staffid', 'firstname', 'lastname', 'email'],
                     required: false
@@ -503,7 +503,7 @@ exports.getAttendanceReports = async (req, res) => {
             status: log.status,
             rejection_reason: log.rejection_reason,
             on_duty: true,
-            tblstaff: log.tblstaff,
+            tblstaff: log.user,
             approver: log.approver || null
         }));
 
@@ -719,7 +719,7 @@ exports.getDailyTrendData = async (req, res) => {
     const { Op } = require("sequelize");
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
-    const Staff = db.tblstaff;
+    const Staff = db.user;
     const days = parseInt(req.query.days) || 7;
 
     try {
@@ -803,7 +803,7 @@ exports.getCalendarEvents = async (req, res) => {
     const { Op } = require("sequelize");
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
-    const Staff = db.tblstaff;
+    const Staff = db.user;
 
     try {
         const year = parseInt(req.query.year) || new Date().getFullYear();
@@ -931,7 +931,7 @@ exports.getCalendarEvents = async (req, res) => {
             // For each day in the leave period, create an event
             for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
                 const dateStr = d.toISOString().split('T')[0];
-                const staffName = `${leave.tblstaff.firstname} ${leave.tblstaff.lastname}`;
+                const staffName = `${leave.user.firstname} ${leave.user.lastname}`;
 
                 events.push({
                     date: dateStr,
@@ -950,7 +950,7 @@ exports.getCalendarEvents = async (req, res) => {
         // Process on-duty logs
         onDutyLogs.forEach(onDuty => {
             const dateStr = new Date(onDuty.start_time).toISOString().split('T')[0];
-            const staffName = `${onDuty.tblstaff.firstname} ${onDuty.tblstaff.lastname}`;
+            const staffName = `${onDuty.user.firstname} ${onDuty.user.lastname}`;
 
             // Use purpose field if available, otherwise extract from reason
             let purpose = onDuty.purpose || '';
@@ -989,7 +989,7 @@ exports.getCalendarEvents = async (req, res) => {
 
 exports.debugCalendarData = async (req, res) => {
     const { Op } = require("sequelize");
-    const Staff = db.tblstaff;
+    const Staff = db.user;
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
 

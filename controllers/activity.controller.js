@@ -1,6 +1,6 @@
 const db = require("../models");
 const ActivityLog = db.activity_logs;
-const User = db.tblstaff;
+const User = db.user;
 
 /**
  * Get all activity logs (only for admins)

@@ -1,7 +1,7 @@
 const db = require("../models");
 
 const ActivityLog = db.activity_logs;
-const User = db.tblstaff;
+const User = db.user;
 
 /**
  * Log an activity to the database

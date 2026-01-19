@@ -2,7 +2,7 @@ const db = require("../models");
 const AttendanceLog = db.attendance_logs;
 const OnDutyLog = db.on_duty_logs;
 const Approval = db.approvals;
-const TblStaff = db.tblstaff;
+const TblStaff = db.user;
 
 exports.checkIn = (req, res) => {
     // Validate request
