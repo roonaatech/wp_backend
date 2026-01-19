@@ -109,7 +109,7 @@ exports.getMyLeaves = async (req, res) => {
         };
 
         // Normalize and combine
-        const normalizedLeaves = leaves.map(l => 
+        const normalizedLeaves = leaves.map(l =>
             ensureNumeric({
                 type: 'leave',
                 id: l.id,
@@ -124,7 +124,7 @@ exports.getMyLeaves = async (req, res) => {
             }, ['id', 'manager_id'])
         );
 
-        const normalizedOnDuty = onDutyLogs.map(l => 
+        const normalizedOnDuty = onDutyLogs.map(l =>
             ensureNumeric({
                 type: 'on_duty',
                 id: l.id,
@@ -261,7 +261,7 @@ exports.getManageableRequests = async (req, res) => {
 
         // Get status from query, default to 'Pending'
         const status = req.query.status || 'Pending';
-        
+
         // Get pagination parameters
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
@@ -290,7 +290,7 @@ exports.getManageableRequests = async (req, res) => {
             leaveWhere.staff_id = { [Op.in]: reporteeIds };
         } else if (!isAdmin && reporteeIds.length === 0) {
             // Manager has no reportees, return empty
-            return res.status(200).send({ 
+            return res.status(200).send({
                 items: [],
                 pagination: {
                     currentPage: page,
@@ -401,7 +401,7 @@ exports.getManageableRequests = async (req, res) => {
         // Calculate pagination based on leaves (or on-duty, both have same limit)
         const totalPages = Math.ceil(Math.max(totalLeaveCount, totalOnDutyCount) / limit);
 
-        res.status(200).send({ 
+        res.status(200).send({
             items: paginatedItems,
             pagination: {
                 currentPage: page,
@@ -432,19 +432,19 @@ exports.updateLeaveStatus = async (req, res) => {
 
         const oldStatus = leave.status;
         const oldReason = leave.rejection_reason;
-        
+
         // If only rejection_reason is being updated (no status change)
         if (!status && rejection_reason !== undefined) {
             // Only allow updating rejection reason if the request is already rejected
             if (leave.status !== 'Rejected') {
                 return res.status(400).send({ message: "Can only update rejection reason for rejected requests." });
             }
-            
+
             // Only the person who rejected it can edit the reason
-            if (leave.manager_id !== req.userId) {
+            if (Number(leave.manager_id) !== Number(req.userId)) {
                 return res.status(403).send({ message: "Only the person who rejected this request can edit the rejection reason." });
             }
-            
+
             leave.rejection_reason = rejection_reason;
             await leave.save();
 
@@ -462,8 +462,8 @@ exports.updateLeaveStatus = async (req, res) => {
                 user_agent: getUserAgent(req)
             });
 
-            return res.status(200).send({ 
-                message: 'Rejection reason updated successfully!', 
+            return res.status(200).send({
+                message: 'Rejection reason updated successfully!',
                 leave
             });
         }
@@ -512,8 +512,8 @@ exports.updateLeaveStatus = async (req, res) => {
             });
         }
 
-        res.status(200).send({ 
-            message: `Leave ${status} successfully!`, 
+        res.status(200).send({
+            message: `Leave ${status} successfully!`,
             leave,
             approver
         });
@@ -613,19 +613,19 @@ exports.updateOnDutyStatus = async (req, res) => {
 
         const oldStatus = log.status;
         const oldReason = log.rejection_reason;
-        
+
         // If only rejection_reason is being updated (no status change)
         if (!status && rejection_reason !== undefined) {
             // Only allow updating rejection reason if the request is already rejected
             if (log.status !== 'Rejected') {
                 return res.status(400).send({ message: "Can only update rejection reason for rejected requests." });
             }
-            
+
             // Only the person who rejected it can edit the reason
-            if (log.manager_id !== req.userId) {
+            if (Number(log.manager_id) !== Number(req.userId)) {
                 return res.status(403).send({ message: "Only the person who rejected this request can edit the rejection reason." });
             }
-            
+
             log.rejection_reason = rejection_reason;
             await log.save();
 
@@ -643,8 +643,8 @@ exports.updateOnDutyStatus = async (req, res) => {
                 user_agent: getUserAgent(req)
             });
 
-            return res.status(200).send({ 
-                message: 'Rejection reason updated successfully!', 
+            return res.status(200).send({
+                message: 'Rejection reason updated successfully!',
                 log
             });
         }
@@ -693,8 +693,8 @@ exports.updateOnDutyStatus = async (req, res) => {
             });
         }
 
-        res.status(200).send({ 
-            message: `On-Duty visit ${status} successfully!`, 
+        res.status(200).send({
+            message: `On-Duty visit ${status} successfully!`,
             log,
             approver
         });
@@ -782,7 +782,7 @@ exports.getMyStats = async (req, res) => {
         const approvedCount = await LeaveRequest.count({ where: { staff_id: req.userId, status: 'Approved' } });
         const rejectedCount = await LeaveRequest.count({ where: { staff_id: req.userId, status: 'Rejected' } });
         const totalLeaves = await LeaveRequest.count({ where: { staff_id: req.userId } });
-        
+
         console.log('[getMyStats] Leave counts - Total:', totalLeaves, 'Pending:', pendingCount, 'Approved:', approvedCount, 'Rejected:', rejectedCount);
 
         const rejectedOnDutyCount = await OnDutyLog.count({ where: { staff_id: req.userId, status: 'Rejected' } });
@@ -865,7 +865,7 @@ exports.getUserLeaveBalance = async (req, res) => {
         // Get user's gender
         const TblStaff = db.tblstaff;
         const user = await TblStaff.findByPk(userId);
-        
+
         if (!user) {
             return res.status(404).send({
                 message: "User not found."
@@ -881,7 +881,7 @@ exports.getUserLeaveBalance = async (req, res) => {
         // Get all active leave types
         const LeaveType = db.leave_types;
         let leaveTypes = await LeaveType.findAll({ where: { status: true } });
-        
+
         // Filter leave types based on gender restriction
         leaveTypes = leaveTypes.filter(leaveType => {
             // If no gender restriction is set, leave type is available for all
@@ -891,7 +891,7 @@ exports.getUserLeaveBalance = async (req, res) => {
             // If gender restriction exists, check if user's gender is in the list
             return leaveType.gender_restriction.includes(user.gender);
         });
-        
+
         console.log(`[BALANCE] Found ${leaveTypes.length} leave types applicable for gender ${user.gender}:`, leaveTypes.map(l => ({ id: l.id, name: l.name, days: l.days_allowed })));
 
         // Get leave balance for each leave type
@@ -955,7 +955,7 @@ exports.getMyLeaveBalance = async (req, res) => {
         // Get user's gender
         const TblStaff = db.tblstaff;
         const user = await TblStaff.findByPk(userId);
-        
+
         if (!user) {
             return res.status(404).send({
                 message: "User not found."
@@ -971,7 +971,7 @@ exports.getMyLeaveBalance = async (req, res) => {
         // Get all active leave types
         const LeaveType = db.leave_types;
         let leaveTypes = await LeaveType.findAll({ where: { status: true } });
-        
+
         // Filter leave types based on gender restriction
         leaveTypes = leaveTypes.filter(leaveType => {
             // If no gender restriction is set, leave type is available for all
