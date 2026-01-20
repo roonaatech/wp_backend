@@ -28,13 +28,13 @@ db.activity_logs = require("./activity_log.model.js")(sequelize, Sequelize);
 
 // Associations
 db.user.hasMany(db.leave_requests, { foreignKey: 'staff_id' });
-db.leave_requests.belongsTo(db.user, { foreignKey: 'staff_id' });
+db.leave_requests.belongsTo(db.user, { foreignKey: 'staff_id', as: 'user' });
 
 // Leave approver relationship
 db.leave_requests.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' });
 
 db.user.hasMany(db.on_duty_logs, { foreignKey: 'staff_id' });
-db.on_duty_logs.belongsTo(db.user, { foreignKey: 'staff_id', targetKey: 'staffid' });
+db.on_duty_logs.belongsTo(db.user, { foreignKey: 'staff_id', targetKey: 'staffid', as: 'user' });
 
 // On-duty approver relationship
 db.on_duty_logs.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' });

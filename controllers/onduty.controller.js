@@ -200,6 +200,7 @@ exports.getOnDutyByStatus = async (req, res) => {
             where: where,
             include: [{
                 model: User,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']]
@@ -266,6 +267,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
             where: where,
             include: [{
                 model: User,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']]

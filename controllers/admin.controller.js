@@ -332,19 +332,27 @@ exports.getPendingApprovals = async (req, res) => {
                 // Fetch on-duty log if exists
                 if (approval.on_duty_log_id) {
                     console.log('Fetching on_duty_log:', approval.on_duty_log_id);
-                    const onDutyLog = await db.on_duty_logs.findByPk(
+                    const onDutyLogRaw = await db.on_duty_logs.findByPk(
                         approval.on_duty_log_id,
                         {
                             include: [
                                 {
                                     model: TblStaff,
+                                    as: 'user',
                                     attributes: ['firstname', 'lastname', 'email', 'staffid', 'approving_manager_id']
                                 }
                             ]
                         }
                     );
-                    enriched.on_duty_log = onDutyLog;
-                    if (!onDutyLog) {
+                    
+                    if (onDutyLogRaw) {
+                        enriched.on_duty_log = onDutyLogRaw.toJSON();
+                        enriched.on_duty_log.tblstaff = enriched.on_duty_log.user;
+                    } else {
+                        enriched.on_duty_log = null;
+                    }
+                    
+                    if (!onDutyLogRaw) {
                         console.log('⚠️  on_duty_log not found for ID:', approval.on_duty_log_id);
                     } else {
                         console.log('✅ on_duty_log found:', onDutyLog.client_name);
@@ -440,7 +448,7 @@ exports.getAttendanceReports = async (req, res) => {
         const leaveRequests = await LeaveRequest.findAll({
             where: leaveWhere,
             include: [
-                { model: db.user, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
                 {
                     model: db.user,
                     as: 'approver',
@@ -479,7 +487,7 @@ exports.getAttendanceReports = async (req, res) => {
         const onDutyLogs = await OnDutyLog.findAll({
             where: onDutyWhere,
             include: [
-                { model: db.user, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
                 {
                     model: db.user,
                     as: 'approver',
@@ -886,6 +894,7 @@ exports.getCalendarEvents = async (req, res) => {
             where: leaveWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname'],
                 required: true
             }],
@@ -913,6 +922,7 @@ exports.getCalendarEvents = async (req, res) => {
             where: onDutyWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname'],
                 required: true
             }],

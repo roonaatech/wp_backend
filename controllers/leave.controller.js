@@ -194,6 +194,7 @@ exports.getPendingLeaves = async (req, res) => {
             where: leaveWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['createdAt', 'ASC']]
@@ -213,6 +214,7 @@ exports.getPendingLeaves = async (req, res) => {
             where: onDutyWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'ASC']]
@@ -309,6 +311,7 @@ exports.getManageableRequests = async (req, res) => {
             where: leaveWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['createdAt', 'DESC']],
@@ -334,6 +337,7 @@ exports.getManageableRequests = async (req, res) => {
             where: onDutyWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']],
@@ -352,7 +356,7 @@ exports.getManageableRequests = async (req, res) => {
                 type: 'leave',
                 id: l.id,
                 staff_id: l.staff_id,
-                tblstaff: l.tblstaff,
+                tblstaff: l.user,
                 title: l.leave_type,
                 reason: l.reason,
                 start_date: l.start_date,
@@ -371,7 +375,7 @@ exports.getManageableRequests = async (req, res) => {
                 type: 'on_duty',
                 id: l.id,
                 staff_id: l.staff_id,
-                tblstaff: l.tblstaff,
+                tblstaff: l.user,
                 title: `On-Duty: ${l.client_name}`,
                 reason: `${l.purpose} (${l.location})`,
                 start_date: l.start_time,
