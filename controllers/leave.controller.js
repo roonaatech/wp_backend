@@ -1,8 +1,31 @@
 const db = require("../models");
 const LeaveRequest = db.leave_requests;
+const LeaveType = db.leave_types;
 const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+
+// Helper to calculate days excluding Sundays
+const calculateLeaveDays = (startDate, endDate) => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    let count = 0;
+    const current = new Date(start);
+
+    // Validate dates
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+        return 0;
+    }
+
+    while (current <= end) {
+        // Exclude Sunday (0)
+        if (current.getDay() !== 0) {
+            count++;
+        }
+        current.setDate(current.getDate() + 1);
+    }
+    return count;
+};
 
 // Apply for a Leave
 exports.applyLeave = async (req, res) => {
@@ -12,6 +35,47 @@ exports.applyLeave = async (req, res) => {
         if (!leave_type || !start_date || !end_date) {
             return res.status(400).send({ message: "Leave type, start date, and end date are required!" });
         }
+
+        // --- Validate Leave Balance ---
+        // 1. Check if leave type exists and get limit
+        const leaveTypeDetails = await LeaveType.findOne({ where: { name: leave_type } });
+        
+        // Skip check for "Loss of Pay" or if leave type not found (fallback)
+        const isLossOfPay = leave_type.toLowerCase().includes('loss of pay');
+        
+        if (leaveTypeDetails && !isLossOfPay) {
+            const allowedDays = leaveTypeDetails.days_allowed || 0;
+            const requestedDays = calculateLeaveDays(start_date, end_date);
+            
+            // 2. Get already used/pending days for this year
+            const year = new Date(start_date).getFullYear();
+            const usedLeaves = await LeaveRequest.findAll({
+                where: {
+                    staff_id: req.userId,
+                    leave_type: leave_type,
+                    status: { [Op.in]: ['Approved', 'Pending'] },
+                    start_date: {
+                        [Op.gte]: `${year}-01-01`,
+                        [Op.lte]: `${year}-12-31`
+                    }
+                }
+            });
+
+            let usedDaysCount = 0;
+            usedLeaves.forEach(leave => {
+                usedDaysCount += calculateLeaveDays(leave.start_date, leave.end_date);
+            });
+
+            const totalProjectedDays = usedDaysCount + requestedDays;
+
+            if (totalProjectedDays > allowedDays) {
+                return res.status(400).send({
+                    message: `Leave limit exceeded! You have used ${usedDaysCount} days of ${leave_type}. Applying for ${requestedDays} more days would exceed the annual limit of ${allowedDays} days.`
+                });
+            }
+        }
+        // -----------------------------
+
 
         // Check for overlapping leaves (Pending, Approved, or Active)
         const overlappingLeave = await LeaveRequest.findOne({
