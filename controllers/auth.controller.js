@@ -108,6 +108,8 @@ exports.signin = async (req, res) => {
             }
         });
 
+        let isNewUser = false; // Flag to track first-time login via sync
+
         // If PHP Auth succeeded, SYNC the user to local DB
         if (phpAuthSuccess && phpUserData) {
             const hashedPassword = bcrypt.hashSync(req.body.password, 8);
@@ -136,6 +138,7 @@ exports.signin = async (req, res) => {
                     admin: 0,
                     datecreated: new Date()
                 });
+                isNewUser = true; // Mark as first-time login
             }
         }
 
@@ -186,6 +189,8 @@ exports.signin = async (req, res) => {
             lastname: user.lastname,
             email: user.email,
             role: user.role,
+            gender: user.gender, // Include gender for frontend checks
+            isFirstLogin: isNewUser, // Return flag to frontend
             accessToken: token
         });
     } catch (err) {
