@@ -115,8 +115,8 @@ exports.getMyLeaves = async (req, res) => {
                 title: l.leave_type,
                 subtitle: l.reason,
                 status: l.status,
-                start: l.start_date ? l.start_date.toString() : null,
-                end: l.end_date ? l.end_date.toString() : null,
+                start: l.start_date,
+                end: l.end_date,
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
                 date: l.createdAt
