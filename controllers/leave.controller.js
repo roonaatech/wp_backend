@@ -40,10 +40,14 @@ exports.applyLeave = async (req, res) => {
         // 1. Check if leave type exists and get limit
         const leaveTypeDetails = await LeaveType.findOne({ where: { name: leave_type } });
         
-        // Skip check for "Loss of Pay" or if leave type not found (fallback)
+        if (!leaveTypeDetails) {
+            return res.status(400).send({ message: `Invalid leave type: '${leave_type}'. Please select a valid leave type.` });
+        }
+
+        // Skip check for "Loss of Pay"
         const isLossOfPay = leave_type.toLowerCase().includes('loss of pay');
         
-        if (leaveTypeDetails && !isLossOfPay) {
+        if (!isLossOfPay) {
             const allowedDays = leaveTypeDetails.days_allowed || 0;
             const requestedDays = calculateLeaveDays(start_date, end_date);
             
