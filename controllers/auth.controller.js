@@ -6,7 +6,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
-const PHP_AUTH_API_URL = process.env.PHP_AUTH_API_URL || 'http://localhost/workpulse_api/auth.php';
+const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
 
 exports.signup = (req, res) => {
@@ -38,16 +38,50 @@ exports.signin = async (req, res) => {
 
     if (USE_EXTERNAL_AUTH && !forceLocal) {
         try {
-            console.log("Attempting PHP Auth at:", PHP_AUTH_API_URL);
-            const phpResponse = await axios.post(PHP_AUTH_API_URL, {
-                email: email,
-                password: password
-            }, { timeout: 5000 }); // 5s timeout
+            console.log("Attempting PHP Auth Step 1 (CSRF) at:", `${PHP_AUTH_BASE_URL}/ext-auth/get_csrf_hash`);
+            
+            // 1. Get CSRF Token
+            const csrfResponse = await axios.get(`${PHP_AUTH_BASE_URL}/ext-auth/get_csrf_hash`, { timeout: 5000 });
+            const { csrfName, csrfHash } = csrfResponse.data;
+            const cookies = csrfResponse.headers['set-cookie'];
 
-            if (phpResponse.data && phpResponse.data.success) {
-                console.log("✅ PHP Auth Successful");
-                phpAuthSuccess = true;
-                phpUserData = phpResponse.data.data;
+            if(csrfName && csrfHash) {
+                // 2. Login with Token
+                console.log("Attempting PHP Auth Step 2 (Login)...");
+                
+                // Format payload as x-www-form-urlencoded (Required for CodeIgniter/PHP defaults)
+                const params = new URLSearchParams();
+                params.append('email', email);
+                params.append('password', password);
+                params.append(csrfName, csrfHash);
+
+                // Format Headers and Cookies
+                const loginHeaders = { 
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': "WorkPulse-Backend/1.0" // Sometimes required by firewalls
+                };
+
+                if (cookies) {
+                    // Extract key=value from set-cookie array (removing path, httponly, etc)
+                    loginHeaders['Cookie'] = cookies.map(c => c.split(';')[0]).join('; ');
+                }
+
+                console.log("Debug - Headers:", JSON.stringify(loginHeaders));
+
+                const phpResponse = await axios.post(`${PHP_AUTH_BASE_URL}/ext-auth/login`, params, {
+                    headers: loginHeaders,
+                    timeout: 5000
+                });
+
+                if (phpResponse.data && phpResponse.data.success) {
+                    console.log("✅ PHP Auth Successful");
+                    phpAuthSuccess = true;
+                    phpUserData = phpResponse.data.data;
+                } else {
+                     console.log("⚠️ PHP Login Failed (Invalid Credentials or API Error)");
+                }
+            } else {
+                 console.log("⚠️ CSRF Token retrieval failed (Format mismatch)");
             }
         } catch (err) {
             console.log("⚠️ PHP Auth failed:", err.message);
@@ -80,15 +114,16 @@ exports.signin = async (req, res) => {
 
             // Prepare basic user data to sync (excluding role/admin as they are managed locally)
             const userDataToSync = {
+                userid: phpUserData.staffid, // Map external staffid to local userid
                 firstname: phpUserData.firstname,
                 lastname: phpUserData.lastname,
-                gender: phpUserData.gender,
-                active: phpUserData.active !== undefined ? phpUserData.active : 1,
+                // gender: phpUserData.gender,      <-- Excluded from sync as per requirement
+                active: phpUserData.active !== undefined ? parseInt(phpUserData.active) : 1, // Ensure integer
                 password: hashedPassword, // Sync password for future fallback
             };
 
             if (user) {
-                console.log("Syncing existing user from PHP data (excluding role/admin)...");
+                console.log("Syncing existing user from PHP data...");
                 await user.update(userDataToSync);
             } else {
                 console.log("Creating new user from PHP data...");
@@ -96,6 +131,7 @@ exports.signin = async (req, res) => {
                 user = await TblStaff.create({
                     email: req.body.email,
                     ...userDataToSync,
+                    gender: null, // Initialize as empty/null so Admin can set it later
                     role: null,
                     admin: 0,
                     datecreated: new Date()
@@ -107,7 +143,8 @@ exports.signin = async (req, res) => {
             return res.status(404).send({ message: "User Not found." });
         }
 
-        if (user.active === 0 || user.active === false) {
+        // Ensure robust check for inactive status (handle 0, "0", false)
+        if (user.active == 0 || user.active === false || user.active === '0') {
             return res.status(403).send({ message: "Your account is inactive. Please contact your administrator." });
         }
 

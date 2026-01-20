@@ -5,6 +5,11 @@ module.exports = (sequelize, Sequelize) => {
             primaryKey: true,
             autoIncrement: true
         },
+        userid: {
+            type: Sequelize.INTEGER,
+            allowNull: true,
+            comment: 'External System User ID (e.g. from PHP App)'
+        },
         firstname: {
             type: Sequelize.STRING(50),
             allowNull: false

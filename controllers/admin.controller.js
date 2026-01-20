@@ -15,8 +15,13 @@ exports.createUser = async (req, res) => {
         });
     }
 
+    const roleInt = parseInt(role);
+    if (isNaN(roleInt) || roleInt === 0) {
+        return res.status(400).send({ message: "Invalid Role value." });
+    }
+
     // Validate role and manager_id requirements
-    if (role === 2 && !approving_manager_id) {
+    if (roleInt === 2 && !approving_manager_id) {
         return res.status(400).send({
             message: "Manager role requires an approving admin manager."
         });
@@ -40,7 +45,7 @@ exports.createUser = async (req, res) => {
             lastname: lastname,
             email: email,
             password: hashedPassword,
-            role: parseInt(role),
+            role: roleInt,
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
             gender: gender,
             active: 1
@@ -89,8 +94,16 @@ exports.updateUser = (req, res) => {
         });
     }
 
+    // Prepare role and validate
+    const roleInt = parseInt(role);
+    if (isNaN(roleInt) || roleInt === 0) {
+        return res.status(400).send({
+            message: "Invalid Role value."
+        });
+    }
+
     // Validate role and manager_id requirements
-    if (role === 2 && !approving_manager_id) {
+    if (roleInt === 2 && !approving_manager_id) {
         return res.status(400).send({
             message: "Manager role requires an approving admin manager."
         });
@@ -131,7 +144,7 @@ exports.updateUser = (req, res) => {
                     firstname: firstname,
                     lastname: lastname,
                     email: email,
-                    role: parseInt(role),
+                    role: roleInt,
                     approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
                     gender: gender,
                     active: req.body.active !== undefined ? req.body.active : user.active
