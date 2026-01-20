@@ -29,18 +29,19 @@ exports.signup = (req, res) => {
 };
 
 exports.signin = async (req, res) => {
-    console.log("Signin request received for:", req.body.email);
+    const { email, password, forceLocal } = req.body;
+    console.log("Signin request received for:", email, forceLocal ? "(Force Local)" : "");
 
     // --- PHP AUTHENTICATION & SYNC ---
     let phpAuthSuccess = false;
     let phpUserData = null;
 
-    if (USE_EXTERNAL_AUTH) {
+    if (USE_EXTERNAL_AUTH && !forceLocal) {
         try {
             console.log("Attempting PHP Auth at:", PHP_AUTH_API_URL);
             const phpResponse = await axios.post(PHP_AUTH_API_URL, {
-                email: req.body.email,
-                password: req.body.password
+                email: email,
+                password: password
             }, { timeout: 5000 }); // 5s timeout
 
             if (phpResponse.data && phpResponse.data.success) {
@@ -49,10 +50,20 @@ exports.signin = async (req, res) => {
                 phpUserData = phpResponse.data.data;
             }
         } catch (err) {
-            console.log("⚠️ PHP Auth skipped/failed (will try local):", err.message);
+            console.log("⚠️ PHP Auth failed:", err.message);
+            // If PHP auth fails (e.g. timeout, connection refused), ask user for confirmation
+            // unless forceLocal is already true
+            return res.status(200).send({
+                requiresConfirmation: true,
+                message: "External authentication system is unreachable. Do you want to continue with local authentication?"
+            });
         }
     } else {
-        console.log("ℹ️ External Auth Disabled. Using local WorkPulse DB.");
+        if (forceLocal) {
+            console.log("ℹ️ Force Local Auth requested.");
+        } else {
+            console.log("ℹ️ External Auth Disabled. Using local WorkPulse DB.");
+        }
     }
     // ----------------------------------
 

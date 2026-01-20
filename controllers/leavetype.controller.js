@@ -4,11 +4,10 @@ const LeaveType = db.leave_types;
 // Get leave types filtered by user's gender
 exports.findByUserGender = async (req, res) => {
     try {
-        const TblStaff = require("../models").tblstaff;
-        const LeaveType = require("../models").leave_types;
+        const User = db.user;
 
         // Get user's gender
-        const user = await TblStaff.findByPk(req.userId);
+        const user = await User.findByPk(req.userId);
         
         if (!user) {
             return res.status(404).send({
