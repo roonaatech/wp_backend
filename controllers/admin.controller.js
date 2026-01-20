@@ -4,6 +4,30 @@ const TblStaff = db.user;
 const OnDutyLog = db.on_duty_logs;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const Op = db.Sequelize.Op;
+
+exports.getIncompleteProfiles = async (req, res) => {
+    try {
+        const incompleteUsers = await TblStaff.findAll({
+            where: {
+                [Op.or]: [
+                    { role: 0 },
+                    { role: null },
+                    { gender: null },
+                    { gender: '' }
+                ],
+                active: 1 // Only check active users
+            },
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'gender']
+        });
+
+        res.status(200).send(incompleteUsers);
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Some error occurred while retrieving incomplete profiles."
+        });
+    }
+};
 
 exports.createUser = async (req, res) => {
     const { firstname, lastname, email, password, role, approving_manager_id, gender } = req.body;

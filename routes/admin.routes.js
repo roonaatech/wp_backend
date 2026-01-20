@@ -83,6 +83,21 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/admin/incomplete-profiles:
+     *   get:
+     *     summary: Get incomplete user profiles
+     *     description: Fetch users with missing role or gender
+     *     tags: [Admin]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: List of incomplete profiles
+     */
+    app.get("/api/admin/incomplete-profiles", [verifyToken], controller.getIncompleteProfiles);
+
+    /**
+     * @swagger
      * /api/admin/calendar:
      *   get:
      *     summary: Get calendar events for leave and on-duty

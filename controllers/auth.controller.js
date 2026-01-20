@@ -102,11 +102,30 @@ exports.signin = async (req, res) => {
     // ----------------------------------
 
     try {
-        let user = await TblStaff.findOne({
-            where: {
-                email: req.body.email
+        let user = null;
+
+        // 1. If PHP Auth succeeded, try to find user by External ID (userid)
+        if (phpAuthSuccess && phpUserData) {
+            user = await TblStaff.findOne({
+                where: {
+                    userid: phpUserData.staffid
+                }
+            });
+            
+            // If we found the user by userid, we are Good. We will update them below.
+            if (user) {
+                console.log("Found user by External ID (userid):", user.staffid);
             }
-        });
+        }
+
+        // 2. If user not found yet (Local Auth, or First-time Sync where userid is null), find by Email
+        if (!user) {
+            user = await TblStaff.findOne({
+                where: {
+                    email: req.body.email
+                }
+            });
+        }
 
         let isNewUser = false; // Flag to track first-time login via sync
 
