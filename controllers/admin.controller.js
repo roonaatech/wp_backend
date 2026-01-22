@@ -289,7 +289,7 @@ exports.getAllUsers = async (req, res) => {
         if (limit) {
             offset = (page - 1) * limit;
         }
-        
+
         // Search & Filter parameters
         const search = req.query.search || '';
         const status = req.query.status || 'all';
@@ -316,20 +316,20 @@ exports.getAllUsers = async (req, res) => {
 
         // Status constraint
         if (status === 'active') {
-             andConditions.push({ active: 1 });
+            andConditions.push({ active: 1 });
         } else if (status === 'inactive') {
-             andConditions.push({ active: 0 });
+            andConditions.push({ active: 0 });
         } else if (status === 'incomplete') {
-             // Incomplete profiles are typically active users with missing data
-             andConditions.push({ active: 1 });
-             andConditions.push({
-                 [Op.or]: [
+            // Incomplete profiles are typically active users with missing data
+            andConditions.push({ active: 1 });
+            andConditions.push({
+                [Op.or]: [
                     { role: 0 },
                     { role: null },
                     { gender: null },
                     { gender: '' }
-                 ]
-             });
+                ]
+            });
         }
 
         const whereClause = andConditions.length > 0 ? { [Op.and]: andConditions } : {};
@@ -447,14 +447,14 @@ exports.getPendingApprovals = async (req, res) => {
                             ]
                         }
                     );
-                    
+
                     if (onDutyLogRaw) {
                         enriched.on_duty_log = onDutyLogRaw.toJSON();
                         enriched.on_duty_log.tblstaff = enriched.on_duty_log.user;
                     } else {
                         enriched.on_duty_log = null;
                     }
-                    
+
                     if (!onDutyLogRaw) {
                         console.log('⚠️  on_duty_log not found for ID:', approval.on_duty_log_id);
                     } else {
@@ -512,6 +512,7 @@ exports.approveAttendance = (req, res) => {
 };
 
 exports.getAttendanceReports = async (req, res) => {
+    console.log('API Hit: getAttendanceReports');
     try {
         const { Op } = require("sequelize");
         const LeaveRequest = db.leave_requests;
