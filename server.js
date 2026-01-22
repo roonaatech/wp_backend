@@ -53,6 +53,7 @@ require('./routes/leave.routes')(app);
 require('./routes/onduty.routes')(app);
 require('./routes/admin.routes')(app);
 require('./routes/activity.routes')(app);
+require('./routes/apk.routes')(app);
 require('./routes/debug.routes')(app);
 
 // Sync database
