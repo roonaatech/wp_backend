@@ -275,19 +275,84 @@ exports.getAllUsers = async (req, res) => {
         const currentUser = await TblStaff.findByPk(req.userId);
         const isAdmin = currentUser && currentUser.admin === 1;
 
-        // Build where clause for manager filtering
-        let whereClause = {};
-        if (!isAdmin) {
-            // Manager can only see their assigned employees
-            whereClause.approving_manager_id = req.userId;
+        // Pagination parameters
+        const page = req.query.page ? parseInt(req.query.page) : 1;
+        let limit = 10;
+        let offset = 0;
+
+        if (req.query.limit === 'all') {
+            limit = null;
+        } else if (req.query.limit) {
+            limit = parseInt(req.query.limit);
         }
 
-        const users = await TblStaff.findAll({
-            where: whereClause,
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender']
-        });
+        if (limit) {
+            offset = (page - 1) * limit;
+        }
+        
+        // Search & Filter parameters
+        const search = req.query.search || '';
+        const status = req.query.status || 'all';
 
-        res.send(users);
+        // Build where clause using AND conditions
+        const andConditions = [];
+
+        // Manager constraint
+        if (!isAdmin) {
+            // Manager can only see their assigned employees
+            andConditions.push({ approving_manager_id: req.userId });
+        }
+
+        // Search constraint
+        if (search) {
+            andConditions.push({
+                [Op.or]: [
+                    { firstname: { [Op.like]: `%${search}%` } },
+                    { lastname: { [Op.like]: `%${search}%` } },
+                    { email: { [Op.like]: `%${search}%` } }
+                ]
+            });
+        }
+
+        // Status constraint
+        if (status === 'active') {
+             andConditions.push({ active: 1 });
+        } else if (status === 'inactive') {
+             andConditions.push({ active: 0 });
+        } else if (status === 'incomplete') {
+             // Incomplete profiles are typically active users with missing data
+             andConditions.push({ active: 1 });
+             andConditions.push({
+                 [Op.or]: [
+                    { role: 0 },
+                    { role: null },
+                    { gender: null },
+                    { gender: '' }
+                 ]
+             });
+        }
+
+        const whereClause = andConditions.length > 0 ? { [Op.and]: andConditions } : {};
+
+        const queryOptions = {
+            where: whereClause,
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender'],
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']]
+        };
+
+        if (limit) {
+            queryOptions.limit = limit;
+            queryOptions.offset = offset;
+        }
+
+        const { count, rows } = await TblStaff.findAndCountAll(queryOptions);
+
+        res.send({
+            totalItems: count,
+            users: rows,
+            totalPages: limit ? Math.ceil(count / limit) : 1,
+            currentPage: page
+        });
     } catch (err) {
         res.status(500).send({
             message: err.message || "Some error occurred while retrieving users."
@@ -299,7 +364,8 @@ exports.getManagersAndAdmins = (req, res) => {
     const { Op } = require("sequelize");
     TblStaff.findAll({
         where: { role: { [Op.in]: [1, 2] }, active: 1 },
-        attributes: ['staffid', 'firstname', 'lastname', 'email', 'role']
+        attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
+        order: [['firstname', 'ASC'], ['lastname', 'ASC']]
     })
         .then(users => {
             res.send(users);
