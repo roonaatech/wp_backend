@@ -77,8 +77,23 @@ exports.applyLeave = async (req, res) => {
             const totalProjectedDays = usedDaysCount + requestedDays;
 
             if (totalProjectedDays > allowedDays) {
+                // Get user's manager name
+                const user = await Staff.findByPk(req.userId, {
+                    attributes: ['approving_manager_id']
+                });
+                
+                let managerName = 'your manager';
+                if (user && user.approving_manager_id) {
+                    const manager = await Staff.findByPk(user.approving_manager_id, {
+                        attributes: ['firstname', 'lastname']
+                    });
+                    if (manager) {
+                        managerName = `*${manager.firstname} ${manager.lastname}*`;
+                    }
+                }
+                
                 return res.status(400).send({
-                    message: `Leave limit exceeded! You have used ${usedDaysCount} days of ${leave_type}. Applying for ${requestedDays} more days would exceed the annual limit of ${allowedDays} days.`
+                    message: `Your leave request exceeds the available balance. Please contact ${managerName} to discuss this leave request.`
                 });
             }
         }

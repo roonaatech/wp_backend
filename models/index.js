@@ -65,6 +65,6 @@ db.user_leave_types = require("./user_leave_type.model.js")(sequelize, Sequelize
 db.user.hasMany(db.user_leave_types, { foreignKey: 'user_id' });
 db.user_leave_types.belongsTo(db.user, { foreignKey: 'user_id' });
 db.leave_types.hasMany(db.user_leave_types, { foreignKey: 'leave_type_id' });
-db.user_leave_types.belongsTo(db.leave_types, { foreignKey: 'leave_type_id' });
+db.user_leave_types.belongsTo(db.leave_types, { foreignKey: 'leave_type_id', as: 'leave_type' });
 
 module.exports = db;
