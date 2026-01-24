@@ -1,5 +1,10 @@
 module.exports = (sequelize, Sequelize) => {
     const OnDutyLog = sequelize.define("on_duty_log", {
+        id: {
+            type: Sequelize.INTEGER,
+            primaryKey: true,
+            autoIncrement: true
+        },
         staff_id: {
             type: Sequelize.INTEGER
         },

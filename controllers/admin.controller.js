@@ -294,6 +294,7 @@ exports.getAllUsers = async (req, res) => {
         const search = req.query.search || '';
         const status = req.query.status || 'all';
         const letter = req.query.letter || '';
+        const role = req.query.role || ''; // Comma-separated role ids
 
         // Build where clause using AND conditions
         const andConditions = [];
@@ -322,22 +323,49 @@ exports.getAllUsers = async (req, res) => {
             });
         }
 
+        // Role constraint
+        if (role) {
+            const roleIds = role.split(',').map(r => parseInt(r.trim())).filter(r => !isNaN(r));
+            if (roleIds.length > 0) {
+                andConditions.push({
+                    role: { [Op.in]: roleIds }
+                });
+            }
+        }
+
         // Status constraint
-        if (status === 'active') {
-            andConditions.push({ active: 1 });
-        } else if (status === 'inactive') {
-            andConditions.push({ active: 0 });
-        } else if (status === 'incomplete') {
-            // Incomplete profiles are typically active users with missing data
-            andConditions.push({ active: 1 });
-            andConditions.push({
-                [Op.or]: [
-                    { role: 0 },
-                    { role: null },
-                    { gender: null },
-                    { gender: '' }
-                ]
+        if (status) {
+            const statuses = status.split(',').map(s => s.trim());
+            const statusConditions = [];
+            
+            statuses.forEach(s => {
+                if (s === 'active') {
+                    statusConditions.push({ active: 1 });
+                } else if (s === 'inactive') {
+                    statusConditions.push({ active: 0 });
+                } else if (s === 'incomplete') {
+                    // Incomplete profiles: active users with missing data
+                    statusConditions.push({
+                        [Op.and]: [
+                            { active: 1 },
+                            {
+                                [Op.or]: [
+                                    { role: 0 },
+                                    { role: null },
+                                    { gender: null },
+                                    { gender: '' }
+                                ]
+                            }
+                        ]
+                    });
+                }
             });
+            
+            if (statusConditions.length > 0) {
+                andConditions.push({
+                    [Op.or]: statusConditions
+                });
+            }
         }
 
         const whereClause = andConditions.length > 0 ? { [Op.and]: andConditions } : {};
@@ -371,7 +399,7 @@ exports.getAllUsers = async (req, res) => {
 exports.getManagersAndAdmins = (req, res) => {
     const { Op } = require("sequelize");
     TblStaff.findAll({
-        where: { role: { [Op.in]: [1, 2] }, active: 1 },
+        where: { role: { [Op.in]: [1, 2, 3] }, active: 1 },
         attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
         order: [['firstname', 'ASC'], ['lastname', 'ASC']]
     })

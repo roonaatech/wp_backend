@@ -334,3 +334,48 @@ exports.updateOnDutyDetails = async (req, res) => {
         res.status(500).send({ message: err.message });
     }
 };
+
+// Delete On-Duty Log (User Delete)
+exports.deleteOnDuty = async (req, res) => {
+    const { id } = req.params;
+    const userId = req.userId;
+
+    try {
+        const requestId = parseInt(id, 10);
+        if (isNaN(requestId)) {
+            return res.status(400).send({ message: "Invalid request ID format." });
+        }
+
+        const onDutyLog = await OnDutyLog.findOne({
+            where: { id: requestId, staff_id: userId }
+        });
+
+        if (!onDutyLog) {
+            return res.status(404).send({ message: "On-duty request not found." });
+        }
+
+        // Allow deletion if status is null, empty, or 'Pending' (case-insensitive)
+        const status = (onDutyLog.status || '').toLowerCase();
+        if (status !== '' && status !== 'pending') {
+            return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+        }
+
+        await onDutyLog.destroy();
+
+        await logActivity({
+            admin_id: userId,
+            action: 'DELETE',
+            entity: 'OnDutyLog',
+            entity_id: requestId,
+            affected_user_id: userId,
+            description: `Deleted on-duty request ID: ${requestId}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        return res.status(200).send({ message: "On-duty request deleted successfully." });
+    } catch (error) {
+        console.error(`Error deleting on-duty request:`, error);
+        res.status(500).send({ message: "Error deleting on-duty request.", error: error.message });
+    }
+};

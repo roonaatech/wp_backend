@@ -1,6 +1,7 @@
 const db = require("../models");
 const LeaveRequest = db.leave_requests;
 const LeaveType = db.leave_types;
+const OnDutyLog = db.on_duty_logs;
 const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
@@ -895,34 +896,48 @@ exports.deleteLeave = async (req, res) => {
     const { id } = req.params;
     const userId = req.userId;
 
-    console.log(`[DELETE] Attempting to delete leave ID: ${id} for user: ${userId}`);
-
     try {
+        const requestId = parseInt(id, 10);
+        if (isNaN(requestId)) {
+            return res.status(400).send({ message: "Invalid request ID format." });
+        }
+
+        // Try to find and delete leave request first
         const leaveRequest = await LeaveRequest.findOne({
-            where: { id: id, staff_id: userId }
+            where: { id: requestId, staff_id: userId }
         });
 
-        console.log(`[DELETE] Found leave request:`, leaveRequest ? `ID ${leaveRequest.id}, Status: ${leaveRequest.status}` : 'NOT FOUND');
+        if (leaveRequest) {
+            if (leaveRequest.status !== 'Pending') {
+                return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+            }
 
-        if (!leaveRequest) {
-            console.log(`[DELETE] Leave with ID ${id} not found for user ${userId}`);
-            return res.status(404).send({ message: "Leave/On-Duty request not found." });
+            await leaveRequest.destroy();
+            logActivity(req, `Deleted leave request ID: ${requestId}`);
+            return res.status(200).send({ message: "Leave request deleted successfully." });
         }
 
-        if (leaveRequest.status !== 'Pending') {
-            console.log(`[DELETE] Cannot delete - status is ${leaveRequest.status}, not Pending`);
-            return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+        // If not a leave request, try to find and delete on-duty log
+        const onDutyLog = await OnDutyLog.findOne({
+            where: { id: requestId, staff_id: userId }
+        });
+
+        if (onDutyLog) {
+            const status = (onDutyLog.status || '').toLowerCase();
+            if (status !== '' && status !== 'pending') {
+                return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+            }
+
+            await onDutyLog.destroy();
+            logActivity(req, `Deleted on-duty request ID: ${requestId}`);
+            return res.status(200).send({ message: "On-duty request deleted successfully." });
         }
 
-        await leaveRequest.destroy();
-        console.log(`[DELETE] Successfully deleted leave ID: ${id}`);
-
-        logActivity(req, `Deleted leave/on-duty request ID: ${id}`);
-        res.status(200).send({ message: "Request deleted successfully." });
+        return res.status(404).send({ message: "Leave/On-Duty request not found." });
 
     } catch (error) {
-        console.log(`[DELETE] Error:`, error);
-        logActivity(req, `Error deleting leave/on-duty request ID: ${id}`, error);
+        console.error(`Error deleting request:`, error);
+        logActivity(req, `Error deleting request ID: ${id}`, error);
         res.status(500).send({ message: "Error deleting request.", error: error.message });
     }
 };
