@@ -60,4 +60,11 @@ db.activity_logs.belongsTo(db.user, { foreignKey: 'affected_user_id', as: 'affec
 db.user.hasMany(db.apk_versions, { foreignKey: 'uploaded_by', as: 'uploaded_apks' });
 db.apk_versions.belongsTo(db.user, { foreignKey: 'uploaded_by', as: 'uploader' });
 
+// UserLeaveType associations
+db.user_leave_types = require("./user_leave_type.model.js")(sequelize, Sequelize);
+db.user.hasMany(db.user_leave_types, { foreignKey: 'user_id' });
+db.user_leave_types.belongsTo(db.user, { foreignKey: 'user_id' });
+db.leave_types.hasMany(db.user_leave_types, { foreignKey: 'leave_type_id' });
+db.user_leave_types.belongsTo(db.leave_types, { foreignKey: 'leave_type_id' });
+
 module.exports = db;

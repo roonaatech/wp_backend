@@ -75,6 +75,18 @@ exports.createUser = async (req, res) => {
             active: 1
         });
 
+        // Assign default leave types to user
+        const LeaveType = db.leave_types;
+        const UserLeaveType = db.user_leave_types;
+        const defaultLeaveTypes = await LeaveType.findAll({ where: { status: true } });
+        const userLeaveTypes = defaultLeaveTypes.map(lt => ({
+            user_id: newUser.staffid,
+            leave_type_id: lt.id,
+            days_allowed: lt.days_allowed,
+            days_used: 0
+        }));
+        await UserLeaveType.bulkCreate(userLeaveTypes);
+
         // Log activity
         await logActivity({
             admin_id: req.userId,

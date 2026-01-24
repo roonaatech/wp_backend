@@ -1,12 +1,11 @@
 'use strict';
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.addColumn('users', 'gender', {
-      type: Sequelize.ENUM('Male', 'Female', 'Transgender'),
-      allowNull: true,
-    });
+    // No-op: gender column already exists
+    return Promise.resolve();
   },
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.removeColumn('users', 'gender');
+    // No-op
+    return Promise.resolve();
   }
 };

@@ -38,20 +38,23 @@ exports.applyLeave = async (req, res) => {
         }
 
         // --- Validate Leave Balance ---
-        // 1. Check if leave type exists and get limit
-        const leaveTypeDetails = await LeaveType.findOne({ where: { name: leave_type } });
-        
-        if (!leaveTypeDetails) {
-            return res.status(400).send({ message: `Invalid leave type: '${leave_type}'. Please select a valid leave type.` });
-        }
+        // 1. Check if leave type is assigned to user in user_leave_types
+        const UserLeaveType = db.user_leave_types;
+        const userLeaveType = await UserLeaveType.findOne({
+            where: { user_id: req.userId },
+            include: [{ model: LeaveType, as: 'leave_type', where: { name: leave_type } }]
+        });
 
         // Skip check for "Loss of Pay"
         const isLossOfPay = leave_type.toLowerCase().includes('loss of pay');
-        
+
         if (!isLossOfPay) {
-            const allowedDays = leaveTypeDetails.days_allowed || 0;
+            if (!userLeaveType) {
+                return res.status(400).send({ message: `Leave type '${leave_type}' is not assigned to you. Please contact admin.` });
+            }
+            const allowedDays = userLeaveType.days_allowed || 0;
             const requestedDays = calculateLeaveDays(start_date, end_date);
-            
+
             // 2. Get already used/pending days for this year
             const year = new Date(start_date).getFullYear();
             const usedLeaves = await LeaveRequest.findAll({
@@ -964,64 +967,59 @@ exports.getUserLeaveBalance = async (req, res) => {
         const yearStart = new Date(`${currentYear}-01-01`);
         const yearEnd = new Date(`${currentYear}-12-31`);
 
-        // Get all active leave types
+        // Only consider leave types explicitly assigned to user in user_leave_types
         const LeaveType = db.leave_types;
-        let leaveTypes = await LeaveType.findAll({ where: { status: true } });
-
-        // Filter leave types based on gender restriction
-        leaveTypes = leaveTypes.filter(leaveType => {
-            // If no gender restriction is set, leave type is available for all
-            if (!leaveType.gender_restriction || leaveType.gender_restriction.length === 0) {
-                return true;
-            }
-            // If gender restriction exists, check if user's gender is in the list
-            return leaveType.gender_restriction.includes(user.gender);
+        const UserLeaveType = db.user_leave_types;
+        
+        const assignedLeaveTypes = await UserLeaveType.findAll({
+            where: { user_id: userId },
+            include: [{ model: LeaveType, as: 'leave_type', where: { status: true } }]
         });
 
-        console.log(`[BALANCE] Found ${leaveTypes.length} leave types applicable for gender ${user.gender}:`, leaveTypes.map(l => ({ id: l.id, name: l.name, days: l.days_allowed })));
-
-        // Get leave balance for each leave type
-        const balances = await Promise.all(
-            leaveTypes.map(async (leaveType) => {
-                // Get approved/active leaves for this user, leave type, and CURRENT YEAR only
-                const usedLeaves = await LeaveRequest.findAll({
-                    where: {
-                        staff_id: userId,
-                        leave_type: leaveType.name,
-                        status: { [Op.in]: ['Pending', 'Approved', 'Active'] },
-                        start_date: {
-                            [Op.gte]: yearStart,
-                            [Op.lte]: yearEnd
-                        }
+        const balances = [];
+        for (const ult of assignedLeaveTypes) {
+            const leaveType = ult.leave_type;
+            
+            // Check gender restriction
+            if (leaveType.gender_restriction && leaveType.gender_restriction.length > 0 && !leaveType.gender_restriction.includes(user.gender)) {
+                console.log(`[BALANCE] Skipping ${leaveType.name} due to gender restriction`);
+                continue;
+            }
+            
+            // Get approved/active/pending leaves for this user, leave type, and CURRENT YEAR only
+            const usedLeaves = await LeaveRequest.findAll({
+                where: {
+                    staff_id: userId,
+                    leave_type: leaveType.name,
+                    status: { [Op.in]: ['Pending', 'Approved', 'Active'] },
+                    start_date: {
+                        [Op.gte]: yearStart,
+                        [Op.lte]: yearEnd
                     }
-                });
+                }
+            });
 
-                console.log(`[BALANCE] Leave type: ${leaveType.name}, Used leaves count (${currentYear}): ${usedLeaves.length}`);
+            let daysUsed = 0;
+            usedLeaves.forEach(leave => {
+                const start = new Date(leave.start_date);
+                const end = new Date(leave.end_date);
+                const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                daysUsed += days;
+            });
 
-                // Calculate total days used
-                let daysUsed = 0;
-                usedLeaves.forEach(leave => {
-                    const start = new Date(leave.start_date);
-                    const end = new Date(leave.end_date);
-                    const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-                    daysUsed += days;
-                    console.log(`[BALANCE]   - ${leave.start_date} to ${leave.end_date}: ${days} days`);
-                });
+            const balance = Math.max(0, ult.days_allowed - daysUsed);
 
-                const balance = Math.max(0, leaveType.days_allowed - daysUsed);
-                console.log(`[BALANCE] ${leaveType.name} (${currentYear}): Total=${leaveType.days_allowed}, Used=${daysUsed}, Balance=${balance}`);
+            balances.push({
+                id: leaveType.id,
+                name: leaveType.name,
+                total_days: ult.days_allowed,
+                used: daysUsed,
+                balance: balance
+            });
+            
+            console.log(`[BALANCE] ${leaveType.name}: used=${daysUsed}, allowed=${ult.days_allowed}, balance=${balance}`);
+        }
 
-                return {
-                    id: leaveType.id,
-                    name: leaveType.name,
-                    total_days: leaveType.days_allowed,
-                    used: daysUsed,
-                    balance: balance
-                };
-            })
-        );
-
-        console.log(`[BALANCE] Returning balances for year ${currentYear}:`, balances);
         res.status(200).send({
             leaveTypes: balances,
             year: currentYear
@@ -1054,24 +1052,20 @@ exports.getMyLeaveBalance = async (req, res) => {
         const yearStart = new Date(`${currentYear}-01-01`);
         const yearEnd = new Date(`${currentYear}-12-31`);
 
-        // Get all active leave types
-        const LeaveType = db.leave_types;
-        let leaveTypes = await LeaveType.findAll({ where: { status: true } });
-
-        // Filter leave types based on gender restriction
-        leaveTypes = leaveTypes.filter(leaveType => {
-            // If no gender restriction is set, leave type is available for all
-            if (!leaveType.gender_restriction || leaveType.gender_restriction.length === 0) {
-                return true;
-            }
-            // If gender restriction exists, check if user's gender is in the list
-            return leaveType.gender_restriction.includes(user.gender);
+        // Only consider leave types assigned to user in user_leave_types
+        const UserLeaveType = db.user_leave_types;
+        const assignedLeaveTypes = await UserLeaveType.findAll({
+            where: { user_id: userId },
+            include: [{ model: LeaveType, as: 'leave_type', where: { status: true } }]
         });
 
-        // Create a map of leave type name to balance
         const balanceMap = {};
-
-        for (const leaveType of leaveTypes) {
+        for (const ult of assignedLeaveTypes) {
+            const leaveType = ult.leave_type;
+            // Gender restriction check
+            if (leaveType.gender_restriction && leaveType.gender_restriction.length > 0 && !leaveType.gender_restriction.includes(user.gender)) {
+                continue;
+            }
             // Get approved/active leaves for this user, leave type, and CURRENT YEAR only
             const usedLeaves = await LeaveRequest.findAll({
                 where: {
@@ -1084,7 +1078,6 @@ exports.getMyLeaveBalance = async (req, res) => {
                     }
                 }
             });
-
             // Calculate total days used
             let daysUsed = 0;
             usedLeaves.forEach(leave => {
@@ -1093,12 +1086,10 @@ exports.getMyLeaveBalance = async (req, res) => {
                 const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
                 daysUsed += days;
             });
-
-            const balance = Math.max(0, leaveType.days_allowed - daysUsed);
+            const balance = Math.max(0, ult.days_allowed - daysUsed);
             balanceMap[leaveType.name] = balance;
             console.log(`[MY-BALANCE] ${leaveType.name}: balance=${balance}`);
         }
-
         res.status(200).send(balanceMap);
     } catch (error) {
         console.error('[MY-BALANCE] Error fetching user leave balance:', error);

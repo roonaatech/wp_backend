@@ -2,10 +2,12 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.renameTable('tblstaff', 'users');
+    // No-op: table already named 'users'
+    return Promise.resolve();
   },
 
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.renameTable('users', 'tblstaff');
+    // No-op
+    return Promise.resolve();
   }
 };
