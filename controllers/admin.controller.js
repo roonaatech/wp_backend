@@ -293,6 +293,7 @@ exports.getAllUsers = async (req, res) => {
         // Search & Filter parameters
         const search = req.query.search || '';
         const status = req.query.status || 'all';
+        const letter = req.query.letter || '';
 
         // Build where clause using AND conditions
         const andConditions = [];
@@ -311,6 +312,13 @@ exports.getAllUsers = async (req, res) => {
                     { lastname: { [Op.like]: `%${search}%` } },
                     { email: { [Op.like]: `%${search}%` } }
                 ]
+            });
+        }
+
+        // Letter constraint (filter by first letter of firstname)
+        if (letter) {
+            andConditions.push({
+                firstname: { [Op.like]: `${letter}%` }
             });
         }
 
