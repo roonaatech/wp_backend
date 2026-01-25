@@ -48,6 +48,7 @@ app.get('/', (req, res) => {
 
 // Routes
 require('./routes/auth.routes')(app);
+require('./routes/role.routes')(app);
 require("./routes/leavetype.routes")(app);
 require('./routes/leave.routes')(app);
 require('./routes/userleavetype.routes')(app);

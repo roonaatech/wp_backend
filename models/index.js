@@ -20,6 +20,7 @@ db.Sequelize = Sequelize;
 db.sequelize = sequelize;
 
 db.user = require("./user.model.js")(sequelize, Sequelize);
+db.roles = require("./role.model.js")(sequelize, Sequelize);
 db.leave_types = require("./leave_type.model.js")(sequelize, Sequelize);
 db.leave_requests = require("./leave_request.model.js")(sequelize, Sequelize);
 db.on_duty_logs = require("./on_duty_log.model.js")(sequelize, Sequelize);
@@ -28,6 +29,9 @@ db.activity_logs = require("./activity_log.model.js")(sequelize, Sequelize);
 db.apk_versions = require("./apk_version.model.js")(sequelize, Sequelize);
 
 // Associations
+db.user.belongsTo(db.roles, { foreignKey: 'role', as: 'role_info' });
+db.roles.hasMany(db.user, { foreignKey: 'role' });
+
 db.user.hasMany(db.leave_requests, { foreignKey: 'staff_id' });
 db.leave_requests.belongsTo(db.user, { foreignKey: 'staff_id', as: 'user' });
 
