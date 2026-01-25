@@ -1,7 +1,15 @@
 #!/bin/bash
 
-# Load UAT environment variables
-export $(cat .env | grep -v '^#' | xargs)
+# Load environment variables
+if [ -f .env.uat ]; then
+  echo "Using .env.uat"
+  export $(cat .env.uat | grep -v '^#' | xargs)
+elif [ -f .env ]; then
+  echo "Using .env"
+  export $(cat .env | grep -v '^#' | xargs)
+else
+  echo "WARNING: No .env or .env.uat file found!"
+fi
 
 # Run migrations
 npx sequelize-cli db:migrate

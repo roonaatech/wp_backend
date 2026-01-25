@@ -2,7 +2,9 @@ const path = require('path');
 const https = require('https');
 const fs = require('fs');
 const dotenv = require('dotenv');
-dotenv.config({ path: path.resolve(__dirname, '.env') });
+const envFile = fs.existsSync(path.resolve(__dirname, '.env.uat')) ? '.env.uat' : '.env';
+dotenv.config({ path: path.resolve(__dirname, envFile) });
+console.log(`Loaded environment from ${envFile}`);
 
 process.on('uncaughtException', (err) => {
     console.error('Global Uncaught Exception:', err);
@@ -68,11 +70,15 @@ require('./routes/admin.routes')(app);
 require('./routes/activity.routes')(app);
 require('./routes/apk.routes')(app);
 require('./routes/debug.routes')(app);
+require('./routes/email.routes')(app);
 
 // Sync database and start HTTPS server
 db.sequelize.sync()
     .then(() => {
         console.log('Synced db.');
+        // Seed Email Templates
+        require('./utils/seed_templates')();
+
         https.createServer(sslOptions, app).listen(PORT, () => {
             console.log(`HTTPS Server is running on port ${PORT}.`);
             console.log(`API Documentation available at https://api.workpulse-uat.roonaa.in:${PORT}/api-docs`);

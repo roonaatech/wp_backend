@@ -48,7 +48,11 @@ exports.updateConfig = async (req, res) => {
 
         res.status(200).send({ message: "Configuration saved successfully.", config });
     } catch (err) {
-        res.status(500).send({ message: err.message });
+        console.error("Error in updateConfig:", err);
+        res.status(500).send({
+            message: "Failed to save configuration. Please check server logs.",
+            error: err.message
+        });
     }
 };
 
