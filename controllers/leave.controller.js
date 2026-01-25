@@ -189,13 +189,14 @@ exports.applyLeave = async (req, res) => {
             // Send Confirmation Email to Applicant
             if (user && user.email) {
                 console.log(`Sending leave_applied_confirmation email to ${user.email}`);
+                const managerEmail = (user.approving_manager_id && manager && manager.email) ? manager.email : null;
                 emailService.sendTemplateEmail(user.email, "leave_applied_confirmation", {
                     user_name: `${user.firstname} ${user.lastname}`,
                     leave_type: leave_type,
                     start_date: start_date,
                     end_date: end_date,
                     reason: reason
-                });
+                }, managerEmail);
             }
         } catch (emailErr) {
             console.error("Failed to send email:", emailErr);
@@ -653,13 +654,17 @@ exports.updateLeaveStatus = async (req, res) => {
                 const templateSlug = status === 'Approved' ? 'leave_approved' : 'leave_rejected';
                 console.log(`--- Email Trigger: Leave ${status} ---`);
                 console.log(`Sending email to ${user.email}`);
+
+                // Get manager email for CC if available
+                const managerEmail = approver && approver.email ? approver.email : null;
+
                 emailService.sendTemplateEmail(user.email, templateSlug, {
                     user_name: `${user.firstname} ${user.lastname}`,
                     leave_type: leave.leave_type,
                     start_date: leave.start_date,
                     end_date: leave.end_date,
                     rejection_reason: rejection_reason || ""
-                });
+                }, managerEmail);
             } else {
                 console.log('User has no email or not found for leave status update.');
             }

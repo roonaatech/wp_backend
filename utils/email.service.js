@@ -36,7 +36,7 @@ class EmailService {
         return null;
     }
 
-    async sendEmail(to, subject, htmlBody) {
+    async sendEmail(to, subject, htmlBody, cc = null) {
         try {
             const setup = await this.getTransporter();
             if (!setup) return { success: false, message: "Email configuration missing" };
@@ -44,13 +44,20 @@ class EmailService {
             const { transporter, config } = setup;
 
             console.log(`[EmailService] Sending email to: ${to} | Subject: ${subject}`);
+            if (cc) console.log(`[EmailService] CC: ${cc}`);
 
-            const info = await transporter.sendMail({
+            const mailOptions = {
                 from: `"${config.from_name}" <${config.from_email}>`,
                 to: to,
                 subject: subject,
                 html: htmlBody,
-            });
+            };
+
+            if (cc) {
+                mailOptions.cc = cc;
+            }
+
+            const info = await transporter.sendMail(mailOptions);
 
             console.log("Message sent: %s", info.messageId);
             return { success: true, messageId: info.messageId };
@@ -60,7 +67,7 @@ class EmailService {
         }
     }
 
-    async sendTemplateEmail(to, templateSlug, variables) {
+    async sendTemplateEmail(to, templateSlug, variables, cc = null) {
         try {
             const template = await EmailTemplate.findOne({ where: { slug: templateSlug, is_active: true } });
 
@@ -79,7 +86,10 @@ class EmailService {
                 body = body.replace(regex, variables[key]);
             }
 
-            return await this.sendEmail(to, subject, body);
+            // Use CC if template has cc_manager enabled and CC is provided
+            const ccToUse = (template.cc_manager && cc) ? cc : null;
+
+            return await this.sendEmail(to, subject, body, ccToUse);
 
         } catch (error) {
             console.error(`Error sending template email '${templateSlug}':`, error);

@@ -5,6 +5,18 @@ const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
 
+// Helper to format date as dd-MM-yyyy HH:mm
+const formatDate = (date) => {
+    if (!date) return '';
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${day}-${month}-${year} ${hours}:${minutes}`;
+};
+
 
 // Start on-duty visit
 exports.startOnDuty = (req, res) => {
@@ -118,8 +130,8 @@ exports.endOnDuty = (req, res) => {
                         if (manager && manager.email) {
                             emailService.sendTemplateEmail(manager.email, "onduty_applied", {
                                 user_name: `${staff.firstname} ${staff.lastname}`,
-                                start_date: updatedOnDuty.start_time, // formatting might be needed
-                                end_date: updatedOnDuty.end_time,
+                                start_date: formatDate(updatedOnDuty.start_time),
+                                end_date: formatDate(updatedOnDuty.end_time),
                                 reason: `${updatedOnDuty.purpose} at ${updatedOnDuty.client_name}`
                             });
                         }
@@ -136,13 +148,17 @@ exports.endOnDuty = (req, res) => {
                     if (staff && staff.email) {
                         console.log('--- Email Trigger: On-Duty Confirmation ---');
                         console.log(`Sending onduty_applied_confirmation email to ${staff.email}`);
+
+                        // Get manager email for CC if available
+                        const managerEmail = (staff.approving_manager_id && manager && manager.email) ? manager.email : null;
+
                         const result = await emailService.sendTemplateEmail(staff.email, "onduty_applied_confirmation", {
                             user_name: `${staff.firstname} ${staff.lastname}`,
-                            start_date: updatedOnDuty.start_time,
-                            end_date: updatedOnDuty.end_time,
+                            start_date: formatDate(updatedOnDuty.start_time),
+                            end_date: formatDate(updatedOnDuty.end_time),
                             client_name: updatedOnDuty.client_name,
                             reason: updatedOnDuty.purpose
-                        });
+                        }, managerEmail);
                         console.log('Confirmation email result:', result);
                     } else {
                         console.log('Applicant has no email or not found.');
@@ -419,7 +435,6 @@ exports.deleteOnDuty = async (req, res) => {
 };
 
 // Update On-Duty Status (Approve/Reject)
-
 exports.updateOnDutyStatus = async (req, res) => {
     try {
         const OnDutyLog = db.on_duty_logs;
@@ -519,23 +534,27 @@ exports.updateOnDutyStatus = async (req, res) => {
         try {
             const user = await User.findByPk(log.staff_id);
             console.log(`[DEBUG] Applicant found for email? ${!!user} (ID: ${log.staff_id})`);
-            
+
             if (user && user.email && (status === 'Approved' || status === 'Rejected')) {
                 console.log(`--- Email Trigger: On-Duty ${status} ---`);
                 console.log(`Sending email to ${user.email}`);
                 const templateSlug = status === 'Approved' ? 'onduty_approved' : 'onduty_rejected';
+
+                // Get manager email for CC if available
+                const managerEmail = approver && approver.email ? approver.email : null;
+
                 emailService.sendTemplateEmail(user.email, templateSlug, {
                     user_name: `${user.firstname} ${user.lastname}`,
-                    start_date: log.start_time,
-                    end_date: log.end_time,
+                    start_date: formatDate(log.start_time),
+                    end_date: formatDate(log.end_time),
                     rejection_reason: rejection_reason || ""
-                });
+                }, managerEmail);
             } else if (!user) {
                 console.log('[DEBUG] Applicant user not found by ID ' + log.staff_id);
             } else if (!user.email) {
-                 console.log('[DEBUG] Applicant user has no email.');
+                console.log('[DEBUG] Applicant user has no email.');
             } else {
-                 console.log(`[DEBUG] Email logic skipped. Status: ${status}`);
+                console.log(`[DEBUG] Email logic skipped. Status: ${status}`);
             }
         } catch (emailErr) {
             console.error("Failed to send email:", emailErr);
@@ -550,3 +569,4 @@ exports.updateOnDutyStatus = async (req, res) => {
         res.status(500).send({ message: err.message });
     }
 };
+

@@ -34,6 +34,11 @@ module.exports = (sequelize, Sequelize) => {
             type: DataTypes.BOOLEAN,
             defaultValue: true,
         },
+        cc_manager: {
+            type: DataTypes.BOOLEAN,
+            defaultValue: false,
+            comment: "Whether to CC the manager on this email type",
+        },
     });
 
     return EmailTemplate;
