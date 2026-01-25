@@ -162,35 +162,33 @@ exports.applyLeave = async (req, res) => {
         // Send Email to Manager
         try {
             console.log('--- Email Trigger: Leave Applied ---');
+            const Staff = db.user;
             const user = await Staff.findByPk(req.userId);
-            console.log(`User found: ${user ? user.id : 'null'}, Manager ID: ${user ? user.approving_manager_id : 'n/a'}`);
+            let manager = null;
 
             if (user && user.approving_manager_id) {
-                const manager = await Staff.findByPk(user.approving_manager_id);
+                manager = await Staff.findByPk(user.approving_manager_id);
                 console.log(`Manager found: ${manager ? manager.id : 'null'}, Email: ${manager ? manager.email : 'n/a'}`);
 
                 if (manager && manager.email) {
                     console.log(`Sending leave_applied email to ${manager.email}`);
-                    const result = await emailService.sendTemplateEmail(manager.email, "leave_applied", {
+                    await emailService.sendTemplateEmail(manager.email, "leave_applied", {
                         user_name: `${user.firstname} ${user.lastname}`,
                         leave_type: leave_type,
                         start_date: start_date,
                         end_date: end_date,
                         reason: reason
                     });
-                    console.log('Email send result:', result);
                 } else {
                     console.log('Manager has no email or not found.');
                 }
-            } else {
-                console.log('User has no approving manager.');
             }
 
             // Send Confirmation Email to Applicant
             if (user && user.email) {
                 console.log(`Sending leave_applied_confirmation email to ${user.email}`);
-                const managerEmail = (user.approving_manager_id && manager && manager.email) ? manager.email : null;
-                emailService.sendTemplateEmail(user.email, "leave_applied_confirmation", {
+                const managerEmail = (manager && manager.email) ? manager.email : null;
+                await emailService.sendTemplateEmail(user.email, "leave_applied_confirmation", {
                     user_name: `${user.firstname} ${user.lastname}`,
                     leave_type: leave_type,
                     start_date: start_date,

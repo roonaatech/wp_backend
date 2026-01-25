@@ -71,7 +71,8 @@ async function seedTemplates() {
                 </div>
                 <p>Enjoy your time off!</p>
             `),
-            variables_hint: "user_name, leave_type, start_date, end_date"
+            variables_hint: "user_name, leave_type, start_date, end_date",
+            cc_manager: true
         },
         {
             slug: "leave_rejected",
@@ -89,7 +90,8 @@ async function seedTemplates() {
                 </div>
                 <p>If you have any questions, please contact your manager.</p>
             `),
-            variables_hint: "user_name, leave_type, start_date, end_date, rejection_reason"
+            variables_hint: "user_name, leave_type, start_date, end_date, rejection_reason",
+            cc_manager: true
         },
         {
             slug: "onduty_applied",
@@ -118,7 +120,8 @@ async function seedTemplates() {
                     <p style="margin: 5px 0;"><strong>Dates:</strong> {{start_date}} to {{end_date}}</p>
                 </div>
             `),
-            variables_hint: "user_name, start_date, end_date"
+            variables_hint: "user_name, start_date, end_date",
+            cc_manager: true
         },
         {
             slug: "onduty_rejected",
@@ -134,7 +137,8 @@ async function seedTemplates() {
                     <p style="margin: 0; font-style: italic;">{{rejection_reason}}</p>
                 </div>
             `),
-            variables_hint: "user_name, start_date, end_date, rejection_reason"
+            variables_hint: "user_name, start_date, end_date, rejection_reason",
+            cc_manager: true
         },
         {
             slug: "leave_applied_confirmation",
@@ -151,7 +155,8 @@ async function seedTemplates() {
                 </div>
                 <p style="color: ${MUTED_TEXT};">You will be notified via email once your manager reviews your request.</p>
             `),
-            variables_hint: "user_name, leave_type, start_date, end_date, reason"
+            variables_hint: "user_name, leave_type, start_date, end_date, reason",
+            cc_manager: true
         },
         {
             slug: "onduty_applied_confirmation",
@@ -168,7 +173,8 @@ async function seedTemplates() {
                 </div>
                 <p style="color: ${MUTED_TEXT};">You will be notified via email once your manager reviews your request.</p>
             `),
-            variables_hint: "user_name, start_date, end_date, client_name, reason"
+            variables_hint: "user_name, start_date, end_date, client_name, reason",
+            cc_manager: true
         }
     ];
 

@@ -111,6 +111,7 @@ exports.endOnDuty = (req, res) => {
                 console.log('Staff role:', staff?.role);
                 console.log('Approving Manager ID:', staff?.approving_manager_id);
 
+                let manager = null;
                 if (staff && staff.approving_manager_id) {
                     // Create approval record for on-duty
                     const approval = await Approval.create({
@@ -119,14 +120,10 @@ exports.endOnDuty = (req, res) => {
                         status: 'pending'
                     });
                     console.log('✅ Approval created successfully');
-                    console.log('   Approval ID:', approval.id);
-                    console.log('   On-Duty Log ID:', approval.on_duty_log_id);
-                    console.log('   Manager ID:', approval.manager_id);
-                    console.log('   Status:', approval.status);
 
                     // Send Email to Manager
                     try {
-                        const manager = await User.findByPk(staff.approving_manager_id);
+                        manager = await User.findByPk(staff.approving_manager_id);
                         if (manager && manager.email) {
                             emailService.sendTemplateEmail(manager.email, "onduty_applied", {
                                 user_name: `${staff.firstname} ${staff.lastname}`,
@@ -150,7 +147,7 @@ exports.endOnDuty = (req, res) => {
                         console.log(`Sending onduty_applied_confirmation email to ${staff.email}`);
 
                         // Get manager email for CC if available
-                        const managerEmail = (staff.approving_manager_id && manager && manager.email) ? manager.email : null;
+                        const managerEmail = (manager && manager.email) ? manager.email : null;
 
                         const result = await emailService.sendTemplateEmail(staff.email, "onduty_applied_confirmation", {
                             user_name: `${staff.firstname} ${staff.lastname}`,
