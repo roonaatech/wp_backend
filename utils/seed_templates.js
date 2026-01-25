@@ -186,7 +186,8 @@ async function seedTemplates() {
                 name: t.name,
                 subject: t.subject,
                 body: t.body,
-                variables_hint: t.variables_hint
+                variables_hint: t.variables_hint,
+                cc_manager: t.cc_manager || false
             });
             console.log(`Updated template: ${t.slug}`);
         } else {
