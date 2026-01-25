@@ -297,8 +297,7 @@ module.exports = function (app) {
         controller.updateLeaveStatus
     );
 
-    // On-Duty Approval Routes
-    app.put("/api/onduty/:id/status", [authJwt.verifyToken, authJwt.isManagerOrAdmin], controller.updateOnDutyStatus);
+
 
     // Stats
     /**

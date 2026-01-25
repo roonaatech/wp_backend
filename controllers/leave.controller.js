@@ -5,6 +5,8 @@ const OnDutyLog = db.on_duty_logs;
 const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const emailService = require("../utils/email.service");
+
 
 // Helper to calculate days excluding Sundays
 const calculateLeaveDays = (startDate, endDate) => {
@@ -81,7 +83,7 @@ exports.applyLeave = async (req, res) => {
                 const user = await Staff.findByPk(req.userId, {
                     attributes: ['approving_manager_id']
                 });
-                
+
                 let managerName = 'your manager';
                 if (user && user.approving_manager_id) {
                     const manager = await Staff.findByPk(user.approving_manager_id, {
@@ -91,7 +93,7 @@ exports.applyLeave = async (req, res) => {
                         managerName = `*${manager.firstname} ${manager.lastname}*`;
                     }
                 }
-                
+
                 return res.status(400).send({
                     message: `Your leave request exceeds the available balance. Please contact ${managerName} to discuss this leave request.`
                 });
@@ -156,6 +158,48 @@ exports.applyLeave = async (req, res) => {
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
+
+        // Send Email to Manager
+        try {
+            console.log('--- Email Trigger: Leave Applied ---');
+            const user = await Staff.findByPk(req.userId);
+            console.log(`User found: ${user ? user.id : 'null'}, Manager ID: ${user ? user.approving_manager_id : 'n/a'}`);
+
+            if (user && user.approving_manager_id) {
+                const manager = await Staff.findByPk(user.approving_manager_id);
+                console.log(`Manager found: ${manager ? manager.id : 'null'}, Email: ${manager ? manager.email : 'n/a'}`);
+
+                if (manager && manager.email) {
+                    console.log(`Sending leave_applied email to ${manager.email}`);
+                    const result = await emailService.sendTemplateEmail(manager.email, "leave_applied", {
+                        user_name: `${user.firstname} ${user.lastname}`,
+                        leave_type: leave_type,
+                        start_date: start_date,
+                        end_date: end_date,
+                        reason: reason
+                    });
+                    console.log('Email send result:', result);
+                } else {
+                    console.log('Manager has no email or not found.');
+                }
+            } else {
+                console.log('User has no approving manager.');
+            }
+
+            // Send Confirmation Email to Applicant
+            if (user && user.email) {
+                console.log(`Sending leave_applied_confirmation email to ${user.email}`);
+                emailService.sendTemplateEmail(user.email, "leave_applied_confirmation", {
+                    user_name: `${user.firstname} ${user.lastname}`,
+                    leave_type: leave_type,
+                    start_date: start_date,
+                    end_date: end_date,
+                    reason: reason
+                });
+            }
+        } catch (emailErr) {
+            console.error("Failed to send email:", emailErr);
+        }
 
         res.status(201).send({ message: "Leave applied successfully!", leave });
     } catch (err) {
@@ -602,6 +646,28 @@ exports.updateLeaveStatus = async (req, res) => {
             });
         }
 
+        // Send Email to User
+        try {
+            const user = await Staff.findByPk(leave.staff_id);
+            if (user && user.email && (status === 'Approved' || status === 'Rejected')) {
+                const templateSlug = status === 'Approved' ? 'leave_approved' : 'leave_rejected';
+                console.log(`--- Email Trigger: Leave ${status} ---`);
+                console.log(`Sending email to ${user.email}`);
+                emailService.sendTemplateEmail(user.email, templateSlug, {
+                    user_name: `${user.firstname} ${user.lastname}`,
+                    leave_type: leave.leave_type,
+                    start_date: leave.start_date,
+                    end_date: leave.end_date,
+                    rejection_reason: rejection_reason || ""
+                });
+            } else {
+                console.log('User has no email or not found for leave status update.');
+            }
+        } catch (emailErr) {
+
+            console.error("Failed to send email:", emailErr);
+        }
+
         res.status(200).send({
             message: `Leave ${status} successfully!`,
             leave,
@@ -985,7 +1051,7 @@ exports.getUserLeaveBalance = async (req, res) => {
         // Only consider leave types explicitly assigned to user in user_leave_types
         const LeaveType = db.leave_types;
         const UserLeaveType = db.user_leave_types;
-        
+
         const assignedLeaveTypes = await UserLeaveType.findAll({
             where: { user_id: userId },
             include: [{ model: LeaveType, as: 'leave_type', where: { status: true } }]
@@ -994,13 +1060,13 @@ exports.getUserLeaveBalance = async (req, res) => {
         const balances = [];
         for (const ult of assignedLeaveTypes) {
             const leaveType = ult.leave_type;
-            
+
             // Check gender restriction
             if (leaveType.gender_restriction && leaveType.gender_restriction.length > 0 && !leaveType.gender_restriction.includes(user.gender)) {
                 console.log(`[BALANCE] Skipping ${leaveType.name} due to gender restriction`);
                 continue;
             }
-            
+
             // Get approved/active/pending leaves for this user, leave type, and CURRENT YEAR only
             const usedLeaves = await LeaveRequest.findAll({
                 where: {
@@ -1031,7 +1097,7 @@ exports.getUserLeaveBalance = async (req, res) => {
                 used: daysUsed,
                 balance: balance
             });
-            
+
             console.log(`[BALANCE] ${leaveType.name}: used=${daysUsed}, allowed=${ult.days_allowed}, balance=${balance}`);
         }
 

@@ -162,6 +162,40 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/onduty/{id}/status:
+     *   put:
+     *     tags: [On-Duty]
+     *     summary: Update on-duty status (Approve/Reject)
+     *     description: Approve or reject an on-duty request
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - name: id
+     *         in: path
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               status:
+     *                 type: string
+     *                 enum: [Approved, Rejected]
+     *               rejection_reason:
+     *                 type: string
+     *     responses:
+     *       200:
+     *         description: Status updated successfully
+     */
+    app.put("/api/onduty/:id/status", [authJwt.verifyToken, authJwt.isManagerOrAdmin], controller.updateOnDutyStatus);
+
+
+    /**
+     * @swagger
      * /api/onduty/{id}:
      *   put:
      *     tags: [On-Duty]

@@ -3,6 +3,8 @@ const OnDutyLog = db.on_duty_logs;
 const User = db.user;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const emailService = require("../utils/email.service");
+
 
 // Start on-duty visit
 exports.startOnDuty = (req, res) => {
@@ -109,8 +111,44 @@ exports.endOnDuty = (req, res) => {
                     console.log('   On-Duty Log ID:', approval.on_duty_log_id);
                     console.log('   Manager ID:', approval.manager_id);
                     console.log('   Status:', approval.status);
+
+                    // Send Email to Manager
+                    try {
+                        const manager = await User.findByPk(staff.approving_manager_id);
+                        if (manager && manager.email) {
+                            emailService.sendTemplateEmail(manager.email, "onduty_applied", {
+                                user_name: `${staff.firstname} ${staff.lastname}`,
+                                start_date: updatedOnDuty.start_time, // formatting might be needed
+                                end_date: updatedOnDuty.end_time,
+                                reason: `${updatedOnDuty.purpose} at ${updatedOnDuty.client_name}`
+                            });
+                        }
+                    } catch (emailErr) {
+                        console.error("Failed to send email:", emailErr);
+                    }
+
                 } else {
                     console.log('⚠️  Staff has no approving_manager_id - approval NOT created');
+                }
+
+                // Send Confirmation Email to Applicant
+                try {
+                    if (staff && staff.email) {
+                        console.log('--- Email Trigger: On-Duty Confirmation ---');
+                        console.log(`Sending onduty_applied_confirmation email to ${staff.email}`);
+                        const result = await emailService.sendTemplateEmail(staff.email, "onduty_applied_confirmation", {
+                            user_name: `${staff.firstname} ${staff.lastname}`,
+                            start_date: updatedOnDuty.start_time,
+                            end_date: updatedOnDuty.end_time,
+                            client_name: updatedOnDuty.client_name,
+                            reason: updatedOnDuty.purpose
+                        });
+                        console.log('Confirmation email result:', result);
+                    } else {
+                        console.log('Applicant has no email or not found.');
+                    }
+                } catch (emailErr) {
+                    console.error("Failed to send confirmation email:", emailErr);
                 }
 
                 console.log('=== EndOnDuty Complete ===\n');
@@ -377,5 +415,138 @@ exports.deleteOnDuty = async (req, res) => {
     } catch (error) {
         console.error(`Error deleting on-duty request:`, error);
         res.status(500).send({ message: "Error deleting on-duty request.", error: error.message });
+    }
+};
+
+// Update On-Duty Status (Approve/Reject)
+
+exports.updateOnDutyStatus = async (req, res) => {
+    try {
+        const OnDutyLog = db.on_duty_logs;
+        const { id } = req.params;
+        const { status, rejection_reason } = req.body;
+
+        const log = await OnDutyLog.findByPk(id);
+        if (!log) {
+            return res.status(404).send({ message: "On-Duty log not found." });
+        }
+
+        const oldStatus = log.status;
+        const oldReason = log.rejection_reason;
+
+        console.log(`[DEBUG] Updating On-Duty ID: ${id} to Status: ${status}`);
+
+        // If only rejection_reason is being updated (no status change)
+        if (!status && rejection_reason !== undefined) {
+            // Only allow updating rejection reason if the request is already rejected
+            if (log.status !== 'Rejected') {
+                return res.status(400).send({ message: "Can only update rejection reason for rejected requests." });
+            }
+
+            // Only the person who rejected it can edit the reason
+            if (Number(log.manager_id) !== Number(req.userId)) {
+                return res.status(403).send({ message: "Only the person who rejected this request can edit the rejection reason." });
+            }
+
+            log.rejection_reason = rejection_reason;
+            await log.save();
+
+            // Log activity as UPDATE action
+            await logActivity({
+                admin_id: req.userId,
+                action: 'UPDATE',
+                entity: 'OnDutyLog',
+                entity_id: log.id,
+                affected_user_id: log.staff_id,
+                old_values: { rejection_reason: oldReason },
+                new_values: { rejection_reason: rejection_reason },
+                description: `Updated rejection reason for ${log.client_name}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
+            return res.status(200).send({
+                message: 'Rejection reason updated successfully!',
+                log
+            });
+        }
+
+        // Standard status update logic
+        if (!['Approved', 'Rejected', 'Pending'].includes(status)) {
+            return res.status(400).send({ message: "Invalid status! Must be 'Approved', 'Rejected', or 'Pending'." });
+        }
+
+        log.status = status;
+
+        if (status === 'Pending') {
+            log.manager_id = null;
+            log.rejection_reason = null;
+        } else {
+            log.manager_id = req.userId; // Approver ID
+            if (status === 'Rejected') {
+                log.rejection_reason = rejection_reason;
+            } else { // If status is 'Approved'
+                log.rejection_reason = null; // Ensure it's cleared if approved
+            }
+        }
+
+        await log.save();
+
+        // Log activity
+        await logActivity({
+            admin_id: req.userId,
+            action: status === 'Approved' ? 'APPROVE' : (status === 'Rejected' ? 'REJECT' : 'UPDATE'),
+            entity: 'OnDutyLog',
+            entity_id: log.id,
+            affected_user_id: log.staff_id,
+            old_values: { status: oldStatus },
+            new_values: { status: status, rejection_reason: rejection_reason || null },
+            description: `${status === 'Approved' ? 'Approved' : (status === 'Rejected' ? 'Rejected' : 'Updated')} on-duty request for ${log.client_name}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        // Fetch approver details if approved/rejected
+        let approver = null;
+        if (log.manager_id) {
+            const Staff = db.user;
+            approver = await Staff.findByPk(log.manager_id, {
+                attributes: ['staffid', 'firstname', 'lastname', 'email']
+            });
+        }
+
+        // Send Email to User
+        try {
+            const user = await User.findByPk(log.staff_id);
+            console.log(`[DEBUG] Applicant found for email? ${!!user} (ID: ${log.staff_id})`);
+            
+            if (user && user.email && (status === 'Approved' || status === 'Rejected')) {
+                console.log(`--- Email Trigger: On-Duty ${status} ---`);
+                console.log(`Sending email to ${user.email}`);
+                const templateSlug = status === 'Approved' ? 'onduty_approved' : 'onduty_rejected';
+                emailService.sendTemplateEmail(user.email, templateSlug, {
+                    user_name: `${user.firstname} ${user.lastname}`,
+                    start_date: log.start_time,
+                    end_date: log.end_time,
+                    rejection_reason: rejection_reason || ""
+                });
+            } else if (!user) {
+                console.log('[DEBUG] Applicant user not found by ID ' + log.staff_id);
+            } else if (!user.email) {
+                 console.log('[DEBUG] Applicant user has no email.');
+            } else {
+                 console.log(`[DEBUG] Email logic skipped. Status: ${status}`);
+            }
+        } catch (emailErr) {
+            console.error("Failed to send email:", emailErr);
+        }
+
+        res.status(200).send({
+            message: `On-Duty visit ${status} successfully!`,
+            log,
+            approver
+        });
+    } catch (err) {
+        res.status(500).send({ message: err.message });
     }
 };

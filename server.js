@@ -57,11 +57,15 @@ require('./routes/admin.routes')(app);
 require('./routes/activity.routes')(app);
 require('./routes/apk.routes')(app);
 require('./routes/debug.routes')(app);
+require('./routes/email.routes')(app);
 
 // Sync database
 db.sequelize.sync()
     .then(() => {
         console.log('Synced db.');
+        // Seed Email Templates
+        require('./utils/seed_templates')();
+
         app.listen(PORT, () => {
             console.log(`Server is running on port ${PORT}.`);
             console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);

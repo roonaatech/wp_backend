@@ -64,6 +64,10 @@ db.activity_logs.belongsTo(db.user, { foreignKey: 'affected_user_id', as: 'affec
 db.user.hasMany(db.apk_versions, { foreignKey: 'uploaded_by', as: 'uploaded_apks' });
 db.apk_versions.belongsTo(db.user, { foreignKey: 'uploaded_by', as: 'uploader' });
 
+// Email Module Models
+db.email_config = require("./email_config.model.js")(sequelize, Sequelize);
+db.email_templates = require("./email_template.model.js")(sequelize, Sequelize);
+
 // UserLeaveType associations
 db.user_leave_types = require("./user_leave_type.model.js")(sequelize, Sequelize);
 db.user.hasMany(db.user_leave_types, { foreignKey: 'user_id' });
