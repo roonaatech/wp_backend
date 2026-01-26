@@ -1,14 +1,14 @@
 const db = require("../models");
 const LeaveType = db.leave_types;
 
-// Get leave types filtered by user's gender
+// Get leave types filtered by user's gender and assigned in user_leave_types
 exports.findByUserGender = async (req, res) => {
     try {
-        const TblStaff = require("../models").tblstaff;
-        const LeaveType = require("../models").leave_types;
+        const User = db.user;
+        const UserLeaveType = db.user_leave_types;
 
         // Get user's gender
-        const user = await TblStaff.findByPk(req.userId);
+        const user = await User.findByPk(req.userId);
         
         if (!user) {
             return res.status(404).send({
@@ -16,20 +16,27 @@ exports.findByUserGender = async (req, res) => {
             });
         }
 
-        // Get all active leave types
-        const leaveTypes = await LeaveType.findAll({
-            where: { status: true }
+        // Get only leave types assigned to user in user_leave_types
+        const assignedLeaveTypes = await UserLeaveType.findAll({
+            where: { user_id: req.userId },
+            include: [{
+                model: LeaveType,
+                as: 'leave_type',
+                where: { status: true }
+            }]
         });
 
-        // Filter leave types based on gender restriction
-        const filteredLeaveTypes = leaveTypes.filter(leaveType => {
-            // If no gender restriction is set, leave type is available for all
-            if (!leaveType.gender_restriction || leaveType.gender_restriction.length === 0) {
-                return true;
-            }
-            // If gender restriction exists, check if user's gender is in the list
-            return leaveType.gender_restriction.includes(user.gender);
-        });
+        // Filter by gender restriction and map to leave type objects
+        const filteredLeaveTypes = assignedLeaveTypes
+            .map(ult => ult.leave_type)
+            .filter(leaveType => {
+                // If no gender restriction is set, leave type is available for all
+                if (!leaveType.gender_restriction || leaveType.gender_restriction.length === 0) {
+                    return true;
+                }
+                // If gender restriction exists, check if user's gender is in the list
+                return leaveType.gender_restriction.includes(user.gender);
+            });
 
         res.send(filteredLeaveTypes);
     } catch (err) {

@@ -1,5 +1,10 @@
 module.exports = (sequelize, Sequelize) => {
     const LeaveRequest = sequelize.define("leave_requests", {
+        id: {
+            type: Sequelize.INTEGER,
+            primaryKey: true,
+            autoIncrement: true
+        },
         staff_id: {
             type: Sequelize.INTEGER,
             allowNull: false

@@ -1,6 +1,6 @@
 require('dotenv').config(); // Make sure environment variables are loaded
 
-const development = {
+const config = {
     username: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
@@ -15,12 +15,14 @@ const development = {
 };
 
 module.exports = {
-    development,
+    development: config,
+    production: config,
+    test: config,
     // Your application likely uses the config directly, so we keep the original structure as well
-    HOST: development.host,
-    USER: development.username,
-    PASSWORD: development.password,
-    DB: development.database,
-    dialect: development.dialect,
-    pool: development.pool
+    HOST: config.host,
+    USER: config.username,
+    PASSWORD: config.password,
+    DB: config.database,
+    dialect: config.dialect,
+    pool: config.pool
 };

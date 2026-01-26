@@ -1,8 +1,34 @@
 const db = require("../models");
 const LeaveRequest = db.leave_requests;
-const Staff = db.tblstaff;
+const LeaveType = db.leave_types;
+const OnDutyLog = db.on_duty_logs;
+const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const emailService = require("../utils/email.service");
+
+
+// Helper to calculate days excluding Sundays
+const calculateLeaveDays = (startDate, endDate) => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    let count = 0;
+    const current = new Date(start);
+
+    // Validate dates
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+        return 0;
+    }
+
+    while (current <= end) {
+        // Exclude Sunday (0)
+        if (current.getDay() !== 0) {
+            count++;
+        }
+        current.setDate(current.getDate() + 1);
+    }
+    return count;
+};
 
 // Apply for a Leave
 exports.applyLeave = async (req, res) => {
@@ -12,6 +38,69 @@ exports.applyLeave = async (req, res) => {
         if (!leave_type || !start_date || !end_date) {
             return res.status(400).send({ message: "Leave type, start date, and end date are required!" });
         }
+
+        // --- Validate Leave Balance ---
+        // 1. Check if leave type is assigned to user in user_leave_types
+        const UserLeaveType = db.user_leave_types;
+        const userLeaveType = await UserLeaveType.findOne({
+            where: { user_id: req.userId },
+            include: [{ model: LeaveType, as: 'leave_type', where: { name: leave_type } }]
+        });
+
+        // Skip check for "Loss of Pay"
+        const isLossOfPay = leave_type.toLowerCase().includes('loss of pay');
+
+        if (!isLossOfPay) {
+            if (!userLeaveType) {
+                return res.status(400).send({ message: `Leave type '${leave_type}' is not assigned to you. Please contact admin.` });
+            }
+            const allowedDays = userLeaveType.days_allowed || 0;
+            const requestedDays = calculateLeaveDays(start_date, end_date);
+
+            // 2. Get already used/pending days for this year
+            const year = new Date(start_date).getFullYear();
+            const usedLeaves = await LeaveRequest.findAll({
+                where: {
+                    staff_id: req.userId,
+                    leave_type: leave_type,
+                    status: { [Op.in]: ['Approved', 'Pending'] },
+                    start_date: {
+                        [Op.gte]: `${year}-01-01`,
+                        [Op.lte]: `${year}-12-31`
+                    }
+                }
+            });
+
+            let usedDaysCount = 0;
+            usedLeaves.forEach(leave => {
+                usedDaysCount += calculateLeaveDays(leave.start_date, leave.end_date);
+            });
+
+            const totalProjectedDays = usedDaysCount + requestedDays;
+
+            if (totalProjectedDays > allowedDays) {
+                // Get user's manager name
+                const user = await Staff.findByPk(req.userId, {
+                    attributes: ['approving_manager_id']
+                });
+
+                let managerName = 'your manager';
+                if (user && user.approving_manager_id) {
+                    const manager = await Staff.findByPk(user.approving_manager_id, {
+                        attributes: ['firstname', 'lastname']
+                    });
+                    if (manager) {
+                        managerName = `*${manager.firstname} ${manager.lastname}*`;
+                    }
+                }
+
+                return res.status(400).send({
+                    message: `Your leave request exceeds the available balance. Please contact ${managerName} to discuss this leave request.`
+                });
+            }
+        }
+        // -----------------------------
+
 
         // Check for overlapping leaves (Pending, Approved, or Active)
         const overlappingLeave = await LeaveRequest.findOne({
@@ -70,6 +159,47 @@ exports.applyLeave = async (req, res) => {
             user_agent: getUserAgent(req)
         });
 
+        // Send Email to Manager
+        try {
+            console.log('--- Email Trigger: Leave Applied ---');
+            const Staff = db.user;
+            const user = await Staff.findByPk(req.userId);
+            let manager = null;
+
+            if (user && user.approving_manager_id) {
+                manager = await Staff.findByPk(user.approving_manager_id);
+                console.log(`Manager found: ${manager ? manager.id : 'null'}, Email: ${manager ? manager.email : 'n/a'}`);
+
+                if (manager && manager.email) {
+                    console.log(`Sending leave_applied email to ${manager.email}`);
+                    await emailService.sendTemplateEmail(manager.email, "leave_applied", {
+                        user_name: `${user.firstname} ${user.lastname}`,
+                        leave_type: leave_type,
+                        start_date: start_date,
+                        end_date: end_date,
+                        reason: reason
+                    });
+                } else {
+                    console.log('Manager has no email or not found.');
+                }
+            }
+
+            // Send Confirmation Email to Applicant
+            if (user && user.email) {
+                console.log(`Sending leave_applied_confirmation email to ${user.email}`);
+                const managerEmail = (manager && manager.email) ? manager.email : null;
+                await emailService.sendTemplateEmail(user.email, "leave_applied_confirmation", {
+                    user_name: `${user.firstname} ${user.lastname}`,
+                    leave_type: leave_type,
+                    start_date: start_date,
+                    end_date: end_date,
+                    reason: reason
+                }, managerEmail);
+            }
+        } catch (emailErr) {
+            console.error("Failed to send email:", emailErr);
+        }
+
         res.status(201).send({ message: "Leave applied successfully!", leave });
     } catch (err) {
         res.status(500).send({ message: err.message });
@@ -77,11 +207,10 @@ exports.applyLeave = async (req, res) => {
 };
 
 // Get My Leaves (History)
-// Get My Leaves (History)
 exports.getMyLeaves = async (req, res) => {
     try {
         const OnDutyLog = db.on_duty_logs;
-        const Staff = db.tblstaff;
+        const Staff = db.user;
 
         // Fetch Leaves
         const leaves = await LeaveRequest.findAll({
@@ -116,8 +245,8 @@ exports.getMyLeaves = async (req, res) => {
                 title: l.leave_type,
                 subtitle: l.reason,
                 status: l.status,
-                start: l.start_date ? l.start_date.toString() : null,
-                end: l.end_date ? l.end_date.toString() : null,
+                start: l.start_date,
+                end: l.end_date,
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
                 date: l.createdAt
@@ -195,6 +324,7 @@ exports.getPendingLeaves = async (req, res) => {
             where: leaveWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['createdAt', 'ASC']]
@@ -214,6 +344,7 @@ exports.getPendingLeaves = async (req, res) => {
             where: onDutyWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'ASC']]
@@ -224,7 +355,7 @@ exports.getPendingLeaves = async (req, res) => {
             type: 'leave',
             id: l.id,
             staff_id: l.staff_id,
-            tblstaff: l.tblstaff,
+            tblstaff: l.user,
             title: l.leave_type,
             reason: l.reason,
             start_date: l.start_date,
@@ -236,12 +367,21 @@ exports.getPendingLeaves = async (req, res) => {
             type: 'on_duty',
             id: l.id,
             staff_id: l.staff_id,
-            tblstaff: l.tblstaff,
+            tblstaff: l.user,
             title: `On-Duty: ${l.client_name}`,
             reason: `${l.purpose} (${l.location})`,
             start_date: l.start_time,
             end_date: l.end_time,
-            createdAt: l.start_time
+            createdAt: l.start_time,
+            client_name: l.client_name,
+            location: l.location,
+            purpose: l.purpose,
+            start_time: l.start_time,
+            end_time: l.end_time,
+            start_lat: l.start_lat,
+            start_long: l.start_long,
+            end_lat: l.end_lat,
+            end_long: l.end_long
         }));
 
         const combined = [...normalizedLeaves, ...normalizedOnDuty];
@@ -310,6 +450,7 @@ exports.getManageableRequests = async (req, res) => {
             where: leaveWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['createdAt', 'DESC']],
@@ -335,6 +476,7 @@ exports.getManageableRequests = async (req, res) => {
             where: onDutyWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']],
@@ -353,7 +495,7 @@ exports.getManageableRequests = async (req, res) => {
                 type: 'leave',
                 id: l.id,
                 staff_id: l.staff_id,
-                tblstaff: l.tblstaff,
+                tblstaff: l.user,
                 title: l.leave_type,
                 reason: l.reason,
                 start_date: l.start_date,
@@ -372,7 +514,7 @@ exports.getManageableRequests = async (req, res) => {
                 type: 'on_duty',
                 id: l.id,
                 staff_id: l.staff_id,
-                tblstaff: l.tblstaff,
+                tblstaff: l.user,
                 title: `On-Duty: ${l.client_name}`,
                 reason: `${l.purpose} (${l.location})`,
                 start_date: l.start_time,
@@ -381,7 +523,16 @@ exports.getManageableRequests = async (req, res) => {
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
                 createdAt: l.start_time,
-                updatedAt: l.updatedAt
+                updatedAt: l.updatedAt,
+                client_name: l.client_name,
+                location: l.location,
+                purpose: l.purpose,
+                start_time: l.start_time,
+                end_time: l.end_time,
+                start_lat: l.start_lat,
+                start_long: l.start_long,
+                end_lat: l.end_lat,
+                end_long: l.end_long
             };
         });
 
@@ -506,10 +657,36 @@ exports.updateLeaveStatus = async (req, res) => {
         // Fetch approver details if approved/rejected
         let approver = null;
         if (leave.manager_id) {
-            const Staff = db.tblstaff;
+            const Staff = db.user;
             approver = await Staff.findByPk(leave.manager_id, {
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             });
+        }
+
+        // Send Email to User
+        try {
+            const user = await Staff.findByPk(leave.staff_id);
+            if (user && user.email && (status === 'Approved' || status === 'Rejected')) {
+                const templateSlug = status === 'Approved' ? 'leave_approved' : 'leave_rejected';
+                console.log(`--- Email Trigger: Leave ${status} ---`);
+                console.log(`Sending email to ${user.email}`);
+
+                // Get manager email for CC if available
+                const managerEmail = approver && approver.email ? approver.email : null;
+
+                emailService.sendTemplateEmail(user.email, templateSlug, {
+                    user_name: `${user.firstname} ${user.lastname}`,
+                    leave_type: leave.leave_type,
+                    start_date: leave.start_date,
+                    end_date: leave.end_date,
+                    rejection_reason: rejection_reason || ""
+                }, managerEmail);
+            } else {
+                console.log('User has no email or not found for leave status update.');
+            }
+        } catch (emailErr) {
+
+            console.error("Failed to send email:", emailErr);
         }
 
         res.status(200).send({
@@ -687,7 +864,7 @@ exports.updateOnDutyStatus = async (req, res) => {
         // Fetch approver details if approved/rejected
         let approver = null;
         if (log.manager_id) {
-            const Staff = db.tblstaff;
+            const Staff = db.user;
             approver = await Staff.findByPk(log.manager_id, {
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             });
@@ -707,7 +884,7 @@ exports.updateOnDutyStatus = async (req, res) => {
 exports.getAdminStats = async (req, res) => {
     try {
         const OnDutyLog = db.on_duty_logs;
-        const Staff = db.tblstaff;
+        const Staff = db.user;
         const { Op } = require("sequelize");
 
         // Get current user's role to determine filtering
@@ -824,34 +1001,48 @@ exports.deleteLeave = async (req, res) => {
     const { id } = req.params;
     const userId = req.userId;
 
-    console.log(`[DELETE] Attempting to delete leave ID: ${id} for user: ${userId}`);
-
     try {
+        const requestId = parseInt(id, 10);
+        if (isNaN(requestId)) {
+            return res.status(400).send({ message: "Invalid request ID format." });
+        }
+
+        // Try to find and delete leave request first
         const leaveRequest = await LeaveRequest.findOne({
-            where: { id: id, staff_id: userId }
+            where: { id: requestId, staff_id: userId }
         });
 
-        console.log(`[DELETE] Found leave request:`, leaveRequest ? `ID ${leaveRequest.id}, Status: ${leaveRequest.status}` : 'NOT FOUND');
+        if (leaveRequest) {
+            if (leaveRequest.status !== 'Pending') {
+                return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+            }
 
-        if (!leaveRequest) {
-            console.log(`[DELETE] Leave with ID ${id} not found for user ${userId}`);
-            return res.status(404).send({ message: "Leave/On-Duty request not found." });
+            await leaveRequest.destroy();
+            logActivity(req, `Deleted leave request ID: ${requestId}`);
+            return res.status(200).send({ message: "Leave request deleted successfully." });
         }
 
-        if (leaveRequest.status !== 'Pending') {
-            console.log(`[DELETE] Cannot delete - status is ${leaveRequest.status}, not Pending`);
-            return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+        // If not a leave request, try to find and delete on-duty log
+        const onDutyLog = await OnDutyLog.findOne({
+            where: { id: requestId, staff_id: userId }
+        });
+
+        if (onDutyLog) {
+            const status = (onDutyLog.status || '').toLowerCase();
+            if (status !== '' && status !== 'pending') {
+                return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+            }
+
+            await onDutyLog.destroy();
+            logActivity(req, `Deleted on-duty request ID: ${requestId}`);
+            return res.status(200).send({ message: "On-duty request deleted successfully." });
         }
 
-        await leaveRequest.destroy();
-        console.log(`[DELETE] Successfully deleted leave ID: ${id}`);
-
-        logActivity(req, `Deleted leave/on-duty request ID: ${id}`);
-        res.status(200).send({ message: "Request deleted successfully." });
+        return res.status(404).send({ message: "Leave/On-Duty request not found." });
 
     } catch (error) {
-        console.log(`[DELETE] Error:`, error);
-        logActivity(req, `Error deleting leave/on-duty request ID: ${id}`, error);
+        console.error(`Error deleting request:`, error);
+        logActivity(req, `Error deleting request ID: ${id}`, error);
         res.status(500).send({ message: "Error deleting request.", error: error.message });
     }
 };
@@ -863,7 +1054,7 @@ exports.getUserLeaveBalance = async (req, res) => {
         console.log(`[BALANCE] Fetching leave balance for user: ${userId}`);
 
         // Get user's gender
-        const TblStaff = db.tblstaff;
+        const TblStaff = db.user;
         const user = await TblStaff.findByPk(userId);
 
         if (!user) {
@@ -878,64 +1069,59 @@ exports.getUserLeaveBalance = async (req, res) => {
         const yearStart = new Date(`${currentYear}-01-01`);
         const yearEnd = new Date(`${currentYear}-12-31`);
 
-        // Get all active leave types
+        // Only consider leave types explicitly assigned to user in user_leave_types
         const LeaveType = db.leave_types;
-        let leaveTypes = await LeaveType.findAll({ where: { status: true } });
+        const UserLeaveType = db.user_leave_types;
 
-        // Filter leave types based on gender restriction
-        leaveTypes = leaveTypes.filter(leaveType => {
-            // If no gender restriction is set, leave type is available for all
-            if (!leaveType.gender_restriction || leaveType.gender_restriction.length === 0) {
-                return true;
-            }
-            // If gender restriction exists, check if user's gender is in the list
-            return leaveType.gender_restriction.includes(user.gender);
+        const assignedLeaveTypes = await UserLeaveType.findAll({
+            where: { user_id: userId },
+            include: [{ model: LeaveType, as: 'leave_type', where: { status: true } }]
         });
 
-        console.log(`[BALANCE] Found ${leaveTypes.length} leave types applicable for gender ${user.gender}:`, leaveTypes.map(l => ({ id: l.id, name: l.name, days: l.days_allowed })));
+        const balances = [];
+        for (const ult of assignedLeaveTypes) {
+            const leaveType = ult.leave_type;
 
-        // Get leave balance for each leave type
-        const balances = await Promise.all(
-            leaveTypes.map(async (leaveType) => {
-                // Get approved/active leaves for this user, leave type, and CURRENT YEAR only
-                const usedLeaves = await LeaveRequest.findAll({
-                    where: {
-                        staff_id: userId,
-                        leave_type: leaveType.name,
-                        status: { [Op.in]: ['Pending', 'Approved', 'Active'] },
-                        start_date: {
-                            [Op.gte]: yearStart,
-                            [Op.lte]: yearEnd
-                        }
+            // Check gender restriction
+            if (leaveType.gender_restriction && leaveType.gender_restriction.length > 0 && !leaveType.gender_restriction.includes(user.gender)) {
+                console.log(`[BALANCE] Skipping ${leaveType.name} due to gender restriction`);
+                continue;
+            }
+
+            // Get approved/active/pending leaves for this user, leave type, and CURRENT YEAR only
+            const usedLeaves = await LeaveRequest.findAll({
+                where: {
+                    staff_id: userId,
+                    leave_type: leaveType.name,
+                    status: { [Op.in]: ['Pending', 'Approved', 'Active'] },
+                    start_date: {
+                        [Op.gte]: yearStart,
+                        [Op.lte]: yearEnd
                     }
-                });
+                }
+            });
 
-                console.log(`[BALANCE] Leave type: ${leaveType.name}, Used leaves count (${currentYear}): ${usedLeaves.length}`);
+            let daysUsed = 0;
+            usedLeaves.forEach(leave => {
+                const start = new Date(leave.start_date);
+                const end = new Date(leave.end_date);
+                const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                daysUsed += days;
+            });
 
-                // Calculate total days used
-                let daysUsed = 0;
-                usedLeaves.forEach(leave => {
-                    const start = new Date(leave.start_date);
-                    const end = new Date(leave.end_date);
-                    const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-                    daysUsed += days;
-                    console.log(`[BALANCE]   - ${leave.start_date} to ${leave.end_date}: ${days} days`);
-                });
+            const balance = Math.max(0, ult.days_allowed - daysUsed);
 
-                const balance = Math.max(0, leaveType.days_allowed - daysUsed);
-                console.log(`[BALANCE] ${leaveType.name} (${currentYear}): Total=${leaveType.days_allowed}, Used=${daysUsed}, Balance=${balance}`);
+            balances.push({
+                id: leaveType.id,
+                name: leaveType.name,
+                total_days: ult.days_allowed,
+                used: daysUsed,
+                balance: balance
+            });
 
-                return {
-                    id: leaveType.id,
-                    name: leaveType.name,
-                    total_days: leaveType.days_allowed,
-                    used: daysUsed,
-                    balance: balance
-                };
-            })
-        );
+            console.log(`[BALANCE] ${leaveType.name}: used=${daysUsed}, allowed=${ult.days_allowed}, balance=${balance}`);
+        }
 
-        console.log(`[BALANCE] Returning balances for year ${currentYear}:`, balances);
         res.status(200).send({
             leaveTypes: balances,
             year: currentYear
@@ -953,7 +1139,7 @@ exports.getMyLeaveBalance = async (req, res) => {
         console.log(`[MY-BALANCE] Fetching leave balance for current user: ${userId}`);
 
         // Get user's gender
-        const TblStaff = db.tblstaff;
+        const TblStaff = db.user;
         const user = await TblStaff.findByPk(userId);
 
         if (!user) {
@@ -968,24 +1154,20 @@ exports.getMyLeaveBalance = async (req, res) => {
         const yearStart = new Date(`${currentYear}-01-01`);
         const yearEnd = new Date(`${currentYear}-12-31`);
 
-        // Get all active leave types
-        const LeaveType = db.leave_types;
-        let leaveTypes = await LeaveType.findAll({ where: { status: true } });
-
-        // Filter leave types based on gender restriction
-        leaveTypes = leaveTypes.filter(leaveType => {
-            // If no gender restriction is set, leave type is available for all
-            if (!leaveType.gender_restriction || leaveType.gender_restriction.length === 0) {
-                return true;
-            }
-            // If gender restriction exists, check if user's gender is in the list
-            return leaveType.gender_restriction.includes(user.gender);
+        // Only consider leave types assigned to user in user_leave_types
+        const UserLeaveType = db.user_leave_types;
+        const assignedLeaveTypes = await UserLeaveType.findAll({
+            where: { user_id: userId },
+            include: [{ model: LeaveType, as: 'leave_type', where: { status: true } }]
         });
 
-        // Create a map of leave type name to balance
         const balanceMap = {};
-
-        for (const leaveType of leaveTypes) {
+        for (const ult of assignedLeaveTypes) {
+            const leaveType = ult.leave_type;
+            // Gender restriction check
+            if (leaveType.gender_restriction && leaveType.gender_restriction.length > 0 && !leaveType.gender_restriction.includes(user.gender)) {
+                continue;
+            }
             // Get approved/active leaves for this user, leave type, and CURRENT YEAR only
             const usedLeaves = await LeaveRequest.findAll({
                 where: {
@@ -998,7 +1180,6 @@ exports.getMyLeaveBalance = async (req, res) => {
                     }
                 }
             });
-
             // Calculate total days used
             let daysUsed = 0;
             usedLeaves.forEach(leave => {
@@ -1007,12 +1188,10 @@ exports.getMyLeaveBalance = async (req, res) => {
                 const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
                 daysUsed += days;
             });
-
-            const balance = Math.max(0, leaveType.days_allowed - daysUsed);
+            const balance = Math.max(0, ult.days_allowed - daysUsed);
             balanceMap[leaveType.name] = balance;
             console.log(`[MY-BALANCE] ${leaveType.name}: balance=${balance}`);
         }
-
         res.status(200).send(balanceMap);
     } catch (error) {
         console.error('[MY-BALANCE] Error fetching user leave balance:', error);

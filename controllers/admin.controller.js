@@ -1,9 +1,33 @@
 const db = require("../models");
 const bcrypt = require("bcryptjs");
-const TblStaff = db.tblstaff;
+const TblStaff = db.user;
 const OnDutyLog = db.on_duty_logs;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const Op = db.Sequelize.Op;
+
+exports.getIncompleteProfiles = async (req, res) => {
+    try {
+        const incompleteUsers = await TblStaff.findAll({
+            where: {
+                [Op.or]: [
+                    { role: 0 },
+                    { role: null },
+                    { gender: null },
+                    { gender: '' }
+                ],
+                active: 1 // Only check active users
+            },
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'gender']
+        });
+
+        res.status(200).send(incompleteUsers);
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Some error occurred while retrieving incomplete profiles."
+        });
+    }
+};
 
 exports.createUser = async (req, res) => {
     const { firstname, lastname, email, password, role, approving_manager_id, gender } = req.body;
@@ -15,8 +39,13 @@ exports.createUser = async (req, res) => {
         });
     }
 
+    const roleInt = parseInt(role);
+    if (isNaN(roleInt) || roleInt === 0) {
+        return res.status(400).send({ message: "Invalid Role value." });
+    }
+
     // Validate role and manager_id requirements
-    if (role === 2 && !approving_manager_id) {
+    if (roleInt === 2 && !approving_manager_id) {
         return res.status(400).send({
             message: "Manager role requires an approving admin manager."
         });
@@ -40,11 +69,23 @@ exports.createUser = async (req, res) => {
             lastname: lastname,
             email: email,
             password: hashedPassword,
-            role: parseInt(role),
+            role: roleInt,
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
             gender: gender,
             active: 1
         });
+
+        // Assign default leave types to user
+        const LeaveType = db.leave_types;
+        const UserLeaveType = db.user_leave_types;
+        const defaultLeaveTypes = await LeaveType.findAll({ where: { status: true } });
+        const userLeaveTypes = defaultLeaveTypes.map(lt => ({
+            user_id: newUser.staffid,
+            leave_type_id: lt.id,
+            days_allowed: lt.days_allowed,
+            days_used: 0
+        }));
+        await UserLeaveType.bulkCreate(userLeaveTypes);
 
         // Log activity
         await logActivity({
@@ -89,8 +130,16 @@ exports.updateUser = (req, res) => {
         });
     }
 
+    // Prepare role and validate
+    const roleInt = parseInt(role);
+    if (isNaN(roleInt) || roleInt === 0) {
+        return res.status(400).send({
+            message: "Invalid Role value."
+        });
+    }
+
     // Validate role and manager_id requirements
-    if (role === 2 && !approving_manager_id) {
+    if (roleInt === 2 && !approving_manager_id) {
         return res.status(400).send({
             message: "Manager role requires an approving admin manager."
         });
@@ -131,7 +180,7 @@ exports.updateUser = (req, res) => {
                     firstname: firstname,
                     lastname: lastname,
                     email: email,
-                    role: parseInt(role),
+                    role: roleInt,
                     approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
                     gender: gender,
                     active: req.body.active !== undefined ? req.body.active : user.active
@@ -238,19 +287,120 @@ exports.getAllUsers = async (req, res) => {
         const currentUser = await TblStaff.findByPk(req.userId);
         const isAdmin = currentUser && currentUser.admin === 1;
 
-        // Build where clause for manager filtering
-        let whereClause = {};
-        if (!isAdmin) {
-            // Manager can only see their assigned employees
-            whereClause.approving_manager_id = req.userId;
+        // Pagination parameters
+        const page = req.query.page ? parseInt(req.query.page) : 1;
+        let limit = 10;
+        let offset = 0;
+
+        if (req.query.limit === 'all') {
+            limit = null;
+        } else if (req.query.limit) {
+            limit = parseInt(req.query.limit);
         }
 
-        const users = await TblStaff.findAll({
-            where: whereClause,
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender']
-        });
+        if (limit) {
+            offset = (page - 1) * limit;
+        }
 
-        res.send(users);
+        // Search & Filter parameters
+        const search = req.query.search || '';
+        const status = req.query.status || 'all';
+        const letter = req.query.letter || '';
+        const role = req.query.role || ''; // Comma-separated role ids
+
+        // Build where clause using AND conditions
+        const andConditions = [];
+
+        // Manager constraint
+        if (!isAdmin) {
+            // Manager can only see their assigned employees
+            andConditions.push({ approving_manager_id: req.userId });
+        }
+
+        // Search constraint
+        if (search) {
+            andConditions.push({
+                [Op.or]: [
+                    { firstname: { [Op.like]: `%${search}%` } },
+                    { lastname: { [Op.like]: `%${search}%` } },
+                    { email: { [Op.like]: `%${search}%` } }
+                ]
+            });
+        }
+
+        // Letter constraint (filter by first letter of firstname)
+        if (letter) {
+            andConditions.push({
+                firstname: { [Op.like]: `${letter}%` }
+            });
+        }
+
+        // Role constraint
+        if (role) {
+            const roleIds = role.split(',').map(r => parseInt(r.trim())).filter(r => !isNaN(r));
+            if (roleIds.length > 0) {
+                andConditions.push({
+                    role: { [Op.in]: roleIds }
+                });
+            }
+        }
+
+        // Status constraint
+        if (status) {
+            const statuses = status.split(',').map(s => s.trim());
+            const statusConditions = [];
+            
+            statuses.forEach(s => {
+                if (s === 'active') {
+                    statusConditions.push({ active: 1 });
+                } else if (s === 'inactive') {
+                    statusConditions.push({ active: 0 });
+                } else if (s === 'incomplete') {
+                    // Incomplete profiles: active users with missing data
+                    statusConditions.push({
+                        [Op.and]: [
+                            { active: 1 },
+                            {
+                                [Op.or]: [
+                                    { role: 0 },
+                                    { role: null },
+                                    { gender: null },
+                                    { gender: '' }
+                                ]
+                            }
+                        ]
+                    });
+                }
+            });
+            
+            if (statusConditions.length > 0) {
+                andConditions.push({
+                    [Op.or]: statusConditions
+                });
+            }
+        }
+
+        const whereClause = andConditions.length > 0 ? { [Op.and]: andConditions } : {};
+
+        const queryOptions = {
+            where: whereClause,
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender'],
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']]
+        };
+
+        if (limit) {
+            queryOptions.limit = limit;
+            queryOptions.offset = offset;
+        }
+
+        const { count, rows } = await TblStaff.findAndCountAll(queryOptions);
+
+        res.send({
+            totalItems: count,
+            users: rows,
+            totalPages: limit ? Math.ceil(count / limit) : 1,
+            currentPage: page
+        });
     } catch (err) {
         res.status(500).send({
             message: err.message || "Some error occurred while retrieving users."
@@ -261,8 +411,9 @@ exports.getAllUsers = async (req, res) => {
 exports.getManagersAndAdmins = (req, res) => {
     const { Op } = require("sequelize");
     TblStaff.findAll({
-        where: { role: { [Op.in]: [1, 2] }, active: 1 },
-        attributes: ['staffid', 'firstname', 'lastname', 'email', 'role']
+        where: { role: { [Op.in]: [1, 2, 3] }, active: 1 },
+        attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
+        order: [['firstname', 'ASC'], ['lastname', 'ASC']]
     })
         .then(users => {
             res.send(users);
@@ -332,19 +483,27 @@ exports.getPendingApprovals = async (req, res) => {
                 // Fetch on-duty log if exists
                 if (approval.on_duty_log_id) {
                     console.log('Fetching on_duty_log:', approval.on_duty_log_id);
-                    const onDutyLog = await db.on_duty_logs.findByPk(
+                    const onDutyLogRaw = await db.on_duty_logs.findByPk(
                         approval.on_duty_log_id,
                         {
                             include: [
                                 {
                                     model: TblStaff,
+                                    as: 'user',
                                     attributes: ['firstname', 'lastname', 'email', 'staffid', 'approving_manager_id']
                                 }
                             ]
                         }
                     );
-                    enriched.on_duty_log = onDutyLog;
-                    if (!onDutyLog) {
+
+                    if (onDutyLogRaw) {
+                        enriched.on_duty_log = onDutyLogRaw.toJSON();
+                        enriched.on_duty_log.tblstaff = enriched.on_duty_log.user;
+                    } else {
+                        enriched.on_duty_log = null;
+                    }
+
+                    if (!onDutyLogRaw) {
                         console.log('⚠️  on_duty_log not found for ID:', approval.on_duty_log_id);
                     } else {
                         console.log('✅ on_duty_log found:', onDutyLog.client_name);
@@ -401,11 +560,12 @@ exports.approveAttendance = (req, res) => {
 };
 
 exports.getAttendanceReports = async (req, res) => {
+    console.log('API Hit: getAttendanceReports');
     try {
         const { Op } = require("sequelize");
         const LeaveRequest = db.leave_requests;
         const OnDutyLog = db.on_duty_logs;
-        const Staff = db.tblstaff;
+        const Staff = db.user;
 
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
@@ -440,9 +600,9 @@ exports.getAttendanceReports = async (req, res) => {
         const leaveRequests = await LeaveRequest.findAll({
             where: leaveWhere,
             include: [
-                { model: db.tblstaff, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
                 {
-                    model: db.tblstaff,
+                    model: db.user,
                     as: 'approver',
                     attributes: ['staffid', 'firstname', 'lastname', 'email'],
                     required: false
@@ -465,7 +625,7 @@ exports.getAttendanceReports = async (req, res) => {
             status: leave.status,
             rejection_reason: leave.rejection_reason,
             on_duty: false,
-            tblstaff: leave.tblstaff,
+            tblstaff: leave.user,
             approver: leave.approver || null
         }));
 
@@ -479,9 +639,9 @@ exports.getAttendanceReports = async (req, res) => {
         const onDutyLogs = await OnDutyLog.findAll({
             where: onDutyWhere,
             include: [
-                { model: db.tblstaff, attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
                 {
-                    model: db.tblstaff,
+                    model: db.user,
                     as: 'approver',
                     attributes: ['staffid', 'firstname', 'lastname', 'email'],
                     required: false
@@ -503,7 +663,7 @@ exports.getAttendanceReports = async (req, res) => {
             status: log.status,
             rejection_reason: log.rejection_reason,
             on_duty: true,
-            tblstaff: log.tblstaff,
+            tblstaff: log.user,
             approver: log.approver || null
         }));
 
@@ -719,7 +879,7 @@ exports.getDailyTrendData = async (req, res) => {
     const { Op } = require("sequelize");
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
-    const Staff = db.tblstaff;
+    const Staff = db.user;
     const days = parseInt(req.query.days) || 7;
 
     try {
@@ -803,7 +963,7 @@ exports.getCalendarEvents = async (req, res) => {
     const { Op } = require("sequelize");
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
-    const Staff = db.tblstaff;
+    const Staff = db.user;
 
     try {
         const year = parseInt(req.query.year) || new Date().getFullYear();
@@ -886,6 +1046,7 @@ exports.getCalendarEvents = async (req, res) => {
             where: leaveWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname'],
                 required: true
             }],
@@ -913,6 +1074,7 @@ exports.getCalendarEvents = async (req, res) => {
             where: onDutyWhere,
             include: [{
                 model: Staff,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname'],
                 required: true
             }],
@@ -931,7 +1093,7 @@ exports.getCalendarEvents = async (req, res) => {
             // For each day in the leave period, create an event
             for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
                 const dateStr = d.toISOString().split('T')[0];
-                const staffName = `${leave.tblstaff.firstname} ${leave.tblstaff.lastname}`;
+                const staffName = `${leave.user.firstname} ${leave.user.lastname}`;
 
                 events.push({
                     date: dateStr,
@@ -950,7 +1112,7 @@ exports.getCalendarEvents = async (req, res) => {
         // Process on-duty logs
         onDutyLogs.forEach(onDuty => {
             const dateStr = new Date(onDuty.start_time).toISOString().split('T')[0];
-            const staffName = `${onDuty.tblstaff.firstname} ${onDuty.tblstaff.lastname}`;
+            const staffName = `${onDuty.user.firstname} ${onDuty.user.lastname}`;
 
             // Use purpose field if available, otherwise extract from reason
             let purpose = onDuty.purpose || '';
@@ -989,7 +1151,7 @@ exports.getCalendarEvents = async (req, res) => {
 
 exports.debugCalendarData = async (req, res) => {
     const { Op } = require("sequelize");
-    const Staff = db.tblstaff;
+    const Staff = db.user;
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
 

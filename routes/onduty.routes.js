@@ -162,6 +162,40 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/onduty/{id}/status:
+     *   put:
+     *     tags: [On-Duty]
+     *     summary: Update on-duty status (Approve/Reject)
+     *     description: Approve or reject an on-duty request
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - name: id
+     *         in: path
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               status:
+     *                 type: string
+     *                 enum: [Approved, Rejected]
+     *               rejection_reason:
+     *                 type: string
+     *     responses:
+     *       200:
+     *         description: Status updated successfully
+     */
+    app.put("/api/onduty/:id/status", [authJwt.verifyToken, authJwt.isManagerOrAdmin], controller.updateOnDutyStatus);
+
+
+    /**
+     * @swagger
      * /api/onduty/{id}:
      *   put:
      *     tags: [On-Duty]
@@ -186,4 +220,31 @@ module.exports = function (app) {
      *         description: On-duty details updated successfully
      */
     app.put("/api/onduty/:id", [authJwt.verifyToken], controller.updateOnDutyDetails);
+
+    /**
+     * @swagger
+     * /api/onduty/{id}:
+     *   delete:
+     *     tags:
+     *       - On-Duty
+     *     summary: Delete an on-duty log
+     *     description: Delete a pending on-duty log by its ID
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: id
+     *         required: true
+     *         schema:
+     *           type: integer
+     *         description: The on-duty log ID
+     *     responses:
+     *       200:
+     *         description: On-duty request deleted successfully
+     *       403:
+     *         description: Cannot delete a processed request
+     *       404:
+     *         description: On-duty request not found
+     */
+    app.delete("/api/onduty/:id", [authJwt.verifyToken], controller.deleteOnDuty);
 };

@@ -1,8 +1,22 @@
 const db = require("../models");
 const OnDutyLog = db.on_duty_logs;
-const TblStaff = db.tblstaff;
+const User = db.user;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const emailService = require("../utils/email.service");
+
+// Helper to format date as dd-MM-yyyy HH:mm
+const formatDate = (date) => {
+    if (!date) return '';
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${day}-${month}-${year} ${hours}:${minutes}`;
+};
+
 
 // Start on-duty visit
 exports.startOnDuty = (req, res) => {
@@ -90,13 +104,14 @@ exports.endOnDuty = (req, res) => {
                 });
 
                 // Get the staff member's approving_manager_id
-                const staff = await TblStaff.findByPk(req.userId);
+                const staff = await User.findByPk(req.userId);
 
                 console.log('Staff found:', !!staff);
                 console.log('Staff name:', staff?.firstname, staff?.lastname);
                 console.log('Staff role:', staff?.role);
                 console.log('Approving Manager ID:', staff?.approving_manager_id);
 
+                let manager = null;
                 if (staff && staff.approving_manager_id) {
                     // Create approval record for on-duty
                     const approval = await Approval.create({
@@ -105,12 +120,48 @@ exports.endOnDuty = (req, res) => {
                         status: 'pending'
                     });
                     console.log('✅ Approval created successfully');
-                    console.log('   Approval ID:', approval.id);
-                    console.log('   On-Duty Log ID:', approval.on_duty_log_id);
-                    console.log('   Manager ID:', approval.manager_id);
-                    console.log('   Status:', approval.status);
+
+                    // Send Email to Manager
+                    try {
+                        manager = await User.findByPk(staff.approving_manager_id);
+                        if (manager && manager.email) {
+                            emailService.sendTemplateEmail(manager.email, "onduty_applied", {
+                                user_name: `${staff.firstname} ${staff.lastname}`,
+                                start_date: formatDate(updatedOnDuty.start_time),
+                                end_date: formatDate(updatedOnDuty.end_time),
+                                reason: `${updatedOnDuty.purpose} at ${updatedOnDuty.client_name}`
+                            });
+                        }
+                    } catch (emailErr) {
+                        console.error("Failed to send email:", emailErr);
+                    }
+
                 } else {
                     console.log('⚠️  Staff has no approving_manager_id - approval NOT created');
+                }
+
+                // Send Confirmation Email to Applicant
+                try {
+                    if (staff && staff.email) {
+                        console.log('--- Email Trigger: On-Duty Confirmation ---');
+                        console.log(`Sending onduty_applied_confirmation email to ${staff.email}`);
+
+                        // Get manager email for CC if available
+                        const managerEmail = (manager && manager.email) ? manager.email : null;
+
+                        const result = await emailService.sendTemplateEmail(staff.email, "onduty_applied_confirmation", {
+                            user_name: `${staff.firstname} ${staff.lastname}`,
+                            start_date: formatDate(updatedOnDuty.start_time),
+                            end_date: formatDate(updatedOnDuty.end_time),
+                            client_name: updatedOnDuty.client_name,
+                            reason: updatedOnDuty.purpose
+                        }, managerEmail);
+                        console.log('Confirmation email result:', result);
+                    } else {
+                        console.log('Applicant has no email or not found.');
+                    }
+                } catch (emailErr) {
+                    console.error("Failed to send confirmation email:", emailErr);
                 }
 
                 console.log('=== EndOnDuty Complete ===\n');
@@ -161,19 +212,19 @@ exports.getActiveOnDuty = (req, res) => {
 exports.getOnDutyByStatus = async (req, res) => {
     try {
         const { Op } = require("sequelize");
-        const Staff = db.tblstaff;
+        const User = db.user;
 
         // Get status from query, default to 'Pending'
         const status = req.query.status || 'Pending';
 
         // Get current user's role to determine filtering
-        const currentUser = await Staff.findByPk(req.userId);
+        const currentUser = await User.findByPk(req.userId);
         const isAdmin = currentUser && currentUser.admin === 1;
 
         // If manager, get their reportees
         let reporteeIds = [];
         if (!isAdmin) {
-            const reportees = await Staff.findAll({
+            const reportees = await User.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
                 raw: true
@@ -199,8 +250,8 @@ exports.getOnDutyByStatus = async (req, res) => {
         const onDutyLogs = await OnDutyLog.findAll({
             where: where,
             include: [{
-                model: Staff,
-                as: 'tblstaff',
+                model: User,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']]
@@ -220,7 +271,7 @@ exports.getOnDutyByStatus = async (req, res) => {
             manager_id: log.manager_id,
             createdAt: log.createdAt,
             updatedAt: log.updatedAt,
-            tblstaff: log.tblstaff
+            tblstaff: log.user
         }));
 
         res.status(200).send({
@@ -235,16 +286,16 @@ exports.getOnDutyByStatus = async (req, res) => {
 exports.getAllActiveOnDuty = async (req, res) => {
     try {
         const { Op } = require("sequelize");
-        const Staff = db.tblstaff;
+        const User = db.user;
 
         // Get current user's role to determine filtering
-        const currentUser = await Staff.findByPk(req.userId);
+        const currentUser = await User.findByPk(req.userId);
         const isAdmin = currentUser && currentUser.admin === 1;
 
         // If manager, get their reportees
         let reporteeIds = [];
         if (!isAdmin) {
-            const reportees = await Staff.findAll({
+            const reportees = await User.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
                 raw: true
@@ -266,8 +317,8 @@ exports.getAllActiveOnDuty = async (req, res) => {
         const activeOnDutyLogs = await OnDutyLog.findAll({
             where: where,
             include: [{
-                model: Staff,
-                as: 'tblstaff',
+                model: User,
+                as: 'user',
                 attributes: ['staffid', 'firstname', 'lastname', 'email']
             }],
             order: [['start_time', 'DESC']]
@@ -291,7 +342,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
             manager_id: log.manager_id,
             createdAt: log.createdAt,
             updatedAt: log.updatedAt,
-            tblstaff: log.tblstaff
+            tblstaff: log.user
         }));
 
         res.status(200).send({
@@ -334,3 +385,185 @@ exports.updateOnDutyDetails = async (req, res) => {
         res.status(500).send({ message: err.message });
     }
 };
+
+// Delete On-Duty Log (User Delete)
+exports.deleteOnDuty = async (req, res) => {
+    const { id } = req.params;
+    const userId = req.userId;
+
+    try {
+        const requestId = parseInt(id, 10);
+        if (isNaN(requestId)) {
+            return res.status(400).send({ message: "Invalid request ID format." });
+        }
+
+        const onDutyLog = await OnDutyLog.findOne({
+            where: { id: requestId, staff_id: userId }
+        });
+
+        if (!onDutyLog) {
+            return res.status(404).send({ message: "On-duty request not found." });
+        }
+
+        // Allow deletion if status is null, empty, or 'Pending' (case-insensitive)
+        const status = (onDutyLog.status || '').toLowerCase();
+        if (status !== '' && status !== 'pending') {
+            return res.status(403).send({ message: "Cannot delete a request that has already been processed." });
+        }
+
+        await onDutyLog.destroy();
+
+        await logActivity({
+            admin_id: userId,
+            action: 'DELETE',
+            entity: 'OnDutyLog',
+            entity_id: requestId,
+            affected_user_id: userId,
+            description: `Deleted on-duty request ID: ${requestId}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        return res.status(200).send({ message: "On-duty request deleted successfully." });
+    } catch (error) {
+        console.error(`Error deleting on-duty request:`, error);
+        res.status(500).send({ message: "Error deleting on-duty request.", error: error.message });
+    }
+};
+
+// Update On-Duty Status (Approve/Reject)
+exports.updateOnDutyStatus = async (req, res) => {
+    try {
+        const OnDutyLog = db.on_duty_logs;
+        const { id } = req.params;
+        const { status, rejection_reason } = req.body;
+
+        const log = await OnDutyLog.findByPk(id);
+        if (!log) {
+            return res.status(404).send({ message: "On-Duty log not found." });
+        }
+
+        const oldStatus = log.status;
+        const oldReason = log.rejection_reason;
+
+        console.log(`[DEBUG] Updating On-Duty ID: ${id} to Status: ${status}`);
+
+        // If only rejection_reason is being updated (no status change)
+        if (!status && rejection_reason !== undefined) {
+            // Only allow updating rejection reason if the request is already rejected
+            if (log.status !== 'Rejected') {
+                return res.status(400).send({ message: "Can only update rejection reason for rejected requests." });
+            }
+
+            // Only the person who rejected it can edit the reason
+            if (Number(log.manager_id) !== Number(req.userId)) {
+                return res.status(403).send({ message: "Only the person who rejected this request can edit the rejection reason." });
+            }
+
+            log.rejection_reason = rejection_reason;
+            await log.save();
+
+            // Log activity as UPDATE action
+            await logActivity({
+                admin_id: req.userId,
+                action: 'UPDATE',
+                entity: 'OnDutyLog',
+                entity_id: log.id,
+                affected_user_id: log.staff_id,
+                old_values: { rejection_reason: oldReason },
+                new_values: { rejection_reason: rejection_reason },
+                description: `Updated rejection reason for ${log.client_name}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
+            return res.status(200).send({
+                message: 'Rejection reason updated successfully!',
+                log
+            });
+        }
+
+        // Standard status update logic
+        if (!['Approved', 'Rejected', 'Pending'].includes(status)) {
+            return res.status(400).send({ message: "Invalid status! Must be 'Approved', 'Rejected', or 'Pending'." });
+        }
+
+        log.status = status;
+
+        if (status === 'Pending') {
+            log.manager_id = null;
+            log.rejection_reason = null;
+        } else {
+            log.manager_id = req.userId; // Approver ID
+            if (status === 'Rejected') {
+                log.rejection_reason = rejection_reason;
+            } else { // If status is 'Approved'
+                log.rejection_reason = null; // Ensure it's cleared if approved
+            }
+        }
+
+        await log.save();
+
+        // Log activity
+        await logActivity({
+            admin_id: req.userId,
+            action: status === 'Approved' ? 'APPROVE' : (status === 'Rejected' ? 'REJECT' : 'UPDATE'),
+            entity: 'OnDutyLog',
+            entity_id: log.id,
+            affected_user_id: log.staff_id,
+            old_values: { status: oldStatus },
+            new_values: { status: status, rejection_reason: rejection_reason || null },
+            description: `${status === 'Approved' ? 'Approved' : (status === 'Rejected' ? 'Rejected' : 'Updated')} on-duty request for ${log.client_name}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        // Fetch approver details if approved/rejected
+        let approver = null;
+        if (log.manager_id) {
+            const Staff = db.user;
+            approver = await Staff.findByPk(log.manager_id, {
+                attributes: ['staffid', 'firstname', 'lastname', 'email']
+            });
+        }
+
+        // Send Email to User
+        try {
+            const user = await User.findByPk(log.staff_id);
+            console.log(`[DEBUG] Applicant found for email? ${!!user} (ID: ${log.staff_id})`);
+
+            if (user && user.email && (status === 'Approved' || status === 'Rejected')) {
+                console.log(`--- Email Trigger: On-Duty ${status} ---`);
+                console.log(`Sending email to ${user.email}`);
+                const templateSlug = status === 'Approved' ? 'onduty_approved' : 'onduty_rejected';
+
+                // Get manager email for CC if available
+                const managerEmail = approver && approver.email ? approver.email : null;
+
+                emailService.sendTemplateEmail(user.email, templateSlug, {
+                    user_name: `${user.firstname} ${user.lastname}`,
+                    start_date: formatDate(log.start_time),
+                    end_date: formatDate(log.end_time),
+                    rejection_reason: rejection_reason || ""
+                }, managerEmail);
+            } else if (!user) {
+                console.log('[DEBUG] Applicant user not found by ID ' + log.staff_id);
+            } else if (!user.email) {
+                console.log('[DEBUG] Applicant user has no email.');
+            } else {
+                console.log(`[DEBUG] Email logic skipped. Status: ${status}`);
+            }
+        } catch (emailErr) {
+            console.error("Failed to send email:", emailErr);
+        }
+
+        res.status(200).send({
+            message: `On-Duty visit ${status} successfully!`,
+            log,
+            approver
+        });
+    } catch (err) {
+        res.status(500).send({ message: err.message });
+    }
+};
+

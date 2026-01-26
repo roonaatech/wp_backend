@@ -22,7 +22,7 @@ verifyToken = (req, res, next) => {
 };
 
 const db = require("../models");
-const User = db.tblstaff;
+const User = db.user;
 
 isManagerOrAdmin = async (req, res, next) => {
     try {

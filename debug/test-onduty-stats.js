@@ -3,7 +3,7 @@ const db = require("../models");
 (async () => {
     try {
         // Find a staff member
-        const staff = await db.tblstaff.findOne();
+        const staff = await db.user.findOne();
         if (!staff) {
             console.log('No staff found');
             process.exit(1);

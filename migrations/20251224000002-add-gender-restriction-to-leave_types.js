@@ -1,12 +1,11 @@
 'use strict';
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.addColumn('leave_types', 'gender_restriction', {
-      type: Sequelize.JSON,
-      allowNull: true,
-    });
+    // No-op: gender_restriction column already exists
+    return Promise.resolve();
   },
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.removeColumn('leave_types', 'gender_restriction');
+    // No-op
+    return Promise.resolve();
   }
 };

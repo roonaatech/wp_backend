@@ -1,6 +1,10 @@
 const path = require('path');
+const https = require('https');
+const fs = require('fs');
 const dotenv = require('dotenv');
-dotenv.config({ path: path.resolve(__dirname, '.env') });
+const envFile = fs.existsSync(path.resolve(__dirname, '.env.uat')) ? '.env.uat' : '.env';
+dotenv.config({ path: path.resolve(__dirname, envFile) });
+console.log(`Loaded environment from ${envFile}`);
 
 process.on('uncaughtException', (err) => {
     console.error('Global Uncaught Exception:', err);
@@ -18,8 +22,17 @@ const swaggerSpec = require('./swagger');
 const db = require('./models');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3343;
 console.log("DB_HOST from env:", process.env.DB_HOST);
+
+// SSL Certificate Configuration
+const SSL_CERT_PATH = '/apps/attendance/certs';
+const sslOptions = {
+    key: fs.readFileSync(path.join(SSL_CERT_PATH, 'private.key')),
+    cert: fs.readFileSync(path.join(SSL_CERT_PATH, 'certificate.crt')),
+    // Uncomment below if you have a CA bundle
+    // ca: fs.readFileSync(path.join(SSL_CERT_PATH, 'ca-bundle.crt'))
+};
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -43,7 +56,7 @@ app.use((req, res, next) => {
 
 // Test route
 app.get('/', (req, res) => {
-    res.json({ message: 'Welcome to the WorkPulse API. Visit /api-docs for documentation.' });
+    res.json({ message: 'Welcome to the WorkPulse UAT API. Visit /api-docs for documentation.' });
 });
 
 // Routes
@@ -59,16 +72,16 @@ require('./routes/apk.routes')(app);
 require('./routes/debug.routes')(app);
 require('./routes/email.routes')(app);
 
-// Sync database
+// Sync database and start HTTPS server
 db.sequelize.sync()
     .then(() => {
         console.log('Synced db.');
         // Seed Email Templates
         require('./utils/seed_templates')();
 
-        app.listen(PORT, () => {
-            console.log(`Server is running on port ${PORT}.`);
-            console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);
+        https.createServer(sslOptions, app).listen(PORT, () => {
+            console.log(`HTTPS Server is running on port ${PORT}.`);
+            console.log(`API Documentation available at https://api.workpulse-uat.roonaa.in:${PORT}/api-docs`);
             // Keep process alive check
             setInterval(() => { }, 1000 * 60);
         });
