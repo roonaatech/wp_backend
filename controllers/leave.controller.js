@@ -372,7 +372,16 @@ exports.getPendingLeaves = async (req, res) => {
             reason: `${l.purpose} (${l.location})`,
             start_date: l.start_time,
             end_date: l.end_time,
-            createdAt: l.start_time
+            createdAt: l.start_time,
+            client_name: l.client_name,
+            location: l.location,
+            purpose: l.purpose,
+            start_time: l.start_time,
+            end_time: l.end_time,
+            start_lat: l.start_lat,
+            start_long: l.start_long,
+            end_lat: l.end_lat,
+            end_long: l.end_long
         }));
 
         const combined = [...normalizedLeaves, ...normalizedOnDuty];
@@ -514,7 +523,16 @@ exports.getManageableRequests = async (req, res) => {
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
                 createdAt: l.start_time,
-                updatedAt: l.updatedAt
+                updatedAt: l.updatedAt,
+                client_name: l.client_name,
+                location: l.location,
+                purpose: l.purpose,
+                start_time: l.start_time,
+                end_time: l.end_time,
+                start_lat: l.start_lat,
+                start_long: l.start_long,
+                end_lat: l.end_lat,
+                end_long: l.end_long
             };
         });
 
