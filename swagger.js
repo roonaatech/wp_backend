@@ -128,12 +128,103 @@ const options = {
               type: 'string',
               format: 'date-time'
             },
+            start_lat: {
+              type: 'string',
+              description: 'Starting latitude coordinate'
+            },
+            start_long: {
+              type: 'string',
+              description: 'Starting longitude coordinate'
+            },
+            end_lat: {
+              type: 'string',
+              description: 'Ending latitude coordinate'
+            },
+            end_long: {
+              type: 'string',
+              description: 'Ending longitude coordinate'
+            },
             status: {
               type: 'string',
               enum: ['Pending', 'Approved', 'Rejected']
             },
             rejection_reason: {
               type: 'string'
+            }
+          }
+        },
+        Role: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'integer'
+            },
+            name: {
+              type: 'string'
+            },
+            display_name: {
+              type: 'string'
+            },
+            description: {
+              type: 'string'
+            },
+            hierarchy_level: {
+              type: 'integer',
+              description: '0 = highest authority, higher numbers = lower authority'
+            },
+            can_approve_leave: {
+              type: 'boolean'
+            },
+            can_approve_onduty: {
+              type: 'boolean'
+            },
+            can_manage_users: {
+              type: 'boolean'
+            },
+            can_manage_leave_types: {
+              type: 'boolean'
+            },
+            can_view_reports: {
+              type: 'boolean'
+            },
+            createdAt: {
+              type: 'string',
+              format: 'date-time'
+            },
+            updatedAt: {
+              type: 'string',
+              format: 'date-time'
+            }
+          }
+        },
+        UserLeaveType: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'integer'
+            },
+            staff_id: {
+              type: 'integer'
+            },
+            leave_type_id: {
+              type: 'integer'
+            },
+            allocated_days: {
+              type: 'number'
+            },
+            used_days: {
+              type: 'number'
+            },
+            remaining_days: {
+              type: 'number'
+            },
+            createdAt: {
+              type: 'string',
+              format: 'date-time'
+            },
+            updatedAt: {
+              type: 'string',
+              format: 'date-time'
             }
           }
         },
@@ -181,7 +272,11 @@ const options = {
     './routes/admin.routes.js',
     './routes/leavetype.routes.js',
     './routes/activity.routes.js',
-    './routes/debug.routes.js'
+    './routes/debug.routes.js',
+    './routes/role.routes.js',
+    './routes/userleavetype.routes.js',
+    './routes/email.routes.js',
+    './routes/apk.routes.js'
   ]
 };
 

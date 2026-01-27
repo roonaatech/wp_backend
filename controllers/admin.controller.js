@@ -384,7 +384,7 @@ exports.getAllUsers = async (req, res) => {
 
         const queryOptions = {
             where: whereClause,
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender'],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
@@ -412,7 +412,7 @@ exports.getManagersAndAdmins = (req, res) => {
     const { Op } = require("sequelize");
     TblStaff.findAll({
         where: { role: { [Op.in]: [1, 2, 3] }, active: 1 },
-        attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
+        attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
         order: [['firstname', 'ASC'], ['lastname', 'ASC']]
     })
         .then(users => {
