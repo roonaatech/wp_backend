@@ -880,7 +880,10 @@ exports.getDailyTrendData = async (req, res) => {
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
     const Staff = db.user;
+    
     const days = parseInt(req.query.days) || 7;
+    const startDate = req.query.startDate; // Format: YYYY-MM-DD
+    const endDate = req.query.endDate; // Format: YYYY-MM-DD
 
     try {
         // Get current user's role to determine filtering
@@ -900,21 +903,34 @@ exports.getDailyTrendData = async (req, res) => {
 
         const trendData = [];
         const today = new Date();
+        let dateStart, dateEnd;
 
-        // Generate dates for the selected duration
-        for (let i = days - 1; i >= 0; i--) {
-            const date = new Date(today);
-            date.setDate(date.getDate() - i);
+        // Determine the date range to use
+        if (startDate && endDate) {
+            // Use custom date range
+            dateStart = new Date(startDate + 'T00:00:00');
+            dateEnd = new Date(endDate + 'T23:59:59');
+        } else {
+            // Use default days range
+            dateStart = new Date(today);
+            dateStart.setDate(dateStart.getDate() - (days - 1));
+            dateStart.setHours(0, 0, 0, 0);
+            dateEnd = new Date(today);
+            dateEnd.setHours(23, 59, 59, 999);
+        }
 
-            const startOfDay = new Date(date);
+        // Generate dates for the range
+        const currentDate = new Date(dateStart);
+        while (currentDate <= dateEnd) {
+            const startOfDay = new Date(currentDate);
             startOfDay.setHours(0, 0, 0, 0);
 
-            const endOfDay = new Date(date);
+            const endOfDay = new Date(currentDate);
             endOfDay.setHours(23, 59, 59, 999);
 
-            const day = String(date.getDate()).padStart(2, '0');
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const year = String(date.getFullYear()).slice(-2);
+            const day = String(currentDate.getDate()).padStart(2, '0');
+            const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+            const year = String(currentDate.getFullYear()).slice(-2);
             const dateStr = `${day}/${month}/${year}`;
 
             // Count approved leaves on this day
@@ -947,6 +963,9 @@ exports.getDailyTrendData = async (req, res) => {
                 onDuty: approvedOnDutyCount,
                 total: approvedLeavesCount + approvedOnDutyCount
             });
+
+            // Move to next day
+            currentDate.setDate(currentDate.getDate() + 1);
         }
 
         console.log(`Daily trend data for ${days} days:`, trendData);
