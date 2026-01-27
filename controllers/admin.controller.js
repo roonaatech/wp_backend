@@ -107,6 +107,7 @@ exports.createUser = async (req, res) => {
                 lastname: newUser.lastname,
                 email: newUser.email,
                 role: newUser.role,
+                userid: newUser.userid,
                 approving_manager_id: newUser.approving_manager_id,
                 gender: newUser.gender,
                 active: newUser.active
@@ -203,6 +204,7 @@ exports.updateUser = (req, res) => {
                                 email: updatedUser.email,
                                 gender: updatedUser.gender,
                                 role: updatedUser.role,
+                                userid: updatedUser.userid,
                                 approving_manager_id: updatedUser.approving_manager_id,
                                 active: updatedUser.active
                             }
@@ -228,11 +230,22 @@ exports.resetUserPassword = async (req, res) => {
         const userId = req.params.id;
         const { newPassword } = req.body;
 
-        // Verify admin permission
+        // Verify admin permission using role's can_manage_users flag
         const currentUser = await TblStaff.findByPk(req.userId);
-        if (!currentUser || currentUser.role !== 1) {
+        if (!currentUser) {
             return res.status(403).send({
-                message: "Access denied. Only admins can reset passwords."
+                message: "Access denied. User not found."
+            });
+        }
+        
+        // Check if user has admin permission (can_manage_users)
+        const Role = db.roles;
+        const userRole = await Role.findByPk(currentUser.role);
+        const hasAdminPermission = currentUser.admin === 1 || (userRole && userRole.can_manage_users);
+        
+        if (!hasAdminPermission) {
+            return res.status(403).send({
+                message: "Access denied. Only users with management permissions can reset passwords."
             });
         }
 

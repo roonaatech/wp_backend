@@ -15,7 +15,7 @@ module.exports = function(app) {
      * /api/roles:
      *   get:
      *     summary: Get all roles
-     *     description: Retrieve a list of all roles (Admin only)
+     *     description: Retrieve a list of all roles (any authenticated user can read)
      *     tags:
      *       - Roles
      *     security:
@@ -31,12 +31,10 @@ module.exports = function(app) {
      *                 $ref: '#/components/schemas/Role'
      *       401:
      *         description: Unauthorized
-     *       403:
-     *         description: Forbidden - Admin access required
      */
     app.get(
         "/api/roles",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken],
         controller.findAll
     );
 

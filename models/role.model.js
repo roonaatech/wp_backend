@@ -49,6 +49,24 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: false,
             defaultValue: false
         },
+        can_access_webapp: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can access the web application dashboard'
+        },
+        can_manage_roles: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can manage roles'
+        },
+        can_manage_email_settings: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can manage email settings'
+        },
         active: {
             type: Sequelize.BOOLEAN,
             allowNull: false,
