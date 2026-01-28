@@ -1045,8 +1045,6 @@ exports.getCalendarEvents = async (req, res) => {
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
         const canViewAllSchedules = userRole && userRole.can_manage_schedule === 'all';
 
-        console.log(`User ${userId} fetching calendar - canViewAllSchedules: ${canViewAllSchedules}`);
-
         // Determine which staff to fetch events for
         let reporteeIds = [];
         if (!canViewAllSchedules) {
@@ -1060,15 +1058,11 @@ exports.getCalendarEvents = async (req, res) => {
             });
             reporteeIds = reportees.map(r => r.staffid);
 
-            console.log(`User ${userId} query - reportees found:`, reporteeIds);
-
             if (reporteeIds.length === 0) {
                 // User has no reportees, return empty array
-                console.log(`User ${userId} has no reportees - returning empty events`);
                 return res.send([]);
             }
         } else {
-            console.log(`User ${userId} - showing all staff events (can_manage_schedule: all)`);
         }
 
         // Build the base where condition for leave requests
@@ -1119,8 +1113,6 @@ exports.getCalendarEvents = async (req, res) => {
             raw: false
         });
 
-        console.log(`Found ${leaveRequests.length} leave requests with where:`, JSON.stringify(leaveWhere));
-
         // Build the base where condition for on-duty logs
         // Include all statuses to show complete history
         const onDutyWhere = {
@@ -1147,7 +1139,7 @@ exports.getCalendarEvents = async (req, res) => {
             raw: false
         });
 
-        console.log(`Found ${onDutyLogs.length} on-duty logs with where:`, JSON.stringify(onDutyWhere));
+        // Transform leave requests into calendar events
 
         // Process leave requests and create events for each day
         const events = [];
