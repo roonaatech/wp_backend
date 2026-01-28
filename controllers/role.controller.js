@@ -87,6 +87,7 @@ exports.create = async (req, res) => {
             can_view_reports: can_view_reports || 'none',
             can_manage_active_onduty: can_manage_active_onduty || 'none',
             can_manage_schedule: can_manage_schedule || 'none',
+            can_view_activities: can_view_activities || 'none',
             // Global permissions - boolean
             can_manage_leave_types: can_manage_leave_types || false,
             can_access_webapp: can_access_webapp || false,
@@ -124,6 +125,7 @@ exports.update = async (req, res) => {
             can_view_reports,
             can_manage_active_onduty,
             can_manage_schedule,
+            can_view_activities,
             can_access_webapp,
             can_manage_roles,
             can_manage_email_settings,
@@ -163,6 +165,7 @@ exports.update = async (req, res) => {
             can_view_reports: can_view_reports !== undefined ? can_view_reports : role.can_view_reports,
             can_manage_active_onduty: can_manage_active_onduty !== undefined ? can_manage_active_onduty : role.can_manage_active_onduty,
             can_manage_schedule: can_manage_schedule !== undefined ? can_manage_schedule : role.can_manage_schedule,
+            can_view_activities: can_view_activities !== undefined ? can_view_activities : role.can_view_activities,
             can_access_webapp: can_access_webapp !== undefined ? can_access_webapp : role.can_access_webapp,
             can_manage_roles: can_manage_roles !== undefined ? can_manage_roles : role.can_manage_roles,
             can_manage_email_settings: can_manage_email_settings !== undefined ? can_manage_email_settings : role.can_manage_email_settings,

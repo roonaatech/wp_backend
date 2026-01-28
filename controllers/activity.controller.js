@@ -1,9 +1,22 @@
 const db = require("../models");
 const ActivityLog = db.activity_logs;
 const User = db.user;
+const { Op } = require("sequelize");
 
 /**
- * Get all activity logs (only for admins)
+ * Helper function to get subordinate user IDs
+ */
+const getSubordinateIds = async (userId) => {
+    const subordinates = await User.findAll({
+        where: { approving_manager_id: userId },
+        attributes: ['staffid'],
+        raw: true
+    });
+    return subordinates.map(s => s.staffid);
+};
+
+/**
+ * Get all activity logs (based on can_view_activities permission)
  */
 exports.getAllActivities = async (req, res) => {
     try {
@@ -11,6 +24,20 @@ exports.getAllActivities = async (req, res) => {
         
         // Build filter
         let where = {};
+        
+        // Apply hierarchical filtering based on permission level
+        if (req.activityPermission === 'subordinates') {
+            // Get subordinate user IDs
+            const subordinateIds = await getSubordinateIds(req.userId);
+            // Include activities performed by subordinates OR activities affecting subordinates
+            // Also include the user's own activities
+            subordinateIds.push(req.userId);
+            where[Op.or] = [
+                { admin_id: { [Op.in]: subordinateIds } },
+                { affected_user_id: { [Op.in]: subordinateIds } }
+            ];
+        }
+        // 'all' permission has no restriction
         
         if (action) where.action = action;
         if (entity) where.entity = entity;
@@ -86,6 +113,17 @@ exports.getActivitySummary = async (req, res) => {
         const { startDate, endDate } = req.query;
         
         let where = {};
+        
+        // Apply hierarchical filtering based on permission level
+        if (req.activityPermission === 'subordinates') {
+            const subordinateIds = await getSubordinateIds(req.userId);
+            subordinateIds.push(req.userId);
+            where[Op.or] = [
+                { admin_id: { [Op.in]: subordinateIds } },
+                { affected_user_id: { [Op.in]: subordinateIds } }
+            ];
+        }
+        
         if (startDate || endDate) {
             where.createdAt = {};
             if (startDate) {
@@ -163,6 +201,18 @@ exports.getUserActivityHistory = async (req, res) => {
         const { userId } = req.params;
         const { page = 1, limit = 20 } = req.query;
         
+        // Check if user has permission to view this user's activities
+        if (req.activityPermission === 'subordinates') {
+            const subordinateIds = await getSubordinateIds(req.userId);
+            subordinateIds.push(req.userId);
+            if (!subordinateIds.includes(parseInt(userId))) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You can only view activities of your subordinates'
+                });
+            }
+        }
+        
         const offset = (parseInt(page) - 1) * parseInt(limit);
         
         const { count, rows } = await ActivityLog.findAndCountAll({
@@ -213,6 +263,17 @@ exports.exportActivities = async (req, res) => {
         const { action, entity, admin_id, affected_user_id, startDate, endDate } = req.query;
         
         let where = {};
+        
+        // Apply hierarchical filtering based on permission level
+        if (req.activityPermission === 'subordinates') {
+            const subordinateIds = await getSubordinateIds(req.userId);
+            subordinateIds.push(req.userId);
+            where[Op.or] = [
+                { admin_id: { [Op.in]: subordinateIds } },
+                { affected_user_id: { [Op.in]: subordinateIds } }
+            ];
+        }
+        
         if (action) where.action = action;
         if (entity) where.entity = entity;
         if (admin_id) where.admin_id = parseInt(admin_id);

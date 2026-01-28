@@ -177,11 +177,49 @@ canManageLeaveTypes = async (req, res, next) => {
     }
 };
 
+/**
+ * Middleware to check if user can view activities
+ * Stores the permission level in req.activityPermission for use in controller
+ */
+canViewActivities = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+        
+        // Legacy admin flag check - full access
+        if (user.admin === 1) {
+            req.activityPermission = 'all';
+            next();
+            return;
+        }
+        
+        // Get role from database and check can_view_activities permission
+        const role = await Role.findByPk(user.role);
+        if (role && role.can_view_activities && role.can_view_activities !== 'none') {
+            req.activityPermission = role.can_view_activities;
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to view activities!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const authJwt = {
     verifyToken: verifyToken,
     isManagerOrAdmin: isManagerOrAdmin,
     isAdmin: isAdmin,
     canAccessWebApp: canAccessWebApp,
-    canManageLeaveTypes: canManageLeaveTypes
+    canManageLeaveTypes: canManageLeaveTypes,
+    canViewActivities: canViewActivities
 };
 module.exports = authJwt;

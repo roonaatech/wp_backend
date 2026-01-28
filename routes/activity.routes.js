@@ -1,4 +1,4 @@
-const { verifyToken, isAdmin } = require("../middleware/authJwt");
+const { verifyToken, canViewActivities } = require("../middleware/authJwt");
 const controller = require("../controllers/activity.controller");
 
 module.exports = function (app) {
@@ -46,7 +46,7 @@ module.exports = function (app) {
      * /api/activities/summary:
      *   get:
      *     summary: Get activity summary
-     *     description: Retrieve a summary of all activities (Admin only)
+     *     description: Retrieve a summary of all activities (based on can_view_activities permission)
      *     tags: [Activities]
      *     security:
      *       - ApiKeyAuth: []
@@ -54,14 +54,14 @@ module.exports = function (app) {
      *       200:
      *         description: Activity summary retrieved successfully
      */
-    app.get("/api/activities/summary", [verifyToken, isAdmin], controller.getActivitySummary);
+    app.get("/api/activities/summary", [verifyToken, canViewActivities], controller.getActivitySummary);
 
     /**
      * @swagger
      * /api/activities/export/csv:
      *   get:
      *     summary: Export activities as CSV
-     *     description: Download activity logs in CSV format (Admin only)
+     *     description: Download activity logs in CSV format (based on can_view_activities permission)
      *     tags: [Activities]
      *     security:
      *       - ApiKeyAuth: []
@@ -69,14 +69,14 @@ module.exports = function (app) {
      *       200:
      *         description: CSV file download
      */
-    app.get("/api/activities/export/csv", [verifyToken, isAdmin], controller.exportActivities);
+    app.get("/api/activities/export/csv", [verifyToken, canViewActivities], controller.exportActivities);
 
     /**
      * @swagger
      * /api/activities/user/{userId}:
      *   get:
      *     summary: Get user activity history
-     *     description: Retrieve activity history for a specific user (Admin only)
+     *     description: Retrieve activity history for a specific user (based on can_view_activities permission)
      *     tags: [Activities]
      *     security:
      *       - ApiKeyAuth: []
@@ -90,14 +90,14 @@ module.exports = function (app) {
      *       200:
      *         description: User activity history retrieved successfully
      */
-    app.get("/api/activities/user/:userId", [verifyToken, isAdmin], controller.getUserActivityHistory);
+    app.get("/api/activities/user/:userId", [verifyToken, canViewActivities], controller.getUserActivityHistory);
 
     /**
      * @swagger
      * /api/activities:
      *   get:
      *     summary: Get all activities
-     *     description: Retrieve all activity logs (Admin only)
+     *     description: Retrieve all activity logs (based on can_view_activities permission)
      *     tags: [Activities]
      *     security:
      *       - ApiKeyAuth: []
@@ -105,5 +105,5 @@ module.exports = function (app) {
      *       200:
      *         description: List of all activities
      */
-    app.get("/api/activities", [verifyToken, isAdmin], controller.getAllActivities);
+    app.get("/api/activities", [verifyToken, canViewActivities], controller.getAllActivities);
 };

@@ -61,6 +61,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: 'none',
             comment: 'View schedule/calendar - none=no access, subordinates=only subordinates, all=everyone'
         },
+        can_view_activities: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'View activity logs - none=no access, subordinates=only subordinates, all=everyone'
+        },
         // Global permissions - boolean (either you have it or not)
         can_manage_leave_types: {
             type: Sequelize.BOOLEAN,
