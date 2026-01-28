@@ -43,8 +43,13 @@ isManagerOrAdmin = async (req, res, next) => {
         }
         
         // Get role from database and check permissions
+        // For enum permissions, check if they're not 'none'
         const role = await Role.findByPk(user.role);
-        if (role && (role.can_approve_leave || role.can_approve_onduty || role.can_manage_users)) {
+        if (role && (
+            (role.can_approve_leave && role.can_approve_leave !== 'none') || 
+            (role.can_approve_onduty && role.can_approve_onduty !== 'none') || 
+            (role.can_manage_users && role.can_manage_users !== 'none')
+        )) {
             next();
             return;
         }
@@ -78,8 +83,9 @@ isAdmin = async (req, res, next) => {
         }
         
         // Get role from database and check can_manage_users permission
+        // For enum, check if it's 'all' (full admin access)
         const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_users) {
+        if (role && role.can_manage_users === 'all') {
             next();
             return;
         }
@@ -115,12 +121,12 @@ canAccessWebApp = async (req, res, next) => {
         // Get role from database
         const role = await Role.findByPk(user.role);
         if (role && (
-            role.can_approve_leave || 
-            role.can_approve_onduty || 
-            role.can_manage_users || 
+            role.can_access_webapp ||
+            (role.can_approve_leave && role.can_approve_leave !== 'none') || 
+            (role.can_approve_onduty && role.can_approve_onduty !== 'none') || 
+            (role.can_manage_users && role.can_manage_users !== 'none') || 
             role.can_manage_leave_types || 
-            role.can_view_reports ||
-            role.hierarchy_level <= 3
+            (role.can_view_reports && role.can_view_reports !== 'none')
         )) {
             next();
             return;

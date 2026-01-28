@@ -24,27 +24,33 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: 0,
             comment: 'Lower number = higher authority. 0=highest, 999=lowest'
         },
+        // Hierarchical permissions - 'none', 'subordinates', 'all'
         can_approve_leave: {
-            type: Sequelize.BOOLEAN,
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
             allowNull: false,
-            defaultValue: false
+            defaultValue: 'none',
+            comment: 'none=no access, subordinates=only subordinates, all=everyone'
         },
         can_approve_onduty: {
-            type: Sequelize.BOOLEAN,
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
             allowNull: false,
-            defaultValue: false
+            defaultValue: 'none',
+            comment: 'none=no access, subordinates=only subordinates, all=everyone'
         },
         can_manage_users: {
-            type: Sequelize.BOOLEAN,
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
             allowNull: false,
-            defaultValue: false
-        },
-        can_manage_leave_types: {
-            type: Sequelize.BOOLEAN,
-            allowNull: false,
-            defaultValue: false
+            defaultValue: 'none',
+            comment: 'none=no access, subordinates=only subordinates, all=everyone'
         },
         can_view_reports: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'none=no access, subordinates=only subordinates, all=everyone'
+        },
+        // Global permissions - boolean (either you have it or not)
+        can_manage_leave_types: {
             type: Sequelize.BOOLEAN,
             allowNull: false,
             defaultValue: false

@@ -78,11 +78,13 @@ exports.create = async (req, res) => {
             display_name,
             description,
             hierarchy_level: hierarchy_level || 999,
-            can_approve_leave: can_approve_leave || false,
-            can_approve_onduty: can_approve_onduty || false,
-            can_manage_users: can_manage_users || false,
+            // Hierarchical permissions - 'none', 'subordinates', 'all'
+            can_approve_leave: can_approve_leave || 'none',
+            can_approve_onduty: can_approve_onduty || 'none',
+            can_manage_users: can_manage_users || 'none',
+            can_view_reports: can_view_reports || 'none',
+            // Global permissions - boolean
             can_manage_leave_types: can_manage_leave_types || false,
-            can_view_reports: can_view_reports || false,
             can_access_webapp: can_access_webapp || false,
             can_manage_roles: can_manage_roles || false,
             can_manage_email_settings: can_manage_email_settings || false,
