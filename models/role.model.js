@@ -49,6 +49,18 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: 'none',
             comment: 'none=no access, subordinates=only subordinates, all=everyone'
         },
+        can_manage_active_onduty: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'Manage active on-duty records - none=no access, subordinates=only subordinates, all=everyone'
+        },
+        can_manage_schedule: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'View schedule/calendar - none=no access, subordinates=only subordinates, all=everyone'
+        },
         // Global permissions - boolean (either you have it or not)
         can_manage_leave_types: {
             type: Sequelize.BOOLEAN,

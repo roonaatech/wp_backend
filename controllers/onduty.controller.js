@@ -213,17 +213,19 @@ exports.getOnDutyByStatus = async (req, res) => {
     try {
         const { Op } = require("sequelize");
         const User = db.user;
+        const Role = db.roles;
 
         // Get status from query, default to 'Pending'
         const status = req.query.status || 'Pending';
 
         // Get current user's role to determine filtering
         const currentUser = await User.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
 
-        // If manager, get their reportees
+        // If user can only approve subordinates, get their reportees
         let reporteeIds = [];
-        if (!isAdmin) {
+        if (!canApproveAllOnDuty) {
             const reportees = await User.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
@@ -239,11 +241,11 @@ exports.getOnDutyByStatus = async (req, res) => {
             where.end_time = { [Op.ne]: null };
         }
 
-        // Add manager filtering
-        if (!isAdmin && reporteeIds.length > 0) {
+        // Add filtering based on permission level
+        if (!canApproveAllOnDuty && reporteeIds.length > 0) {
             where.staff_id = { [Op.in]: reporteeIds };
-        } else if (!isAdmin) {
-            // Manager with no reportees, return empty
+        } else if (!canApproveAllOnDuty) {
+            // User with no reportees, return empty
             return res.status(200).send({ items: [] });
         }
 
@@ -287,14 +289,16 @@ exports.getAllActiveOnDuty = async (req, res) => {
     try {
         const { Op } = require("sequelize");
         const User = db.user;
+        const Role = db.roles;
 
         // Get current user's role to determine filtering
         const currentUser = await User.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canManageAllActiveOnDuty = userRole && userRole.can_manage_active_onduty === 'all';
 
-        // If manager, get their reportees
+        // If user can only view subordinates, get their reportees
         let reporteeIds = [];
-        if (!isAdmin) {
+        if (!canManageAllActiveOnDuty) {
             const reportees = await User.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
@@ -306,11 +310,11 @@ exports.getAllActiveOnDuty = async (req, res) => {
         // Find all active on-duty records (end_time is null)
         let where = { end_time: null };
 
-        // Add manager filtering
-        if (!isAdmin && reporteeIds.length > 0) {
+        // Add filtering based on permission level
+        if (!canManageAllActiveOnDuty && reporteeIds.length > 0) {
             where.staff_id = { [Op.in]: reporteeIds };
-        } else if (!isAdmin) {
-            // Manager with no reportees, return empty
+        } else if (!canManageAllActiveOnDuty) {
+            // User with no reportees, return empty
             return res.status(200).send({ items: [] });
         }
 

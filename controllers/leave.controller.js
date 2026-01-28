@@ -293,15 +293,17 @@ exports.getMyLeaves = async (req, res) => {
 exports.getPendingLeaves = async (req, res) => {
     try {
         const OnDutyLog = db.on_duty_logs;
+        const Role = db.roles;
         const { Op } = require("sequelize");
 
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
 
-        // If manager, get their reportees
+        // If user can only approve subordinates, get their reportees
         let reporteeIds = [];
-        if (!isAdmin) {
+        if (!canApproveAllLeave) {
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
@@ -315,7 +317,7 @@ exports.getPendingLeaves = async (req, res) => {
 
         // Build where clause for leaves
         let leaveWhere = { status: 'Pending' };
-        if (!isAdmin) {
+        if (!canApproveAllLeave) {
             leaveWhere.staff_id = { [Op.in]: reporteeIds };
         }
 
@@ -335,7 +337,7 @@ exports.getPendingLeaves = async (req, res) => {
             status: 'Pending',
             end_time: { [Op.ne]: null } // Only completed visits
         };
-        if (!isAdmin) {
+        if (!canApproveAllLeave) {
             onDutyWhere.staff_id = { [Op.in]: reporteeIds };
         }
 
@@ -408,11 +410,13 @@ exports.getManageableRequests = async (req, res) => {
 
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
 
-        // If manager, get their reportees
+        // If user can only approve subordinates, get their reportees
         let reporteeIds = [];
-        if (!isAdmin) {
+        if (!canApproveAllLeave) {
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
                 where: {
@@ -421,15 +425,15 @@ exports.getManageableRequests = async (req, res) => {
                 raw: true
             });
             reporteeIds = reportees.map(r => r.staffid);
-            console.log(`Manager ${req.userId} - filtering by reportees:`, reporteeIds);
+            console.log(`User ${req.userId} - filtering by reportees:`, reporteeIds);
         }
 
         // Build where clause for leaves
         let leaveWhere = { status: status };
-        if (!isAdmin && reporteeIds.length > 0) {
+        if (!canApproveAllLeave && reporteeIds.length > 0) {
             leaveWhere.staff_id = { [Op.in]: reporteeIds };
-        } else if (!isAdmin && reporteeIds.length === 0) {
-            // Manager has no reportees, return empty
+        } else if (!canApproveAllLeave && reporteeIds.length === 0) {
+            // User has no reportees, return empty
             return res.status(200).send({
                 items: [],
                 pagination: {
@@ -468,7 +472,7 @@ exports.getManageableRequests = async (req, res) => {
         if (status === 'Pending') {
             onDutyWhere.end_time = { [Op.ne]: null };
         }
-        if (!isAdmin && reporteeIds.length > 0) {
+        if (!canApproveAllLeave && reporteeIds.length > 0) {
             onDutyWhere.staff_id = { [Op.in]: reporteeIds };
         }
 
@@ -885,15 +889,17 @@ exports.getAdminStats = async (req, res) => {
     try {
         const OnDutyLog = db.on_duty_logs;
         const Staff = db.user;
+        const Role = db.roles;
         const { Op } = require("sequelize");
 
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
 
-        // If manager, get their reportees
+        // If user can only view subordinates, get their reportees
         let reporteeIds = [];
-        if (!isAdmin) {
+        if (!canViewAllReports) {
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
@@ -905,11 +911,11 @@ exports.getAdminStats = async (req, res) => {
         // Build where clause
         let leaveWhere = {};
         let onDutyWhere = {};
-        if (!isAdmin && reporteeIds.length > 0) {
+        if (!canViewAllReports && reporteeIds.length > 0) {
             leaveWhere.staff_id = { [Op.in]: reporteeIds };
             onDutyWhere.staff_id = { [Op.in]: reporteeIds };
-        } else if (!isAdmin) {
-            // Manager with no reportees
+        } else if (!canViewAllReports) {
+            // User with no reportees
             return res.status(200).send({
                 pendingLeaves: 0,
                 approvedLeaves: 0,

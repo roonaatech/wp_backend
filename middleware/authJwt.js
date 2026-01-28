@@ -143,10 +143,45 @@ canAccessWebApp = async (req, res, next) => {
     }
 };
 
+/**
+ * Middleware to check if user can manage leave types
+ */
+canManageLeaveTypes = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+        
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+        
+        // Get role from database and check can_manage_leave_types permission
+        const role = await Role.findByPk(user.role);
+        if (role && role.can_manage_leave_types === true) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage leave types!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const authJwt = {
     verifyToken: verifyToken,
     isManagerOrAdmin: isManagerOrAdmin,
     isAdmin: isAdmin,
-    canAccessWebApp: canAccessWebApp
+    canAccessWebApp: canAccessWebApp,
+    canManageLeaveTypes: canManageLeaveTypes
 };
 module.exports = authJwt;
