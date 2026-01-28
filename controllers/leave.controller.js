@@ -299,7 +299,15 @@ exports.getPendingLeaves = async (req, res) => {
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
+        
+        // Check if user has any leave approval permission
+        if (!userRole || userRole.can_approve_leave === 'none') {
+            return res.status(403).send({ 
+                message: "You don't have permission to view leave requests." 
+            });
+        }
+        
+        const canApproveAllLeave = userRole.can_approve_leave === 'all';
 
         // If user can only approve subordinates, get their reportees
         let reporteeIds = [];
@@ -413,10 +421,11 @@ exports.getManageableRequests = async (req, res) => {
         const Role = db.roles;
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
         const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
+        const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
 
         // If user can only approve subordinates, get their reportees
         let reporteeIds = [];
-        if (!canApproveAllLeave) {
+        if (!canApproveAllLeave || !canApproveAllOnDuty) {
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
                 where: {
@@ -472,8 +481,17 @@ exports.getManageableRequests = async (req, res) => {
         if (status === 'Pending') {
             onDutyWhere.end_time = { [Op.ne]: null };
         }
-        if (!canApproveAllLeave && reporteeIds.length > 0) {
+        
+        // Check if user has permission to view on-duty requests
+        const hasOnDutyPermission = userRole && userRole.can_approve_onduty !== 'none';
+        if (!hasOnDutyPermission) {
+            // User has no on-duty approval permission, skip on-duty logs
+            onDutyWhere.staff_id = { [Op.in]: [] }; // Empty result
+        } else if (!canApproveAllOnDuty && reporteeIds.length > 0) {
             onDutyWhere.staff_id = { [Op.in]: reporteeIds };
+        } else if (!canApproveAllOnDuty && reporteeIds.length === 0) {
+            // User has subordinates permission but no reportees, skip on-duty logs
+            onDutyWhere.staff_id = { [Op.in]: [] }; // Empty result
         }
 
         const onDutyLogs = await OnDutyLog.findAll({

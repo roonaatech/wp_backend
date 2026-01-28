@@ -221,7 +221,15 @@ exports.getOnDutyByStatus = async (req, res) => {
         // Get current user's role to determine filtering
         const currentUser = await User.findByPk(req.userId);
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
+        
+        // Check if user has any on-duty approval permission
+        if (!userRole || userRole.can_approve_onduty === 'none') {
+            return res.status(403).send({ 
+                message: "You don't have permission to view on-duty requests." 
+            });
+        }
+        
+        const canApproveAllOnDuty = userRole.can_approve_onduty === 'all';
 
         // If user can only approve subordinates, get their reportees
         let reporteeIds = [];

@@ -482,22 +482,23 @@ exports.getPendingApprovals = async (req, res) => {
         // Check if user can approve all (based on role permissions)
         const Role = db.roles;
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        const canApproveAll = userRole && (userRole.can_approve_leave === 'all' || userRole.can_approve_onduty === 'all');
+        const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
+        const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
 
-        // Build where clause: if user cannot approve all, filter by manager_id
-        let whereClause = {};
-        if (!canApproveAll) {
-            // Only show approvals where manager_id matches current user
-            whereClause.manager_id = currentUserId;
-            console.log('Filtering by manager_id:', currentUserId);
-        } else {
-            console.log('User has can_approve: all - showing all approvals');
+        // Get reportees if user doesn't have 'all' permission for either type
+        let reporteeIds = [];
+        if (!canApproveAllLeave || !canApproveAllOnDuty) {
+            const reportees = await TblStaff.findAll({
+                attributes: ['staffid'],
+                where: { approving_manager_id: currentUserId },
+                raw: true
+            });
+            reporteeIds = reportees.map(r => r.staffid);
+            console.log('Filtering by manager_id:', currentUserId, 'reportees:', reporteeIds);
         }
-        // If user can approve all, show all approvals (no filter on manager_id)
 
-        // Fetch all approvals
+        // Fetch all approvals (we'll filter by type after enrichment)
         const approvals = await Approval.findAll({
-            where: whereClause,
             order: [['id', 'DESC']],
             raw: true
         });
@@ -559,8 +560,39 @@ exports.getPendingApprovals = async (req, res) => {
         );
 
         console.log('Enriched approvals:', enrichedApprovals.length);
+        
+        // Filter approvals based on type and permission
+        const filteredApprovals = enrichedApprovals.filter(approval => {
+            // For leave requests (attendance_log_id exists)
+            if (approval.attendance_log_id) {
+                // Check if user has permission to approve leave
+                if (canApproveAllLeave) {
+                    return true; // Can see all leave requests
+                } else if (userRole && userRole.can_approve_leave === 'subordinates') {
+                    // Can only see leave requests from reportees
+                    return approval.manager_id === currentUserId;
+                }
+                return false; // No leave approval permission
+            }
+            
+            // For on-duty requests (on_duty_log_id exists)
+            if (approval.on_duty_log_id) {
+                // Check if user has permission to approve on-duty
+                if (canApproveAllOnDuty) {
+                    return true; // Can see all on-duty requests
+                } else if (userRole && userRole.can_approve_onduty === 'subordinates') {
+                    // Can only see on-duty requests from reportees
+                    return approval.manager_id === currentUserId;
+                }
+                return false; // No on-duty approval permission
+            }
+            
+            return false; // Unknown approval type
+        });
+
+        console.log('Filtered approvals:', filteredApprovals.length);
         console.log('=== getPendingApprovals complete ===\n');
-        res.send(enrichedApprovals);
+        res.send(filteredApprovals);
     } catch (err) {
         console.error('❌ Error in getPendingApprovals:', err.message);
         console.error(err.stack);
