@@ -39,16 +39,16 @@ exports.signin = async (req, res) => {
     if (USE_EXTERNAL_AUTH && !forceLocal) {
         try {
             console.log("Attempting PHP Auth Step 1 (CSRF) at:", `${PHP_AUTH_BASE_URL}/ext-auth/get_csrf_hash`);
-            
+
             // 1. Get CSRF Token
             const csrfResponse = await axios.get(`${PHP_AUTH_BASE_URL}/ext-auth/get_csrf_hash`, { timeout: 5000 });
             const { csrfName, csrfHash } = csrfResponse.data;
             const cookies = csrfResponse.headers['set-cookie'];
 
-            if(csrfName && csrfHash) {
+            if (csrfName && csrfHash) {
                 // 2. Login with Token
                 console.log("Attempting PHP Auth Step 2 (Login)...");
-                
+
                 // Format payload as x-www-form-urlencoded (Required for CodeIgniter/PHP defaults)
                 const params = new URLSearchParams();
                 params.append('email', email);
@@ -56,7 +56,7 @@ exports.signin = async (req, res) => {
                 params.append(csrfName, csrfHash);
 
                 // Format Headers and Cookies
-                const loginHeaders = { 
+                const loginHeaders = {
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'User-Agent': "WorkPulse-Backend/1.0" // Sometimes required by firewalls
                 };
@@ -78,10 +78,10 @@ exports.signin = async (req, res) => {
                     phpAuthSuccess = true;
                     phpUserData = phpResponse.data.data;
                 } else {
-                     console.log("⚠️ PHP Login Failed (Invalid Credentials or API Error)");
+                    console.log("⚠️ PHP Login Failed (Invalid Credentials or API Error)");
                 }
             } else {
-                 console.log("⚠️ CSRF Token retrieval failed (Format mismatch)");
+                console.log("⚠️ CSRF Token retrieval failed (Format mismatch)");
             }
         } catch (err) {
             console.log("⚠️ PHP Auth failed:", err.message);
@@ -111,7 +111,7 @@ exports.signin = async (req, res) => {
                     userid: phpUserData.staffid
                 }
             });
-            
+
             // If we found the user by userid, we are Good. We will update them below.
             if (user) {
                 console.log("Found user by External ID (userid):", user.staffid);
@@ -168,6 +168,16 @@ exports.signin = async (req, res) => {
         // Ensure robust check for inactive status (handle 0, "0", false)
         if (user.active == 0 || user.active === false || user.active === '0') {
             return res.status(403).send({ message: "Your account is inactive. Please contact your administrator." });
+        }
+
+        // Check for Web App Access Permission
+        // Only if it is NOT a mobile app login
+        if (user.role && req.body.is_mobile_app !== true) {
+            const Role = db.roles;
+            const userRole = await Role.findByPk(user.role);
+            if (userRole && userRole.can_access_webapp !== true) {
+                return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
+            }
         }
 
         // Verify Password ONLY if PHP auth didn't already verify it

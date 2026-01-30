@@ -35,19 +35,19 @@ isManagerOrAdmin = async (req, res, next) => {
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
         }
-        
+
         // Legacy admin flag check
         if (user.admin === 1) {
             next();
             return;
         }
-        
+
         // Get role from database and check permissions
         // For enum permissions, check if they're not 'none'
         const role = await Role.findByPk(user.role);
         if (role && (
-            (role.can_approve_leave && role.can_approve_leave !== 'none') || 
-            (role.can_approve_onduty && role.can_approve_onduty !== 'none') || 
+            (role.can_approve_leave && role.can_approve_leave !== 'none') ||
+            (role.can_approve_onduty && role.can_approve_onduty !== 'none') ||
             (role.can_manage_users && role.can_manage_users !== 'none')
         )) {
             next();
@@ -75,13 +75,13 @@ isAdmin = async (req, res, next) => {
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
         }
-        
+
         // Legacy admin flag check
         if (user.admin === 1) {
             next();
             return;
         }
-        
+
         // Get role from database and check can_manage_users permission
         // For enum, check if it's 'all' (full admin access)
         const role = await Role.findByPk(user.role);
@@ -111,21 +111,21 @@ canAccessWebApp = async (req, res, next) => {
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
         }
-        
+
         // Legacy admin flag check
         if (user.admin === 1) {
             next();
             return;
         }
-        
+
         // Get role from database
         const role = await Role.findByPk(user.role);
         if (role && (
             role.can_access_webapp ||
-            (role.can_approve_leave && role.can_approve_leave !== 'none') || 
-            (role.can_approve_onduty && role.can_approve_onduty !== 'none') || 
-            (role.can_manage_users && role.can_manage_users !== 'none') || 
-            role.can_manage_leave_types || 
+            (role.can_approve_leave && role.can_approve_leave !== 'none') ||
+            (role.can_approve_onduty && role.can_approve_onduty !== 'none') ||
+            (role.can_manage_users && role.can_manage_users !== 'none') ||
+            role.can_manage_leave_types ||
             (role.can_view_reports && role.can_view_reports !== 'none')
         )) {
             next();
@@ -152,13 +152,13 @@ canManageLeaveTypes = async (req, res, next) => {
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
         }
-        
+
         // Legacy admin flag check
         if (user.admin === 1) {
             next();
             return;
         }
-        
+
         // Get role from database and check can_manage_leave_types permission
         const role = await Role.findByPk(user.role);
         if (role && role.can_manage_leave_types === true) {
@@ -187,14 +187,14 @@ canViewActivities = async (req, res, next) => {
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
         }
-        
+
         // Legacy admin flag check - full access
         if (user.admin === 1) {
             req.activityPermission = 'all';
             next();
             return;
         }
-        
+
         // Get role from database and check can_view_activities permission
         const role = await Role.findByPk(user.role);
         if (role && role.can_view_activities && role.can_view_activities !== 'none') {
@@ -214,12 +214,204 @@ canViewActivities = async (req, res, next) => {
     }
 };
 
+const canManageRoles = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+
+        // Get role from database and check can_manage_roles permission
+        const role = await Role.findByPk(user.role);
+        if (role && role.can_manage_roles === true) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage roles!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canManageEmailSettings = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+
+        // Get role from database and check can_manage_email_settings permission
+        const role = await Role.findByPk(user.role);
+        if (role && role.can_manage_email_settings === true) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage email settings!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canManageUsers = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        if (role && (role.can_manage_users === 'all' || role.can_manage_users === 'subordinates')) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage users!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canViewReports = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        if (role && (role.can_view_reports === 'all' || role.can_view_reports === 'subordinates')) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to view reports!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canManageActiveOnDuty = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        if (role && (role.can_manage_active_onduty === 'all' || role.can_manage_active_onduty === 'subordinates')) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage active on-duty!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canManageSchedule = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        if (role && (role.can_manage_schedule === 'all' || role.can_manage_schedule === 'subordinates')) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to view/manage schedule!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const authJwt = {
     verifyToken: verifyToken,
     isManagerOrAdmin: isManagerOrAdmin,
     isAdmin: isAdmin,
     canAccessWebApp: canAccessWebApp,
     canManageLeaveTypes: canManageLeaveTypes,
-    canViewActivities: canViewActivities
+    canViewActivities: canViewActivities,
+    canManageRoles: canManageRoles,
+    canManageEmailSettings: canManageEmailSettings,
+    canManageUsers: canManageUsers,
+    canViewReports: canViewReports,
+    canManageActiveOnDuty: canManageActiveOnDuty,
+    canManageSchedule: canManageSchedule
 };
 module.exports = authJwt;

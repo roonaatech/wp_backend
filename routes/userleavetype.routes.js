@@ -94,5 +94,5 @@ module.exports = app => {
      *       404:
      *         description: User not found
      */
-    app.put("/api/user/:userId/leave-types", [authJwt.verifyToken], controller.updateUserLeaveTypes);
+    app.put("/api/user/:userId/leave-types", [authJwt.verifyToken, authJwt.canManageUsers], controller.updateUserLeaveTypes);
 };

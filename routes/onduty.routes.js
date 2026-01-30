@@ -135,7 +135,7 @@ module.exports = function (app) {
      *       200:
      *         description: List of active on-duty sessions retrieved
      */
-    app.get("/api/onduty/active-all", [authJwt.verifyToken, authJwt.isManagerOrAdmin], controller.getAllActiveOnDuty);
+    app.get("/api/onduty/active-all", [authJwt.verifyToken, authJwt.canManageActiveOnDuty], controller.getAllActiveOnDuty);
 
     app.get("/api/onduty/active", [authJwt.verifyToken], controller.getActiveOnDuty);
 

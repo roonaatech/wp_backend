@@ -237,12 +237,12 @@ exports.resetUserPassword = async (req, res) => {
                 message: "Access denied. User not found."
             });
         }
-        
+
         // Check if user has admin permission (can_manage_users)
         const Role = db.roles;
         const userRole = await Role.findByPk(currentUser.role);
         const hasAdminPermission = currentUser.admin === 1 || (userRole && userRole.can_manage_users);
-        
+
         if (!hasAdminPermission) {
             return res.status(403).send({
                 message: "Access denied. Only users with management permissions can reset passwords."
@@ -364,7 +364,7 @@ exports.getAllUsers = async (req, res) => {
         if (status) {
             const statuses = status.split(',').map(s => s.trim());
             const statusConditions = [];
-            
+
             statuses.forEach(s => {
                 if (s === 'active') {
                     statusConditions.push({ active: 1 });
@@ -387,7 +387,7 @@ exports.getAllUsers = async (req, res) => {
                     });
                 }
             });
-            
+
             if (statusConditions.length > 0) {
                 andConditions.push({
                     [Op.or]: statusConditions
@@ -426,7 +426,7 @@ exports.getAllUsers = async (req, res) => {
 exports.getManagersAndAdmins = async (req, res) => {
     const { Op } = require("sequelize");
     const Role = db.roles;
-    
+
     try {
         // Get all roles that have any approval permission (can_approve_leave or can_approve_onduty not 'none')
         const approverRoles = await Role.findAll({
@@ -438,18 +438,18 @@ exports.getManagersAndAdmins = async (req, res) => {
             },
             attributes: ['id']
         });
-        
+
         const approverRoleIds = approverRoles.map(r => r.id);
-        
+
         const users = await TblStaff.findAll({
-            where: { 
-                role: { [Op.in]: approverRoleIds }, 
-                active: 1 
+            where: {
+                role: { [Op.in]: approverRoleIds },
+                active: 1
             },
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         });
-        
+
         res.send(users);
     } catch (err) {
         res.status(500).send({
@@ -560,7 +560,7 @@ exports.getPendingApprovals = async (req, res) => {
         );
 
         console.log('Enriched approvals:', enrichedApprovals.length);
-        
+
         // Filter approvals based on type and permission
         const filteredApprovals = enrichedApprovals.filter(approval => {
             // For leave requests (attendance_log_id exists)
@@ -574,7 +574,7 @@ exports.getPendingApprovals = async (req, res) => {
                 }
                 return false; // No leave approval permission
             }
-            
+
             // For on-duty requests (on_duty_log_id exists)
             if (approval.on_duty_log_id) {
                 // Check if user has permission to approve on-duty
@@ -586,7 +586,7 @@ exports.getPendingApprovals = async (req, res) => {
                 }
                 return false; // No on-duty approval permission
             }
-            
+
             return false; // Unknown approval type
         });
 
@@ -627,7 +627,7 @@ exports.approveAttendance = (req, res) => {
 };
 
 exports.getAttendanceReports = async (req, res) => {
-    console.log('API Hit: getAttendanceReports');
+    console.log('API Hit: getAttendanceReports', req.query);
     try {
         const { Op } = require("sequelize");
         const LeaveRequest = db.leave_requests;
@@ -635,119 +635,236 @@ exports.getAttendanceReports = async (req, res) => {
         const Staff = db.user;
         const Role = db.roles;
 
-        // Get current user's role to determine filtering
+        // --- 1. Permissions & User Scoping ---
         const currentUser = await Staff.findByPk(req.userId);
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
 
-        // If user can only view subordinates, get their reportees
+        // Determine what the user can see
+        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
+        const canViewSubordinateReports = userRole && (userRole.can_view_reports === 'subordinates' || userRole.can_view_reports === 'all');
+
         let reporteeIds = [];
-        if (!canViewAllReports) {
+        // If strict subordinate viewer, fetch reportees
+        if (!canViewAllReports && canViewSubordinateReports) {
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
-                where: {
-                    approving_manager_id: req.userId
-                },
+                where: { approving_manager_id: req.userId },
                 raw: true
             });
             reporteeIds = reportees.map(r => r.staffid);
-            console.log(`User ${req.userId} - filtering reports by reportees:`, reporteeIds);
 
-            if (reporteeIds.length === 0) {
-                // User has no reportees, return empty
-                return res.send([]);
+            // If explicit user filter is applied, ensure it's a reportee
+            if (req.query.userId && !reporteeIds.includes(parseInt(req.query.userId))) {
+                // Trying to access non-reportee
+                return res.send({
+                    totalItems: 0,
+                    totalPages: 0,
+                    currentPage: 1,
+                    reports: []
+                });
+            }
+        } else if (!canViewAllReports && !canViewSubordinateReports) {
+            // Can't view any reports? Or maybe just own? 
+            // Assuming "not all" and "not subordinates" means "none" or "own" logic if we had it.
+            // For safety, return empty if no read permission
+            if (!userRole.can_view_reports) return res.send({ totalItems: 0, reports: [] });
+        }
+
+        // --- 2. Filters (Query Params) ---
+        // type: 'leave', 'onduty', 'both' (default)
+        // userId: int
+        // dateFilter: 'all', '7days', '30days', '90days' (handled via dates) or legacy startDate/endDate
+        // status: 'approved', 'pending', 'rejected', 'active', 'completed', 'all'
+
+        const { page = 1, limit = 10, type = 'both', userId, dateFilter, status } = req.query;
+        const limitVal = parseInt(limit);
+        const offsetVal = (parseInt(page) - 1) * limitVal;
+
+        // Build Date Query
+        let dateWhereLeave = {};
+        let dateWhereOnDuty = {};
+
+        if (dateFilter && dateFilter !== 'all') {
+            const today = new Date();
+            let startDate = new Date();
+            if (dateFilter === '7days') startDate.setDate(today.getDate() - 7);
+            if (dateFilter === '30days') startDate.setDate(today.getDate() - 30);
+            if (dateFilter === '90days') startDate.setDate(today.getDate() - 90);
+
+            dateWhereLeave.start_date = { [Op.gte]: startDate };
+            dateWhereOnDuty.start_time = { [Op.gte]: startDate };
+        }
+
+        // User Query
+        let userWhere = {};
+        if (userId) {
+            userWhere.staff_id = parseInt(userId);
+        } else if (!canViewAllReports) {
+            userWhere.staff_id = { [Op.in]: reporteeIds };
+        }
+
+        // Status Query (Complex mapping due to different statuses)
+        let statusWhereLeave = {};
+        let statusWhereOnDuty = {};
+
+        if (status && status !== 'all') {
+            if (status === 'approved') {
+                statusWhereLeave.status = 'Approved';
+                statusWhereOnDuty.check_out_time = { [Op.ne]: null }; // Completed (Approved)
+            } else if (status === 'pending') {
+                statusWhereLeave.status = 'Pending';
+                statusWhereOnDuty.status = 'Pending'; // Needs manager approval? Or just active? 
+                // OnDuty doesn't have a specific 'Pending' status column sometimes, it uses 'status'.
+                // Assuming OnDuty status field usage: 'Pending', 'Approved', 'Rejected'
+                // BUT previous code used check_out_time logic. 
+                // Let's check typical usage: Active on-duty = check_out_time IS NULL.
+                statusWhereOnDuty = {
+                    [Op.and]: [
+                        { check_out_time: null }
+                    ]
+                };
+            } else if (status === 'rejected') {
+                statusWhereLeave.status = 'Rejected';
+                statusWhereOnDuty.status = 'Rejected';
+            } else if (status === 'active') {
+                statusWhereOnDuty.check_out_time = null;
+                // Leaves don't really have "active" state unless we count "approved and currently happening"
+                // For simplicity, ignore leaves for 'active' or map to 'Pending'
+                statusWhereLeave.status = 'Pending'; // Close enough
+            } else if (status === 'completed') {
+                statusWhereOnDuty.check_out_time = { [Op.ne]: null };
+                statusWhereLeave.status = 'Approved'; // Leaves that are approved are "completed" decisions
             }
         }
 
-        // Build where clause for leaves
-        let leaveWhere = {};
-        if (!canViewAllReports) {
-            leaveWhere.staff_id = { [Op.in]: reporteeIds };
+        // --- 3. "Lightweight Index" Fetch ---
+        // Fetch ID, Date from both tables matching filters
+
+        let allItems = [];
+
+        // Fetch Leaves
+        if (type === 'both' || type === 'leave') {
+            const leaves = await LeaveRequest.findAll({
+                attributes: ['id', 'start_date', 'createdAt'],
+                where: { ...userWhere, ...dateWhereLeave, ...statusWhereLeave },
+                raw: true
+            });
+            allItems = allItems.concat(leaves.map(l => ({
+                id: l.id,
+                date: new Date(l.start_date || l.createdAt),
+                type: 'leave'
+            })));
         }
 
-        // Get leave requests with approver info
-        const leaveRequests = await LeaveRequest.findAll({
-            where: leaveWhere,
-            include: [
-                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
-                {
-                    model: db.user,
-                    as: 'approver',
-                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
-                    required: false
-                }
-            ],
-            order: [['createdAt', 'DESC']]
-        });
-
-        // Transform leave requests for the frontend
-        const transformedLeaves = leaveRequests.map(leave => ({
-            id: leave.id,
-            staff_id: leave.staff_id,
-            check_in_time: null,
-            check_out_time: null,
-            date: leave.start_date,
-            start_date: leave.start_date,
-            end_date: leave.end_date,
-            leave_type: leave.leave_type,
-            reason: leave.reason,
-            status: leave.status,
-            rejection_reason: leave.rejection_reason,
-            on_duty: false,
-            tblstaff: leave.user,
-            approver: leave.approver || null
-        }));
-
-        // Build where clause for on-duty logs
-        let onDutyWhere = {};
-        if (!canViewAllReports) {
-            onDutyWhere.staff_id = { [Op.in]: reporteeIds };
+        // Fetch OnDuty
+        if (type === 'both' || type === 'onduty') {
+            const onDuties = await OnDutyLog.findAll({
+                attributes: ['id', 'start_time', 'createdAt'],
+                where: { ...userWhere, ...dateWhereOnDuty, ...statusWhereOnDuty },
+                raw: true
+            });
+            allItems = allItems.concat(onDuties.map(o => ({
+                id: o.id,
+                date: new Date(o.start_time || o.createdAt),
+                type: 'onduty'
+            })));
         }
 
-        // Get on-duty logs with approver info
-        const onDutyLogs = await OnDutyLog.findAll({
-            where: onDutyWhere,
-            include: [
-                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
-                {
-                    model: db.user,
-                    as: 'approver',
-                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
-                    required: false
-                }
-            ],
-            order: [['start_time', 'DESC']]
-        });
+        // --- 4. Sort & Slice ---
+        // Sort descending by date
+        allItems.sort((a, b) => b.date - a.date);
 
-        // Transform on-duty logs to match attendance log structure for the frontend
-        const transformedOnDutyLogs = onDutyLogs.map(log => ({
-            id: log.id,
-            staff_id: log.staff_id,
-            check_in_time: log.start_time,
-            check_out_time: log.end_time,
-            date: new Date(log.start_time).toISOString().split('T')[0],
-            location: log.location,
-            client_name: log.client_name,
-            purpose: log.purpose,
-            status: log.status,
-            rejection_reason: log.rejection_reason,
-            on_duty: true,
-            tblstaff: log.user,
-            approver: log.approver || null
-        }));
+        const totalItems = allItems.length;
+        const totalPages = Math.ceil(totalItems / limitVal);
 
-        // Combine both arrays
-        const combinedReports = [...transformedLeaves, ...transformedOnDutyLogs];
+        // Slice for current page
+        const pagedItems = allItems.slice(offsetVal, offsetVal + limitVal);
 
-        // Sort by date descending
-        combinedReports.sort((a, b) => {
-            const dateA = new Date(a.date || a.check_in_time);
-            const dateB = new Date(b.date || b.check_in_time);
+        // --- 5. Validating Slice ---
+        if (pagedItems.length === 0) {
+            return res.send({
+                totalItems,
+                totalPages,
+                currentPage: parseInt(page),
+                reports: []
+            });
+        }
+
+        // --- 6. Fetch Full Details for Sliced Items ---
+        const leaveIds = pagedItems.filter(i => i.type === 'leave').map(i => i.id);
+        const onDutyIds = pagedItems.filter(i => i.type === 'onduty').map(i => i.id);
+
+        let finalReports = [];
+
+        if (leaveIds.length > 0) {
+            const fullLeaves = await LeaveRequest.findAll({
+                where: { id: { [Op.in]: leaveIds } },
+                include: [
+                    { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                    { model: db.user, as: 'approver', attributes: ['staffid', 'firstname', 'lastname', 'email'], required: false }
+                ]
+            });
+
+            finalReports = finalReports.concat(fullLeaves.map(leave => ({
+                id: leave.id,
+                staff_id: leave.staff_id,
+                type: 'leave', // Helper for frontend
+                date: leave.start_date,
+                start_date: leave.start_date,
+                end_date: leave.end_date,
+                leave_type: leave.leave_type,
+                reason: leave.reason,
+                status: leave.status,
+                rejection_reason: leave.rejection_reason,
+                on_duty: false,
+                tblstaff: leave.user,
+                approver: leave.approver || null
+            })));
+        }
+
+        if (onDutyIds.length > 0) {
+            const fullOnDuties = await OnDutyLog.findAll({
+                where: { id: { [Op.in]: onDutyIds } },
+                include: [
+                    { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                    { model: db.user, as: 'approver', attributes: ['staffid', 'firstname', 'lastname', 'email'], required: false }
+                ]
+            });
+
+            finalReports = finalReports.concat(fullOnDuties.map(log => ({
+                id: log.id,
+                staff_id: log.staff_id,
+                type: 'onduty',
+                check_in_time: log.start_time,
+                check_out_time: log.end_time,
+                date: new Date(log.start_time).toISOString().split('T')[0],
+                location: log.location,
+                client_name: log.client_name,
+                purpose: log.purpose,
+                status: log.status,
+                rejection_reason: log.rejection_reason,
+                on_duty: true,
+                tblstaff: log.user,
+                approver: log.approver || null
+            })));
+        }
+
+        // --- 7. Final Sort (to match the sliced order) ---
+        finalReports.sort((a, b) => {
+            const dateA = new Date(a.date || a.check_in_time || a.start_date);
+            const dateB = new Date(b.date || b.check_in_time || a.start_date);
             return dateB - dateA;
         });
 
-        res.send(combinedReports);
+        res.send({
+            totalItems,
+            totalPages,
+            currentPage: parseInt(page),
+            reports: finalReports
+        });
+
     } catch (err) {
+        console.error('Error in getAttendanceReports:', err);
         res.status(500).send({
             message: err.message || "Some error occurred while retrieving reports."
         });
@@ -771,10 +888,10 @@ exports.getDashboardStats = async (req, res) => {
     try {
         // Get current user's role to determine filtering
         const currentUser = await TblStaff.findByPk(req.userId);
-        
+
         // Get the user's role permissions
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        
+
         // Check if user can view all reports (based on role permission)
         const canViewAllReports = userRole && userRole.can_view_reports === 'all';
         const canViewSubordinateReports = userRole && (userRole.can_view_reports === 'subordinates' || userRole.can_view_reports === 'all');
@@ -957,7 +1074,7 @@ exports.getDailyTrendData = async (req, res) => {
     const OnDutyLog = db.on_duty_logs;
     const Staff = db.user;
     const Role = db.roles;
-    
+
     const days = parseInt(req.query.days) || 7;
     const startDate = req.query.startDate; // Format: YYYY-MM-DD
     const endDate = req.query.endDate; // Format: YYYY-MM-DD
