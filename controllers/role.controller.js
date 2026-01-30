@@ -52,6 +52,11 @@ exports.create = async (req, res) => {
             can_manage_users,
             can_manage_leave_types,
             can_view_reports,
+            can_manage_active_onduty,
+            can_manage_schedule,
+            can_access_webapp,
+            can_manage_roles,
+            can_manage_email_settings,
             active
         } = req.body;
 
@@ -75,11 +80,19 @@ exports.create = async (req, res) => {
             display_name,
             description,
             hierarchy_level: hierarchy_level || 999,
-            can_approve_leave: can_approve_leave || false,
-            can_approve_onduty: can_approve_onduty || false,
-            can_manage_users: can_manage_users || false,
+            // Hierarchical permissions - 'none', 'subordinates', 'all'
+            can_approve_leave: can_approve_leave || 'none',
+            can_approve_onduty: can_approve_onduty || 'none',
+            can_manage_users: can_manage_users || 'none',
+            can_view_reports: can_view_reports || 'none',
+            can_manage_active_onduty: can_manage_active_onduty || 'none',
+            can_manage_schedule: can_manage_schedule || 'none',
+            can_view_activities: can_view_activities || 'none',
+            // Global permissions - boolean
             can_manage_leave_types: can_manage_leave_types || false,
-            can_view_reports: can_view_reports || false,
+            can_access_webapp: can_access_webapp || false,
+            can_manage_roles: can_manage_roles || false,
+            can_manage_email_settings: can_manage_email_settings || false,
             active: active !== undefined ? active : true
         });
 
@@ -110,6 +123,12 @@ exports.update = async (req, res) => {
             can_manage_users,
             can_manage_leave_types,
             can_view_reports,
+            can_manage_active_onduty,
+            can_manage_schedule,
+            can_view_activities,
+            can_access_webapp,
+            can_manage_roles,
+            can_manage_email_settings,
             active
         } = req.body;
 
@@ -144,6 +163,12 @@ exports.update = async (req, res) => {
             can_manage_users: can_manage_users !== undefined ? can_manage_users : role.can_manage_users,
             can_manage_leave_types: can_manage_leave_types !== undefined ? can_manage_leave_types : role.can_manage_leave_types,
             can_view_reports: can_view_reports !== undefined ? can_view_reports : role.can_view_reports,
+            can_manage_active_onduty: can_manage_active_onduty !== undefined ? can_manage_active_onduty : role.can_manage_active_onduty,
+            can_manage_schedule: can_manage_schedule !== undefined ? can_manage_schedule : role.can_manage_schedule,
+            can_view_activities: can_view_activities !== undefined ? can_view_activities : role.can_view_activities,
+            can_access_webapp: can_access_webapp !== undefined ? can_access_webapp : role.can_access_webapp,
+            can_manage_roles: can_manage_roles !== undefined ? can_manage_roles : role.can_manage_roles,
+            can_manage_email_settings: can_manage_email_settings !== undefined ? can_manage_email_settings : role.can_manage_email_settings,
             active: active !== undefined ? active : role.active
         });
 

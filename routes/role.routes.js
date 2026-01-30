@@ -1,8 +1,8 @@
 const controller = require("../controllers/role.controller");
 const { authJwt } = require("../middleware");
 
-module.exports = function(app) {
-    app.use(function(req, res, next) {
+module.exports = function (app) {
+    app.use(function (req, res, next) {
         res.header(
             "Access-Control-Allow-Headers",
             "x-access-token, Origin, Content-Type, Accept"
@@ -15,7 +15,7 @@ module.exports = function(app) {
      * /api/roles:
      *   get:
      *     summary: Get all roles
-     *     description: Retrieve a list of all roles (Admin only)
+     *     description: Retrieve a list of all roles (any authenticated user can read)
      *     tags:
      *       - Roles
      *     security:
@@ -31,12 +31,10 @@ module.exports = function(app) {
      *                 $ref: '#/components/schemas/Role'
      *       401:
      *         description: Unauthorized
-     *       403:
-     *         description: Forbidden - Admin access required
      */
     app.get(
         "/api/roles",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken],
         controller.findAll
     );
 
@@ -72,7 +70,7 @@ module.exports = function(app) {
      */
     app.get(
         "/api/roles/statistics",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageRoles],
         controller.getStatistics
     );
 
@@ -109,7 +107,7 @@ module.exports = function(app) {
      */
     app.get(
         "/api/roles/:id",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageRoles],
         controller.findOne
     );
 
@@ -167,7 +165,7 @@ module.exports = function(app) {
      */
     app.post(
         "/api/roles",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageRoles],
         controller.create
     );
 
@@ -229,7 +227,7 @@ module.exports = function(app) {
      */
     app.put(
         "/api/roles/:id",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageRoles],
         controller.update
     );
 
@@ -264,7 +262,7 @@ module.exports = function(app) {
      */
     app.delete(
         "/api/roles/:id",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageRoles],
         controller.delete
     );
 
@@ -308,7 +306,7 @@ module.exports = function(app) {
      */
     app.put(
         "/api/roles/hierarchy/update",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageRoles],
         controller.updateHierarchy
     );
 };

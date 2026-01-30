@@ -12,31 +12,31 @@ module.exports = function (app) {
 
     app.get(
         "/api/email/config",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageEmailSettings],
         controller.getConfig
     );
 
     app.post(
         "/api/email/config",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageEmailSettings],
         controller.updateConfig
     );
 
     app.post(
         "/api/email/test",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageEmailSettings],
         controller.sendTestEmail
     );
 
     app.get(
         "/api/email/templates",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageEmailSettings],
         controller.getTemplates
     );
 
     app.put(
         "/api/email/templates/:id",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageEmailSettings],
         controller.updateTemplate
     );
 };

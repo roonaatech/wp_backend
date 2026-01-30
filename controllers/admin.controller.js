@@ -107,6 +107,7 @@ exports.createUser = async (req, res) => {
                 lastname: newUser.lastname,
                 email: newUser.email,
                 role: newUser.role,
+                userid: newUser.userid,
                 approving_manager_id: newUser.approving_manager_id,
                 gender: newUser.gender,
                 active: newUser.active
@@ -203,6 +204,7 @@ exports.updateUser = (req, res) => {
                                 email: updatedUser.email,
                                 gender: updatedUser.gender,
                                 role: updatedUser.role,
+                                userid: updatedUser.userid,
                                 approving_manager_id: updatedUser.approving_manager_id,
                                 active: updatedUser.active
                             }
@@ -228,11 +230,22 @@ exports.resetUserPassword = async (req, res) => {
         const userId = req.params.id;
         const { newPassword } = req.body;
 
-        // Verify admin permission
+        // Verify admin permission using role's can_manage_users flag
         const currentUser = await TblStaff.findByPk(req.userId);
-        if (!currentUser || currentUser.role !== 1) {
+        if (!currentUser) {
             return res.status(403).send({
-                message: "Access denied. Only admins can reset passwords."
+                message: "Access denied. User not found."
+            });
+        }
+
+        // Check if user has admin permission (can_manage_users)
+        const Role = db.roles;
+        const userRole = await Role.findByPk(currentUser.role);
+        const hasAdminPermission = currentUser.admin === 1 || (userRole && userRole.can_manage_users);
+
+        if (!hasAdminPermission) {
+            return res.status(403).send({
+                message: "Access denied. Only users with management permissions can reset passwords."
             });
         }
 
@@ -285,7 +298,9 @@ exports.getAllUsers = async (req, res) => {
     try {
         // Get current user's role to determine filtering
         const currentUser = await TblStaff.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canManageAllUsers = userRole && userRole.can_manage_users === 'all';
 
         // Pagination parameters
         const page = req.query.page ? parseInt(req.query.page) : 1;
@@ -312,8 +327,8 @@ exports.getAllUsers = async (req, res) => {
         const andConditions = [];
 
         // Manager constraint
-        if (!isAdmin) {
-            // Manager can only see their assigned employees
+        if (!canManageAllUsers) {
+            // User can only see their assigned employees (subordinates)
             andConditions.push({ approving_manager_id: req.userId });
         }
 
@@ -349,7 +364,7 @@ exports.getAllUsers = async (req, res) => {
         if (status) {
             const statuses = status.split(',').map(s => s.trim());
             const statusConditions = [];
-            
+
             statuses.forEach(s => {
                 if (s === 'active') {
                     statusConditions.push({ active: 1 });
@@ -372,7 +387,7 @@ exports.getAllUsers = async (req, res) => {
                     });
                 }
             });
-            
+
             if (statusConditions.length > 0) {
                 andConditions.push({
                     [Op.or]: statusConditions
@@ -408,21 +423,39 @@ exports.getAllUsers = async (req, res) => {
     }
 };
 
-exports.getManagersAndAdmins = (req, res) => {
+exports.getManagersAndAdmins = async (req, res) => {
     const { Op } = require("sequelize");
-    TblStaff.findAll({
-        where: { role: { [Op.in]: [1, 2, 3] }, active: 1 },
-        attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
-        order: [['firstname', 'ASC'], ['lastname', 'ASC']]
-    })
-        .then(users => {
-            res.send(users);
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: err.message || "Some error occurred while retrieving managers and admins."
-            });
+    const Role = db.roles;
+
+    try {
+        // Get all roles that have any approval permission (can_approve_leave or can_approve_onduty not 'none')
+        const approverRoles = await Role.findAll({
+            where: {
+                [Op.or]: [
+                    { can_approve_leave: { [Op.ne]: 'none' } },
+                    { can_approve_onduty: { [Op.ne]: 'none' } }
+                ]
+            },
+            attributes: ['id']
         });
+
+        const approverRoleIds = approverRoles.map(r => r.id);
+
+        const users = await TblStaff.findAll({
+            where: {
+                role: { [Op.in]: approverRoleIds },
+                active: 1
+            },
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']]
+        });
+
+        res.send(users);
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Some error occurred while retrieving managers and admins."
+        });
+    }
 };
 
 exports.getPendingApprovals = async (req, res) => {
@@ -444,25 +477,28 @@ exports.getPendingApprovals = async (req, res) => {
             });
         }
 
-        console.log('Current User:', currentUser.firstname, 'Admin:', currentUser.admin);
+        console.log('Current User:', currentUser.firstname, 'Role:', currentUser.role);
 
-        // Check if user is admin (admin field = 1)
-        const isAdmin = currentUser.admin === 1;
+        // Check if user can approve all (based on role permissions)
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
+        const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
 
-        // Build where clause: if not admin, filter by manager_id
-        let whereClause = {};
-        if (!isAdmin) {
-            // Not an admin, so only show approvals where manager_id matches current user
-            whereClause.manager_id = currentUserId;
-            console.log('Filtering by manager_id:', currentUserId);
-        } else {
-            console.log('Admin user - showing all approvals');
+        // Get reportees if user doesn't have 'all' permission for either type
+        let reporteeIds = [];
+        if (!canApproveAllLeave || !canApproveAllOnDuty) {
+            const reportees = await TblStaff.findAll({
+                attributes: ['staffid'],
+                where: { approving_manager_id: currentUserId },
+                raw: true
+            });
+            reporteeIds = reportees.map(r => r.staffid);
+            console.log('Filtering by manager_id:', currentUserId, 'reportees:', reporteeIds);
         }
-        // If admin, show all approvals (no filter on manager_id)
 
-        // Fetch all approvals
+        // Fetch all approvals (we'll filter by type after enrichment)
         const approvals = await Approval.findAll({
-            where: whereClause,
             order: [['id', 'DESC']],
             raw: true
         });
@@ -524,8 +560,39 @@ exports.getPendingApprovals = async (req, res) => {
         );
 
         console.log('Enriched approvals:', enrichedApprovals.length);
+
+        // Filter approvals based on type and permission
+        const filteredApprovals = enrichedApprovals.filter(approval => {
+            // For leave requests (attendance_log_id exists)
+            if (approval.attendance_log_id) {
+                // Check if user has permission to approve leave
+                if (canApproveAllLeave) {
+                    return true; // Can see all leave requests
+                } else if (userRole && userRole.can_approve_leave === 'subordinates') {
+                    // Can only see leave requests from reportees
+                    return approval.manager_id === currentUserId;
+                }
+                return false; // No leave approval permission
+            }
+
+            // For on-duty requests (on_duty_log_id exists)
+            if (approval.on_duty_log_id) {
+                // Check if user has permission to approve on-duty
+                if (canApproveAllOnDuty) {
+                    return true; // Can see all on-duty requests
+                } else if (userRole && userRole.can_approve_onduty === 'subordinates') {
+                    // Can only see on-duty requests from reportees
+                    return approval.manager_id === currentUserId;
+                }
+                return false; // No on-duty approval permission
+            }
+
+            return false; // Unknown approval type
+        });
+
+        console.log('Filtered approvals:', filteredApprovals.length);
         console.log('=== getPendingApprovals complete ===\n');
-        res.send(enrichedApprovals);
+        res.send(filteredApprovals);
     } catch (err) {
         console.error('❌ Error in getPendingApprovals:', err.message);
         console.error(err.stack);
@@ -560,125 +627,244 @@ exports.approveAttendance = (req, res) => {
 };
 
 exports.getAttendanceReports = async (req, res) => {
-    console.log('API Hit: getAttendanceReports');
+    console.log('API Hit: getAttendanceReports', req.query);
     try {
         const { Op } = require("sequelize");
         const LeaveRequest = db.leave_requests;
         const OnDutyLog = db.on_duty_logs;
         const Staff = db.user;
+        const Role = db.roles;
 
-        // Get current user's role to determine filtering
+        // --- 1. Permissions & User Scoping ---
         const currentUser = await Staff.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
 
-        // If manager, get their reportees
+        // Determine what the user can see
+        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
+        const canViewSubordinateReports = userRole && (userRole.can_view_reports === 'subordinates' || userRole.can_view_reports === 'all');
+
         let reporteeIds = [];
-        if (!isAdmin) {
+        // If strict subordinate viewer, fetch reportees
+        if (!canViewAllReports && canViewSubordinateReports) {
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
-                where: {
-                    approving_manager_id: req.userId
-                },
+                where: { approving_manager_id: req.userId },
                 raw: true
             });
             reporteeIds = reportees.map(r => r.staffid);
-            console.log(`Manager ${req.userId} - filtering reports by reportees:`, reporteeIds);
 
-            if (reporteeIds.length === 0) {
-                // Manager has no reportees, return empty
-                return res.send([]);
+            // If explicit user filter is applied, ensure it's a reportee
+            if (req.query.userId && !reporteeIds.includes(parseInt(req.query.userId))) {
+                // Trying to access non-reportee
+                return res.send({
+                    totalItems: 0,
+                    totalPages: 0,
+                    currentPage: 1,
+                    reports: []
+                });
+            }
+        } else if (!canViewAllReports && !canViewSubordinateReports) {
+            // Can't view any reports? Or maybe just own? 
+            // Assuming "not all" and "not subordinates" means "none" or "own" logic if we had it.
+            // For safety, return empty if no read permission
+            if (!userRole.can_view_reports) return res.send({ totalItems: 0, reports: [] });
+        }
+
+        // --- 2. Filters (Query Params) ---
+        // type: 'leave', 'onduty', 'both' (default)
+        // userId: int
+        // dateFilter: 'all', '7days', '30days', '90days' (handled via dates) or legacy startDate/endDate
+        // status: 'approved', 'pending', 'rejected', 'active', 'completed', 'all'
+
+        const { page = 1, limit = 10, type = 'both', userId, dateFilter, status } = req.query;
+        const limitVal = parseInt(limit);
+        const offsetVal = (parseInt(page) - 1) * limitVal;
+
+        // Build Date Query
+        let dateWhereLeave = {};
+        let dateWhereOnDuty = {};
+
+        if (dateFilter && dateFilter !== 'all') {
+            const today = new Date();
+            let startDate = new Date();
+            if (dateFilter === '7days') startDate.setDate(today.getDate() - 7);
+            if (dateFilter === '30days') startDate.setDate(today.getDate() - 30);
+            if (dateFilter === '90days') startDate.setDate(today.getDate() - 90);
+
+            dateWhereLeave.start_date = { [Op.gte]: startDate };
+            dateWhereOnDuty.start_time = { [Op.gte]: startDate };
+        }
+
+        // User Query
+        let userWhere = {};
+        if (userId) {
+            userWhere.staff_id = parseInt(userId);
+        } else if (!canViewAllReports) {
+            userWhere.staff_id = { [Op.in]: reporteeIds };
+        }
+
+        // Status Query (Complex mapping due to different statuses)
+        let statusWhereLeave = {};
+        let statusWhereOnDuty = {};
+
+        if (status && status !== 'all') {
+            if (status === 'approved') {
+                statusWhereLeave.status = 'Approved';
+                statusWhereOnDuty.check_out_time = { [Op.ne]: null }; // Completed (Approved)
+            } else if (status === 'pending') {
+                statusWhereLeave.status = 'Pending';
+                statusWhereOnDuty.status = 'Pending'; // Needs manager approval? Or just active? 
+                // OnDuty doesn't have a specific 'Pending' status column sometimes, it uses 'status'.
+                // Assuming OnDuty status field usage: 'Pending', 'Approved', 'Rejected'
+                // BUT previous code used check_out_time logic. 
+                // Let's check typical usage: Active on-duty = check_out_time IS NULL.
+                statusWhereOnDuty = {
+                    [Op.and]: [
+                        { check_out_time: null }
+                    ]
+                };
+            } else if (status === 'rejected') {
+                statusWhereLeave.status = 'Rejected';
+                statusWhereOnDuty.status = 'Rejected';
+            } else if (status === 'active') {
+                statusWhereOnDuty.check_out_time = null;
+                // Leaves don't really have "active" state unless we count "approved and currently happening"
+                // For simplicity, ignore leaves for 'active' or map to 'Pending'
+                statusWhereLeave.status = 'Pending'; // Close enough
+            } else if (status === 'completed') {
+                statusWhereOnDuty.check_out_time = { [Op.ne]: null };
+                statusWhereLeave.status = 'Approved'; // Leaves that are approved are "completed" decisions
             }
         }
 
-        // Build where clause for leaves
-        let leaveWhere = {};
-        if (!isAdmin) {
-            leaveWhere.staff_id = { [Op.in]: reporteeIds };
+        // --- 3. "Lightweight Index" Fetch ---
+        // Fetch ID, Date from both tables matching filters
+
+        let allItems = [];
+
+        // Fetch Leaves
+        if (type === 'both' || type === 'leave') {
+            const leaves = await LeaveRequest.findAll({
+                attributes: ['id', 'start_date', 'createdAt'],
+                where: { ...userWhere, ...dateWhereLeave, ...statusWhereLeave },
+                raw: true
+            });
+            allItems = allItems.concat(leaves.map(l => ({
+                id: l.id,
+                date: new Date(l.start_date || l.createdAt),
+                type: 'leave'
+            })));
         }
 
-        // Get leave requests with approver info
-        const leaveRequests = await LeaveRequest.findAll({
-            where: leaveWhere,
-            include: [
-                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
-                {
-                    model: db.user,
-                    as: 'approver',
-                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
-                    required: false
-                }
-            ],
-            order: [['createdAt', 'DESC']]
-        });
-
-        // Transform leave requests for the frontend
-        const transformedLeaves = leaveRequests.map(leave => ({
-            id: leave.id,
-            staff_id: leave.staff_id,
-            check_in_time: null,
-            check_out_time: null,
-            date: leave.start_date,
-            start_date: leave.start_date,
-            end_date: leave.end_date,
-            leave_type: leave.leave_type,
-            reason: leave.reason,
-            status: leave.status,
-            rejection_reason: leave.rejection_reason,
-            on_duty: false,
-            tblstaff: leave.user,
-            approver: leave.approver || null
-        }));
-
-        // Build where clause for on-duty logs
-        let onDutyWhere = {};
-        if (!isAdmin) {
-            onDutyWhere.staff_id = { [Op.in]: reporteeIds };
+        // Fetch OnDuty
+        if (type === 'both' || type === 'onduty') {
+            const onDuties = await OnDutyLog.findAll({
+                attributes: ['id', 'start_time', 'createdAt'],
+                where: { ...userWhere, ...dateWhereOnDuty, ...statusWhereOnDuty },
+                raw: true
+            });
+            allItems = allItems.concat(onDuties.map(o => ({
+                id: o.id,
+                date: new Date(o.start_time || o.createdAt),
+                type: 'onduty'
+            })));
         }
 
-        // Get on-duty logs with approver info
-        const onDutyLogs = await OnDutyLog.findAll({
-            where: onDutyWhere,
-            include: [
-                { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
-                {
-                    model: db.user,
-                    as: 'approver',
-                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
-                    required: false
-                }
-            ],
-            order: [['start_time', 'DESC']]
-        });
+        // --- 4. Sort & Slice ---
+        // Sort descending by date
+        allItems.sort((a, b) => b.date - a.date);
 
-        // Transform on-duty logs to match attendance log structure for the frontend
-        const transformedOnDutyLogs = onDutyLogs.map(log => ({
-            id: log.id,
-            staff_id: log.staff_id,
-            check_in_time: log.start_time,
-            check_out_time: log.end_time,
-            date: new Date(log.start_time).toISOString().split('T')[0],
-            location: log.location,
-            client_name: log.client_name,
-            purpose: log.purpose,
-            status: log.status,
-            rejection_reason: log.rejection_reason,
-            on_duty: true,
-            tblstaff: log.user,
-            approver: log.approver || null
-        }));
+        const totalItems = allItems.length;
+        const totalPages = Math.ceil(totalItems / limitVal);
 
-        // Combine both arrays
-        const combinedReports = [...transformedLeaves, ...transformedOnDutyLogs];
+        // Slice for current page
+        const pagedItems = allItems.slice(offsetVal, offsetVal + limitVal);
 
-        // Sort by date descending
-        combinedReports.sort((a, b) => {
-            const dateA = new Date(a.date || a.check_in_time);
-            const dateB = new Date(b.date || b.check_in_time);
+        // --- 5. Validating Slice ---
+        if (pagedItems.length === 0) {
+            return res.send({
+                totalItems,
+                totalPages,
+                currentPage: parseInt(page),
+                reports: []
+            });
+        }
+
+        // --- 6. Fetch Full Details for Sliced Items ---
+        const leaveIds = pagedItems.filter(i => i.type === 'leave').map(i => i.id);
+        const onDutyIds = pagedItems.filter(i => i.type === 'onduty').map(i => i.id);
+
+        let finalReports = [];
+
+        if (leaveIds.length > 0) {
+            const fullLeaves = await LeaveRequest.findAll({
+                where: { id: { [Op.in]: leaveIds } },
+                include: [
+                    { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                    { model: db.user, as: 'approver', attributes: ['staffid', 'firstname', 'lastname', 'email'], required: false }
+                ]
+            });
+
+            finalReports = finalReports.concat(fullLeaves.map(leave => ({
+                id: leave.id,
+                staff_id: leave.staff_id,
+                type: 'leave', // Helper for frontend
+                date: leave.start_date,
+                start_date: leave.start_date,
+                end_date: leave.end_date,
+                leave_type: leave.leave_type,
+                reason: leave.reason,
+                status: leave.status,
+                rejection_reason: leave.rejection_reason,
+                on_duty: false,
+                tblstaff: leave.user,
+                approver: leave.approver || null
+            })));
+        }
+
+        if (onDutyIds.length > 0) {
+            const fullOnDuties = await OnDutyLog.findAll({
+                where: { id: { [Op.in]: onDutyIds } },
+                include: [
+                    { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                    { model: db.user, as: 'approver', attributes: ['staffid', 'firstname', 'lastname', 'email'], required: false }
+                ]
+            });
+
+            finalReports = finalReports.concat(fullOnDuties.map(log => ({
+                id: log.id,
+                staff_id: log.staff_id,
+                type: 'onduty',
+                check_in_time: log.start_time,
+                check_out_time: log.end_time,
+                date: new Date(log.start_time).toISOString().split('T')[0],
+                location: log.location,
+                client_name: log.client_name,
+                purpose: log.purpose,
+                status: log.status,
+                rejection_reason: log.rejection_reason,
+                on_duty: true,
+                tblstaff: log.user,
+                approver: log.approver || null
+            })));
+        }
+
+        // --- 7. Final Sort (to match the sliced order) ---
+        finalReports.sort((a, b) => {
+            const dateA = new Date(a.date || a.check_in_time || a.start_date);
+            const dateB = new Date(b.date || b.check_in_time || a.start_date);
             return dateB - dateA;
         });
 
-        res.send(combinedReports);
+        res.send({
+            totalItems,
+            totalPages,
+            currentPage: parseInt(page),
+            reports: finalReports
+        });
+
     } catch (err) {
+        console.error('Error in getAttendanceReports:', err);
         res.status(500).send({
             message: err.message || "Some error occurred while retrieving reports."
         });
@@ -689,6 +875,7 @@ exports.getDashboardStats = async (req, res) => {
     const { Op } = require("sequelize");
     const OnDutyLog = db.on_duty_logs;
     const LeaveRequest = db.leave_requests;
+    const Role = db.roles;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayDateOnly = today.toISOString().split('T')[0];
@@ -701,11 +888,17 @@ exports.getDashboardStats = async (req, res) => {
     try {
         // Get current user's role to determine filtering
         const currentUser = await TblStaff.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
 
-        // If manager, get their reportees
+        // Get the user's role permissions
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        // Check if user can view all reports (based on role permission)
+        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
+        const canViewSubordinateReports = userRole && (userRole.can_view_reports === 'subordinates' || userRole.can_view_reports === 'all');
+
+        // If user can only view subordinates, get their reportees
         let reporteeIds = [];
-        if (!isAdmin) {
+        if (!canViewAllReports && canViewSubordinateReports) {
             const reportees = await TblStaff.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
@@ -714,22 +907,22 @@ exports.getDashboardStats = async (req, res) => {
             reporteeIds = reportees.map(r => r.staffid);
         }
 
-        // Build staff filter for manager
+        // Build staff filter for non-admin users
         let staffFilter = {};
         let staffFilterWithReportees = {};
-        if (!isAdmin) {
+        if (!canViewAllReports) {
             staffFilter = { staff_id: { [Op.in]: reporteeIds } };
             staffFilterWithReportees = { approving_manager_id: req.userId };
         }
 
         const results = await Promise.all([
             // Total users (for admin: all users, for manager: their reportees)
-            isAdmin ? TblStaff.count() : TblStaff.count({ where: { approving_manager_id: req.userId } }),
+            canViewAllReports ? TblStaff.count() : TblStaff.count({ where: { approving_manager_id: req.userId } }),
             // New users added today
             TblStaff.count({
                 where: {
                     datecreated: { [Op.gte]: today },
-                    ...(isAdmin ? {} : { approving_manager_id: req.userId })
+                    ...(canViewAllReports ? {} : { approving_manager_id: req.userId })
                 }
             }),
             // New users added yesterday
@@ -739,7 +932,7 @@ exports.getDashboardStats = async (req, res) => {
                         [Op.gte]: yesterday,
                         [Op.lt]: today
                     },
-                    ...(isAdmin ? {} : { approving_manager_id: req.userId })
+                    ...(canViewAllReports ? {} : { approving_manager_id: req.userId })
                 }
             }),
             // Present today (distinct staff with check_in on on-duty logs)
@@ -750,7 +943,7 @@ exports.getDashboardStats = async (req, res) => {
                 where: {
                     start_time: { [Op.gte]: today },
                     end_time: { [Op.ne]: null },
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 },
                 raw: true
             }).then(result => result[0]?.distinct_staff || 0),
@@ -762,7 +955,7 @@ exports.getDashboardStats = async (req, res) => {
                 where: {
                     start_time: { [Op.gte]: yesterday, [Op.lt]: today },
                     end_time: { [Op.ne]: null },
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 },
                 raw: true
             }).then(result => result[0]?.distinct_staff || 0),
@@ -771,28 +964,28 @@ exports.getDashboardStats = async (req, res) => {
                 where: {
                     end_time: null,
                     start_time: { [Op.gte]: today },
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Pending leave approvals
             LeaveRequest.count({
                 where: {
                     status: 'Pending',
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Approved leaves
             LeaveRequest.count({
                 where: {
                     status: 'Approved',
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Rejected leaves
             LeaveRequest.count({
                 where: {
                     status: 'Rejected',
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Pending on-duty approvals (only those that have ended)
@@ -800,28 +993,28 @@ exports.getDashboardStats = async (req, res) => {
                 where: {
                     status: 'Pending',
                     end_time: { [Op.ne]: null },
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Approved on-duty logs
             OnDutyLog.count({
                 where: {
                     status: 'Approved',
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Rejected on-duty logs
             OnDutyLog.count({
                 where: {
                     status: 'Rejected',
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             }),
             // Active on-duty logs (end_time is null)
             OnDutyLog.count({
                 where: {
                     end_time: null,
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             })
         ]);
@@ -880,7 +1073,8 @@ exports.getDailyTrendData = async (req, res) => {
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
     const Staff = db.user;
-    
+    const Role = db.roles;
+
     const days = parseInt(req.query.days) || 7;
     const startDate = req.query.startDate; // Format: YYYY-MM-DD
     const endDate = req.query.endDate; // Format: YYYY-MM-DD
@@ -888,11 +1082,12 @@ exports.getDailyTrendData = async (req, res) => {
     try {
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
 
-        // If manager, get their reportees
+        // If user can only view subordinates, get their reportees
         let reporteeIds = [];
-        if (!isAdmin) {
+        if (!canViewAllReports) {
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
                 where: { approving_manager_id: req.userId },
@@ -941,7 +1136,7 @@ exports.getDailyTrendData = async (req, res) => {
                         [Op.gte]: startOfDay,
                         [Op.lt]: endOfDay
                     },
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             });
 
@@ -953,7 +1148,7 @@ exports.getDailyTrendData = async (req, res) => {
                         [Op.gte]: startOfDay,
                         [Op.lt]: endOfDay
                     },
-                    ...(isAdmin ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
             });
 
@@ -994,16 +1189,15 @@ exports.getCalendarEvents = async (req, res) => {
         const lastDay = new Date(year, month, 0);
 
         // Get current user's role
+        const Role = db.roles;
         const currentUser = await Staff.findByPk(userId);
-        console.log(`Current user lookup - userId: ${userId}, found: ${!!currentUser}, admin: ${currentUser?.admin}`);
-        const isAdmin = currentUser && currentUser.admin === 1;
-
-        console.log(`User ${userId} fetching calendar - isAdmin: ${isAdmin}`);
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canViewAllSchedules = userRole && userRole.can_manage_schedule === 'all';
 
         // Determine which staff to fetch events for
         let reporteeIds = [];
-        if (!isAdmin) {
-            // If manager, get only reportees (staff where approving_manager_id = userId)
+        if (!canViewAllSchedules) {
+            // If user can only view subordinates, get only reportees (staff where approving_manager_id = userId)
             const reportees = await Staff.findAll({
                 attributes: ['staffid'],
                 where: {
@@ -1013,15 +1207,11 @@ exports.getCalendarEvents = async (req, res) => {
             });
             reporteeIds = reportees.map(r => r.staffid);
 
-            console.log(`Manager ${userId} query - reportees found:`, reporteeIds);
-
             if (reporteeIds.length === 0) {
-                // Manager has no reportees, return empty array
-                console.log(`Manager ${userId} has no reportees - returning empty events`);
+                // User has no reportees, return empty array
                 return res.send([]);
             }
         } else {
-            console.log(`Admin ${userId} - showing all staff events`);
         }
 
         // Build the base where condition for leave requests
@@ -1055,8 +1245,8 @@ exports.getCalendarEvents = async (req, res) => {
             ]
         };
 
-        // If manager, filter by reportee IDs
-        if (!isAdmin) {
+        // If user can only view subordinates, filter by reportee IDs
+        if (!canViewAllSchedules) {
             leaveWhere.staff_id = { [Op.in]: reporteeIds };
         }
 
@@ -1072,8 +1262,6 @@ exports.getCalendarEvents = async (req, res) => {
             raw: false
         });
 
-        console.log(`Found ${leaveRequests.length} leave requests with where:`, JSON.stringify(leaveWhere));
-
         // Build the base where condition for on-duty logs
         // Include all statuses to show complete history
         const onDutyWhere = {
@@ -1083,8 +1271,8 @@ exports.getCalendarEvents = async (req, res) => {
             }
         };
 
-        // If manager, filter by reportee IDs
-        if (!isAdmin) {
+        // If user can only view subordinates, filter by reportee IDs
+        if (!canViewAllSchedules) {
             onDutyWhere.staff_id = { [Op.in]: reporteeIds };
         }
 
@@ -1100,7 +1288,7 @@ exports.getCalendarEvents = async (req, res) => {
             raw: false
         });
 
-        console.log(`Found ${onDutyLogs.length} on-duty logs with where:`, JSON.stringify(onDutyWhere));
+        // Transform leave requests into calendar events
 
         // Process leave requests and create events for each day
         const events = [];
@@ -1173,27 +1361,29 @@ exports.debugCalendarData = async (req, res) => {
     const Staff = db.user;
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
+    const Role = db.roles;
 
     try {
         const userId = req.userId;
         const currentUser = await Staff.findByPk(userId);
-        const isAdmin = currentUser && currentUser.admin === 1;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
 
         console.log(`\n=== DEBUG CALENDAR DATA ===`);
         console.log(`User ID: ${userId}`);
         console.log(`User Name: ${currentUser?.firstname} ${currentUser?.lastname}`);
-        console.log(`Is Admin: ${isAdmin}`);
+        console.log(`Can View All Reports: ${canViewAllReports}`);
 
         const debugInfo = {
             userId,
             userName: `${currentUser?.firstname} ${currentUser?.lastname}`,
-            isAdmin,
+            canViewAllReports,
             reportees: [],
             leaveCounts: {},
             onDutyCounts: {}
         };
 
-        if (!isAdmin) {
+        if (!canViewAllReports) {
             // Get reportees
             const reportees = await Staff.findAll({
                 attributes: ['staffid', 'firstname', 'lastname', 'reporting_to', 'approving_manager_id'],
@@ -1203,7 +1393,7 @@ exports.debugCalendarData = async (req, res) => {
                 raw: true
             });
 
-            console.log(`Reportees for manager ${userId}:`, reportees);
+            console.log(`Reportees for user ${userId}:`, reportees);
             debugInfo.reportees = reportees;
 
             if (reportees.length > 0) {

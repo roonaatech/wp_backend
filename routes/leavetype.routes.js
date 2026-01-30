@@ -70,7 +70,7 @@ module.exports = function (app) {
      */
     app.get(
         "/api/leavetypes/admin/all",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageLeaveTypes],
         controller.findAllAdmin
     );
 
@@ -79,7 +79,7 @@ module.exports = function (app) {
      * /api/leavetypes:
      *   post:
      *     summary: Create a new leave type
-     *     description: Add a new leave type to the system (Admin only)
+     *     description: Add a new leave type to the system (Requires leave type management permission)
      *     tags: [Leave Types]
      *     security:
      *       - ApiKeyAuth: []
@@ -103,7 +103,7 @@ module.exports = function (app) {
      */
     app.post(
         "/api/leavetypes",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageLeaveTypes],
         controller.create
     );
 
@@ -112,7 +112,7 @@ module.exports = function (app) {
      * /api/leavetypes/{id}:
      *   put:
      *     summary: Update a leave type
-     *     description: Modify an existing leave type (Admin only)
+     *     description: Modify an existing leave type (Requires leave type management permission)
      *     tags: [Leave Types]
      *     security:
      *       - ApiKeyAuth: []
@@ -134,7 +134,7 @@ module.exports = function (app) {
      */
     app.put(
         "/api/leavetypes/:id",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageLeaveTypes],
         controller.update
     );
 
@@ -143,7 +143,7 @@ module.exports = function (app) {
      * /api/leavetypes/{id}:
      *   delete:
      *     summary: Delete a leave type
-     *     description: Remove a leave type from the system (Admin only)
+     *     description: Remove a leave type from the system (Requires leave type management permission)
      *     tags: [Leave Types]
      *     security:
      *       - ApiKeyAuth: []
@@ -159,7 +159,7 @@ module.exports = function (app) {
      */
     app.delete(
         "/api/leavetypes/:id",
-        [authJwt.verifyToken, authJwt.isAdmin],
+        [authJwt.verifyToken, authJwt.canManageLeaveTypes],
         controller.delete
     );
 };

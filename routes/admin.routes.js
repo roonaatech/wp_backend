@@ -1,4 +1,5 @@
-const { verifyToken } = require("../middleware/authJwt");
+const { authJwt } = require("../middleware");
+const { verifyToken } = authJwt;
 const controller = require("../controllers/admin.controller");
 
 module.exports = function (app) {
@@ -94,7 +95,7 @@ module.exports = function (app) {
      *       200:
      *         description: List of incomplete profiles
      */
-    app.get("/api/admin/incomplete-profiles", [verifyToken], controller.getIncompleteProfiles);
+    app.get("/api/admin/incomplete-profiles", [verifyToken, authJwt.canManageUsers], controller.getIncompleteProfiles);
 
     /**
      * @swagger
@@ -143,7 +144,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized - Invalid or missing token
      */
-    app.get("/api/admin/calendar", [verifyToken], controller.getCalendarEvents);
+    app.get("/api/admin/calendar", [verifyToken, authJwt.canManageSchedule], controller.getCalendarEvents);
 
     /**
      * @swagger
@@ -177,7 +178,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized - Invalid or missing token
      */
-    app.get("/api/admin/calendar/debug", [verifyToken], controller.debugCalendarData);
+    app.get("/api/admin/calendar/debug", [verifyToken, authJwt.canManageSchedule], controller.debugCalendarData);
 
     /**
      * @swagger
@@ -239,7 +240,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.get("/api/admin/users", [verifyToken], controller.getAllUsers);
+    app.get("/api/admin/users", [verifyToken, authJwt.canManageUsers], controller.getAllUsers);
 
     /**
      * @swagger
@@ -256,9 +257,9 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.get("/api/admin/managers-admins", [verifyToken], controller.getManagersAndAdmins);
+    app.get("/api/admin/managers-admins", [verifyToken, authJwt.canManageUsers], controller.getManagersAndAdmins);
 
-    app.post("/api/admin/users", [verifyToken], controller.createUser);
+    app.post("/api/admin/users", [verifyToken, authJwt.canManageUsers], controller.createUser);
 
     /**
      * @swagger
@@ -290,7 +291,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.put("/api/admin/users/:id", [verifyToken], controller.updateUser);
+    app.put("/api/admin/users/:id", [verifyToken, authJwt.canManageUsers], controller.updateUser);
 
     /**
      * @swagger
@@ -328,7 +329,7 @@ module.exports = function (app) {
      *       403:
      *         description: Access denied - Admin only
      */
-    app.post("/api/admin/users/:id/reset-password", [verifyToken], controller.resetUserPassword);
+    app.post("/api/admin/users/:id/reset-password", [verifyToken, authJwt.canManageUsers], controller.resetUserPassword);
 
     /**
      * @swagger
@@ -440,5 +441,5 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.get("/api/admin/reports", [verifyToken], controller.getAttendanceReports);
+    app.get("/api/admin/reports", [verifyToken, authJwt.canViewReports], controller.getAttendanceReports);
 };
