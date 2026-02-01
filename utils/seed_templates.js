@@ -2,8 +2,8 @@ const db = require("../models");
 const EmailTemplate = db.email_templates;
 
 // Common styles for consistency
-const PRIMARY_COLOR = "#1e293b"; // Dark Slate from Sidebar
-const ACCENT_COLOR = "#3b82f6"; // Blue from buttons
+const PRIMARY_COLOR = "#1e293b";
+const ACCENT_COLOR = "#3b82f6";
 const BG_COLOR = "#f3f4f6";
 const CONTAINER_BG = "#ffffff";
 const TEXT_COLOR = "#1f2937";
@@ -32,7 +32,6 @@ const footer = `
 </div>
 `;
 
-// Helper to wrap content
 const wrap = (content) => `${header}${content}${footer}`;
 
 async function seedTemplates() {
@@ -42,7 +41,7 @@ async function seedTemplates() {
             name: "Leave Applied",
             subject: "📢 New Leave Application: {{user_name}}",
             body: wrap(`
-                <h2 style="margin-top: 0; color: ${PRIMARY_COLOR};">New Leave Request</h2>
+                <h2 style="margin-top: 0; color: ${PRIMARY_COLOR};">New Leave Request,</h2>
                 <p><strong>{{user_name}}</strong> has submitted a new leave application.</p>
                 <div style="background-color: #f0f9ff; border-left: 4px solid ${ACCENT_COLOR}; padding: 15px; margin: 20px 0;">
                     <p style="margin: 5px 0;"><strong>Type:</strong> {{leave_type}}</p>
@@ -50,12 +49,10 @@ async function seedTemplates() {
                     <p style="margin: 5px 0;"><strong>To:</strong> {{end_date}}</p>
                     <p style="margin: 5px 0;"><strong>Reason:</strong><br/>{{reason}}</p>
                 </div>
-                <!-- <p style="text-align: center; margin-top: 30px;">
-                    <a href="#" style="background-color: ${ACCENT_COLOR}; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Review Application</a>
-                </p> -->
                 <p style="font-size: 14px; color: ${MUTED_TEXT}; margin-top: 20px;">Please login to the admin panel to approve or reject this request.</p>
             `),
-            variables_hint: "user_name, leave_type, start_date, end_date, reason"
+            variables_hint: "user_name, leave_type, start_date, end_date, reason",
+            cc_manager: false
         },
         {
             slug: "leave_approved",
@@ -106,7 +103,8 @@ async function seedTemplates() {
                 </div>
                 <p style="font-size: 14px; color: ${MUTED_TEXT}; margin-top: 20px;">Please login to the admin panel to approve or reject this request.</p>
             `),
-            variables_hint: "user_name, start_date, end_date, reason"
+            variables_hint: "user_name, start_date, end_date, reason",
+            cc_manager: false
         },
         {
             slug: "onduty_approved",
@@ -179,19 +177,15 @@ async function seedTemplates() {
     ];
 
     for (const t of templates) {
-        // UPSERT: Update if exists, Insert if not
-        const exists = await EmailTemplate.findOne({ where: { slug: t.slug } });
-        if (exists) {
-            await exists.update({
-                name: t.name,
-                subject: t.subject,
-                body: t.body,
-                variables_hint: t.variables_hint,
-                cc_manager: t.cc_manager || false
-            });
+        const [template, created] = await EmailTemplate.findOrCreate({
+            where: { slug: t.slug },
+            defaults: t
+        });
+
+        if (!created) {
+            await template.update(t);
             console.log(`Updated template: ${t.slug}`);
         } else {
-            await EmailTemplate.create(t);
             console.log(`Created template: ${t.slug}`);
         }
     }
