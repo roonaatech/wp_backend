@@ -47,6 +47,12 @@ module.exports = function (app) {
         controller.getLatestApk
     );
 
+    // Check app version - public endpoint for mobile app
+    app.post(
+        "/api/apk/check-version",
+        controller.checkVersion
+    );
+
     app.get(
         "/api/apk/download/:id",
         controller.downloadApk
