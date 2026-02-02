@@ -88,13 +88,33 @@ exports.uploadApk = async (req, res) => {
 
         if (existingApk) {
             // Delete the uploaded file since we're rejecting the upload
-            const fs = require("fs");
             if (req.file.path && fs.existsSync(req.file.path)) {
                 fs.unlinkSync(req.file.path);
             }
             return res.status(409).send({ 
-                message: `Version ${version} already exists. Please increment the build number and try again.` 
+                message: `Version ${version} already exists. Please increment the build number and try again.`,
+                errorType: 'DUPLICATE_VERSION'
             });
+        }
+
+        // Get the latest version and check if new version is higher
+        const latestApk = await ApkVersion.findOne({
+            order: [['upload_date', 'DESC']]
+        });
+
+        if (latestApk) {
+            const comparison = compareVersions(version, latestApk.version);
+            if (comparison < 0) {
+                // New version is lower than current latest
+                if (req.file.path && fs.existsSync(req.file.path)) {
+                    fs.unlinkSync(req.file.path);
+                }
+                return res.status(400).send({
+                    message: `Version ${version} is lower than the current latest version (${latestApk.version}). Please upload a higher version.`,
+                    errorType: 'LOWER_VERSION',
+                    currentLatest: latestApk.version
+                });
+            }
         }
 
         const apk = await ApkVersion.create({
