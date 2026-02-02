@@ -81,6 +81,22 @@ exports.uploadApk = async (req, res) => {
 
         const { version, release_notes, is_visible } = req.body;
 
+        // Check if version already exists
+        const existingApk = await ApkVersion.findOne({
+            where: { version: version }
+        });
+
+        if (existingApk) {
+            // Delete the uploaded file since we're rejecting the upload
+            const fs = require("fs");
+            if (req.file.path && fs.existsSync(req.file.path)) {
+                fs.unlinkSync(req.file.path);
+            }
+            return res.status(409).send({ 
+                message: `Version ${version} already exists. Please increment the build number and try again.` 
+            });
+        }
+
         const apk = await ApkVersion.create({
             version: version,
             filename: req.file.filename,
