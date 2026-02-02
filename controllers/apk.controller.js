@@ -3,20 +3,43 @@ const ApkVersion = db.apk_versions;
 const User = db.user;
 const fs = require("fs");
 const path = require("path");
-const AppInfoParser = require("app-info-parser");
+
+// Try to load app-info-parser, but gracefully handle if not installed
+let AppInfoParser;
+try {
+    AppInfoParser = require("app-info-parser");
+} catch (e) {
+    console.warn("⚠️ app-info-parser module not installed. APK version parsing will not be available.");
+    console.warn("   Run 'npm install app-info-parser' to enable this feature.");
+}
 
 // Parse APK file and extract version info
 exports.parseApk = async (req, res) => {
+    console.log("📦 APK parse request received");
+    
+    // Check if parser is available
+    if (!AppInfoParser) {
+        console.error("❌ app-info-parser module is not installed");
+        return res.status(503).send({
+            success: false,
+            message: "APK parsing is not available. Please install 'app-info-parser' module on the server."
+        });
+    }
+    
     try {
         if (!req.file) {
+            console.log("❌ No file in request");
             return res.status(400).send({ message: "No file uploaded!" });
         }
 
+        console.log(`📁 Parsing file: ${req.file.originalname} (${req.file.size} bytes)`);
         const filePath = path.resolve(req.file.path);
         
         try {
             const parser = new AppInfoParser(filePath);
             const result = await parser.parse();
+            
+            console.log(`✅ APK parsed successfully: version=${result.versionName}, versionCode=${result.versionCode}`);
             
             // Clean up the temp file
             fs.unlinkSync(filePath);
@@ -35,15 +58,16 @@ exports.parseApk = async (req, res) => {
             if (fs.existsSync(filePath)) {
                 fs.unlinkSync(filePath);
             }
-            console.error("Error parsing APK:", parseErr);
+            console.error("❌ Error parsing APK:", parseErr.message);
             res.status(400).send({
                 success: false,
-                message: "Could not parse APK file. Please ensure it's a valid APK."
+                message: "Could not parse APK file. Please ensure it's a valid APK. Error: " + parseErr.message
             });
         }
     } catch (err) {
-        console.error("Error in parseApk:", err);
+        console.error("❌ Error in parseApk:", err);
         res.status(500).send({
+            success: false,
             message: "Error processing APK file. " + err.message
         });
     }
@@ -196,10 +220,24 @@ exports.updateVisibility = async (req, res) => {
     }
 };
 
-// Helper function to compare version strings (e.g., "1.0.0" vs "1.0.1")
+// Helper function to compare version strings (e.g., "1.0.0+1" vs "1.0.1+2")
+// Supports formats: "1.0.0", "1.0.0+7", "1.3.0+8"
 const compareVersions = (v1, v2) => {
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
+    // Parse version and build number (e.g., "1.3.0+7" -> { version: "1.3.0", build: 7 })
+    const parseVersion = (v) => {
+        const [versionPart, buildPart] = v.split('+');
+        return {
+            version: versionPart,
+            build: buildPart ? parseInt(buildPart, 10) : 0
+        };
+    };
+    
+    const parsed1 = parseVersion(v1);
+    const parsed2 = parseVersion(v2);
+    
+    // Compare semantic version parts first
+    const parts1 = parsed1.version.split('.').map(Number);
+    const parts2 = parsed2.version.split('.').map(Number);
     
     // Ensure both arrays have the same length
     const maxLength = Math.max(parts1.length, parts2.length);
@@ -210,7 +248,12 @@ const compareVersions = (v1, v2) => {
         if (parts1[i] > parts2[i]) return 1;  // v1 is greater
         if (parts1[i] < parts2[i]) return -1; // v2 is greater
     }
-    return 0; // versions are equal
+    
+    // Semantic versions are equal, compare build numbers
+    if (parsed1.build > parsed2.build) return 1;  // v1 has higher build
+    if (parsed1.build < parsed2.build) return -1; // v2 has higher build
+    
+    return 0; // versions are completely equal
 };
 
 // Check if app version is up to date
