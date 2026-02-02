@@ -30,6 +30,29 @@ module.exports = function (app) {
 
     const upload = multer({ storage: storage });
 
+    // Configure multer for temp file parsing (separate storage for temp files)
+    const tempStorage = multer.diskStorage({
+        destination: (req, file, cb) => {
+            const tempDir = "uploads/temp";
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+            }
+            cb(null, tempDir);
+        },
+        filename: (req, file, cb) => {
+            cb(null, "parse-" + Date.now() + "-" + file.originalname);
+        }
+    });
+
+    const tempUpload = multer({ storage: tempStorage });
+
+    // Parse APK to extract version info (for auto-populating version field)
+    app.post(
+        "/api/apk/parse",
+        [authJwt.verifyToken, authJwt.isAdmin, tempUpload.single("file")],
+        controller.parseApk
+    );
+
     app.post(
         "/api/apk/upload",
         [authJwt.verifyToken, authJwt.isAdmin, upload.single("file")],

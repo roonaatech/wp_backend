@@ -3,6 +3,51 @@ const ApkVersion = db.apk_versions;
 const User = db.user;
 const fs = require("fs");
 const path = require("path");
+const AppInfoParser = require("app-info-parser");
+
+// Parse APK file and extract version info
+exports.parseApk = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).send({ message: "No file uploaded!" });
+        }
+
+        const filePath = path.resolve(req.file.path);
+        
+        try {
+            const parser = new AppInfoParser(filePath);
+            const result = await parser.parse();
+            
+            // Clean up the temp file
+            fs.unlinkSync(filePath);
+            
+            res.status(200).send({
+                success: true,
+                version: result.versionName || null,
+                versionCode: result.versionCode || null,
+                packageName: result.package || null,
+                appName: result.application?.label || null,
+                minSdkVersion: result.usesSdk?.minSdkVersion || null,
+                targetSdkVersion: result.usesSdk?.targetSdkVersion || null
+            });
+        } catch (parseErr) {
+            // Clean up the temp file on error
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+            console.error("Error parsing APK:", parseErr);
+            res.status(400).send({
+                success: false,
+                message: "Could not parse APK file. Please ensure it's a valid APK."
+            });
+        }
+    } catch (err) {
+        console.error("Error in parseApk:", err);
+        res.status(500).send({
+            message: "Error processing APK file. " + err.message
+        });
+    }
+};
 
 exports.uploadApk = async (req, res) => {
     try {
