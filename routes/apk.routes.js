@@ -28,7 +28,10 @@ module.exports = function (app) {
         }
     });
 
-    const upload = multer({ storage: storage });
+    const upload = multer({ 
+        storage: storage,
+        limits: { fileSize: 200 * 1024 * 1024 } // 200MB limit for APK files
+    });
 
     // Configure multer for temp file parsing (separate storage for temp files)
     const tempStorage = multer.diskStorage({
@@ -44,7 +47,10 @@ module.exports = function (app) {
         }
     });
 
-    const tempUpload = multer({ storage: tempStorage });
+    const tempUpload = multer({ 
+        storage: tempStorage,
+        limits: { fileSize: 200 * 1024 * 1024 } // 200MB limit for parsing
+    });
 
     // Parse APK to extract version info (for auto-populating version field)
     app.post(

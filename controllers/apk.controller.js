@@ -219,7 +219,18 @@ exports.downloadApk = async (req, res) => {
 
         const filePath = path.resolve(apk.filepath);
         if (fs.existsSync(filePath)) {
-            res.download(filePath, apk.filename);
+            const stat = fs.statSync(filePath);
+            
+            // Set proper headers for APK download - prevent any transformation
+            res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+            res.setHeader('Content-Length', stat.size);
+            res.setHeader('Content-Disposition', `attachment; filename="${apk.filename}"`);
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Content-Transfer-Encoding', 'binary');
+            
+            // Stream the file directly instead of using res.download to have more control
+            const fileStream = fs.createReadStream(filePath);
+            fileStream.pipe(res);
         } else {
             res.status(404).send({ message: "File not found on server." });
         }
