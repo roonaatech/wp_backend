@@ -120,15 +120,34 @@ exports.uploadApk = async (req, res) => {
 
 exports.getAllApks = async (req, res) => {
     try {
-        const apks = await ApkVersion.findAll({
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        const { count, rows: apks } = await ApkVersion.findAndCountAll({
             include: [{
                 model: User,
                 as: 'uploader',
                 attributes: ['firstname', 'lastname', 'email']
             }],
-            order: [['upload_date', 'DESC']]
+            order: [['upload_date', 'DESC']],
+            limit: limit,
+            offset: offset
         });
-        res.status(200).send(apks);
+
+        const totalPages = Math.ceil(count / limit);
+
+        res.status(200).send({
+            data: apks,
+            pagination: {
+                currentPage: page,
+                totalPages: totalPages,
+                totalItems: count,
+                itemsPerPage: limit,
+                hasNextPage: page < totalPages,
+                hasPrevPage: page > 1
+            }
+        });
     } catch (err) {
         res.status(500).send({
             message: err.message || "Some error occurred while retrieving apks."
