@@ -710,29 +710,20 @@ exports.getAttendanceReports = async (req, res) => {
         if (status && status !== 'all') {
             if (status === 'approved') {
                 statusWhereLeave.status = 'Approved';
-                statusWhereOnDuty.check_out_time = { [Op.ne]: null }; // Completed (Approved)
+                statusWhereOnDuty.status = 'Approved'; // Use status field for OnDuty
             } else if (status === 'pending') {
                 statusWhereLeave.status = 'Pending';
-                statusWhereOnDuty.status = 'Pending'; // Needs manager approval? Or just active? 
-                // OnDuty doesn't have a specific 'Pending' status column sometimes, it uses 'status'.
-                // Assuming OnDuty status field usage: 'Pending', 'Approved', 'Rejected'
-                // BUT previous code used check_out_time logic. 
-                // Let's check typical usage: Active on-duty = check_out_time IS NULL.
-                statusWhereOnDuty = {
-                    [Op.and]: [
-                        { check_out_time: null }
-                    ]
-                };
+                statusWhereOnDuty.status = 'Pending';
             } else if (status === 'rejected') {
                 statusWhereLeave.status = 'Rejected';
                 statusWhereOnDuty.status = 'Rejected';
             } else if (status === 'active') {
-                statusWhereOnDuty.check_out_time = null;
+                statusWhereOnDuty.end_time = null; // Active = end_time is null
                 // Leaves don't really have "active" state unless we count "approved and currently happening"
                 // For simplicity, ignore leaves for 'active' or map to 'Pending'
                 statusWhereLeave.status = 'Pending'; // Close enough
             } else if (status === 'completed') {
-                statusWhereOnDuty.check_out_time = { [Op.ne]: null };
+                statusWhereOnDuty.end_time = { [Op.ne]: null }; // Completed = has end_time
                 statusWhereLeave.status = 'Approved'; // Leaves that are approved are "completed" decisions
             }
         }
