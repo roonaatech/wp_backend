@@ -27,6 +27,7 @@ db.on_duty_logs = require("./on_duty_log.model.js")(sequelize, Sequelize);
 db.approvals = require("./approval.model.js")(sequelize, Sequelize);
 db.activity_logs = require("./activity_log.model.js")(sequelize, Sequelize);
 db.apk_versions = require("./apk_version.model.js")(sequelize, Sequelize);
+db.attendance_logs = require("./attendance_log.model.js")(sequelize, Sequelize);
 
 // Associations
 db.user.belongsTo(db.roles, { foreignKey: 'role', as: 'role_info' });
@@ -44,8 +45,8 @@ db.on_duty_logs.belongsTo(db.user, { foreignKey: 'staff_id', targetKey: 'staffid
 // On-duty approver relationship
 db.on_duty_logs.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' });
 
-// db.attendance_logs.hasOne(db.approvals, { foreignKey: "attendance_log_id", as: "approval" });
-// db.approvals.belongsTo(db.attendance_logs, { foreignKey: "attendance_log_id" });
+db.attendance_logs.hasOne(db.approvals, { foreignKey: "attendance_log_id", as: "approval" });
+db.approvals.belongsTo(db.attendance_logs, { foreignKey: "attendance_log_id" });
 
 db.on_duty_logs.hasOne(db.approvals, { foreignKey: "on_duty_log_id", as: "approval" });
 db.approvals.belongsTo(db.on_duty_logs, { foreignKey: "on_duty_log_id" });

@@ -5,6 +5,7 @@ const axios = require('axios'); // For PHP API
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const apkController = require("./apk.controller");
 
 const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
@@ -29,8 +30,29 @@ exports.signup = (req, res) => {
 };
 
 exports.signin = async (req, res) => {
-    const { email, password, forceLocal } = req.body;
-    console.log("Signin request received for:", email, forceLocal ? "(Force Local)" : "");
+    const { email, password, forceLocal, is_mobile_app, app_version } = req.body;
+    console.log("Signin request received for:", email, forceLocal ? "(Force Local)" : "", is_mobile_app ? `(Mobile App v${app_version})` : "");
+
+    // --- APP VERSION CHECK FOR MOBILE APP ---
+    if (is_mobile_app && app_version) {
+        try {
+            const versionCheck = await apkController.isVersionOutdated(app_version);
+            if (versionCheck.outdated) {
+                console.log(`⚠️ Mobile app version ${app_version} is outdated. Latest: ${versionCheck.latestVersion}`);
+                return res.status(426).send({
+                    updateRequired: true,
+                    currentVersion: versionCheck.currentVersion,
+                    latestVersion: versionCheck.latestVersion,
+                    releaseNotes: versionCheck.releaseNotes,
+                    downloadUrl: versionCheck.downloadUrl,
+                    message: `Your app version (${app_version}) is outdated. Please update to version ${versionCheck.latestVersion} to continue.`
+                });
+            }
+        } catch (versionErr) {
+            console.log("⚠️ Version check failed:", versionErr.message);
+            // Continue with login if version check fails (don't block users)
+        }
+    }
 
     // --- PHP AUTHENTICATION & SYNC ---
     let phpAuthSuccess = false;

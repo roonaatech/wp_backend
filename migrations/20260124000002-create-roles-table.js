@@ -67,12 +67,12 @@ module.exports = {
       }
     });
 
-    // Insert default roles matching current system (1=Admin, 2=Manager, 3=Leader, 4=Employee)
+    // Insert default roles matching current system
     await queryInterface.bulkInsert('roles', [
       {
         id: 1,
-        name: 'admin',
-        display_name: 'Admin',
+        name: 'super_admin',
+        display_name: 'Super Admin',
         description: 'Full system access with all permissions',
         hierarchy_level: 0,
         can_approve_leave: true,
@@ -85,14 +85,14 @@ module.exports = {
         updatedAt: new Date()
       },
       {
-        id: 2,
-        name: 'manager',
-        display_name: 'Manager',
-        description: 'Can manage team members and approve requests',
+        id: 3,
+        name: 'admin',
+        display_name: 'Admin',
+        description: 'Team lead with limited approval permissions',
         hierarchy_level: 1,
         can_approve_leave: true,
         can_approve_onduty: true,
-        can_manage_users: false,
+        can_manage_users: true,
         can_manage_leave_types: false,
         can_view_reports: true,
         active: true,
@@ -100,14 +100,29 @@ module.exports = {
         updatedAt: new Date()
       },
       {
-        id: 3,
-        name: 'leader',
-        display_name: 'Leader',
-        description: 'Team lead with limited approval permissions',
+        id: 5,
+        name: 'human_resource',
+        display_name: 'Human Resource',
+        description: 'Manage users leave and on-duty and generate report',
         hierarchy_level: 2,
         can_approve_leave: true,
         can_approve_onduty: true,
-        can_manage_users: false,
+        can_manage_users: true,
+        can_manage_leave_types: false,
+        can_view_reports: true,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: 2,
+        name: 'manager',
+        display_name: 'Manager',
+        description: 'Can manage team members and approve requests',
+        hierarchy_level: 3,
+        can_approve_leave: true,
+        can_approve_onduty: true,
+        can_manage_users: true,
         can_manage_leave_types: false,
         can_view_reports: true,
         active: true,
@@ -119,7 +134,7 @@ module.exports = {
         name: 'employee',
         display_name: 'Employee',
         description: 'Standard employee with basic access',
-        hierarchy_level: 3,
+        hierarchy_level: 4,
         can_approve_leave: false,
         can_approve_onduty: false,
         can_manage_users: false,
