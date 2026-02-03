@@ -710,21 +710,25 @@ exports.getAttendanceReports = async (req, res) => {
         if (status && status !== 'all') {
             if (status === 'approved') {
                 statusWhereLeave.status = 'Approved';
-                statusWhereOnDuty.status = 'Approved'; // Use status field for OnDuty
+                statusWhereOnDuty.status = 'Approved';
             } else if (status === 'pending') {
                 statusWhereLeave.status = 'Pending';
+                // For on-duty, pending means approval pending AND still active (no end_time)
                 statusWhereOnDuty.status = 'Pending';
+                statusWhereOnDuty.end_time = null;
             } else if (status === 'rejected') {
                 statusWhereLeave.status = 'Rejected';
                 statusWhereOnDuty.status = 'Rejected';
             } else if (status === 'active') {
-                statusWhereOnDuty.end_time = null; // Active = end_time is null
-                // Leaves don't really have "active" state unless we count "approved and currently happening"
-                // For simplicity, ignore leaves for 'active' or map to 'Pending'
-                statusWhereLeave.status = 'Pending'; // Close enough
+                // Active = on-duty with no end_time (regardless of approval status)
+                statusWhereOnDuty.end_time = null;
+                // Leaves don't have "active" state - exclude leaves for this filter
+                statusWhereLeave.id = null; // This will exclude all leaves
             } else if (status === 'completed') {
-                statusWhereOnDuty.end_time = { [Op.ne]: null }; // Completed = has end_time
-                statusWhereLeave.status = 'Approved'; // Leaves that are approved are "completed" decisions
+                // Completed = on-duty with end_time (regardless of approval status)
+                statusWhereOnDuty.end_time = { [Op.ne]: null };
+                // For leaves, "completed" means approved
+                statusWhereLeave.status = 'Approved';
             }
         }
 
