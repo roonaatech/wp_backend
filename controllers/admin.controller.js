@@ -712,20 +712,19 @@ exports.getAttendanceReports = async (req, res) => {
                 statusWhereLeave.status = 'Approved';
                 statusWhereOnDuty.status = 'Approved';
             } else if (status === 'pending') {
+                // Pending = items pending approval (regardless of active/completed state)
                 statusWhereLeave.status = 'Pending';
-                // For on-duty, pending means approval pending AND still active (no end_time)
                 statusWhereOnDuty.status = 'Pending';
-                statusWhereOnDuty.end_time = null;
             } else if (status === 'rejected') {
                 statusWhereLeave.status = 'Rejected';
                 statusWhereOnDuty.status = 'Rejected';
             } else if (status === 'active') {
-                // Active = on-duty with no end_time (regardless of approval status)
+                // Active = on-duty with no end_time (still in progress)
                 statusWhereOnDuty.end_time = null;
                 // Leaves don't have "active" state - exclude leaves for this filter
-                statusWhereLeave.id = null; // This will exclude all leaves
+                statusWhereLeave.id = null;
             } else if (status === 'completed') {
-                // Completed = on-duty with end_time (regardless of approval status)
+                // Completed = on-duty with end_time (session finished)
                 statusWhereOnDuty.end_time = { [Op.ne]: null };
                 // For leaves, "completed" means approved
                 statusWhereLeave.status = 'Approved';
