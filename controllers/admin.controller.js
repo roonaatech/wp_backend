@@ -300,7 +300,16 @@ exports.getAllUsers = async (req, res) => {
         const currentUser = await TblStaff.findByPk(req.userId);
         const Role = db.roles;
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        
+        // Check both manage and view permissions for "all" access
         const canManageAllUsers = userRole && userRole.can_manage_users === 'all';
+        const canViewAllUsers = userRole && userRole.can_view_users === 'all';
+        const hasAllUsersAccess = canManageAllUsers || canViewAllUsers;
+        
+        // Check subordinates-level access
+        const canManageSubordinates = userRole && userRole.can_manage_users === 'subordinates';
+        const canViewSubordinates = userRole && userRole.can_view_users === 'subordinates';
+        const hasSubordinatesAccess = canManageSubordinates || canViewSubordinates;
 
         // Pagination parameters
         const page = req.query.page ? parseInt(req.query.page) : 1;
@@ -326,10 +335,15 @@ exports.getAllUsers = async (req, res) => {
         // Build where clause using AND conditions
         const andConditions = [];
 
-        // Manager constraint
-        if (!canManageAllUsers) {
-            // User can only see their assigned employees (subordinates)
-            andConditions.push({ approving_manager_id: req.userId });
+        // User access constraint based on permissions
+        if (!hasAllUsersAccess) {
+            if (hasSubordinatesAccess) {
+                // User can only see their assigned employees (subordinates)
+                andConditions.push({ approving_manager_id: req.userId });
+            } else {
+                // No access - return empty (should not happen if middleware works correctly)
+                return res.json({ users: [], total: 0, page: 1, totalPages: 0 });
+            }
         }
 
         // Search constraint

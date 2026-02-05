@@ -307,6 +307,45 @@ const canManageUsers = async (req, res, next) => {
     }
 };
 
+/**
+ * Middleware to check if user can view users (read-only access)
+ * Allows access if user has can_view_users OR can_manage_users permission
+ */
+const canViewUsers = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Legacy admin flag check
+        if (user.admin === 1) {
+            next();
+            return;
+        }
+
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        // Allow if user has view OR manage permission
+        if (role && (
+            role.can_view_users === 'all' || role.can_view_users === 'subordinates' ||
+            role.can_manage_users === 'all' || role.can_manage_users === 'subordinates'
+        )) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to view users!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const canViewReports = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
@@ -410,6 +449,7 @@ const authJwt = {
     canManageRoles: canManageRoles,
     canManageEmailSettings: canManageEmailSettings,
     canManageUsers: canManageUsers,
+    canViewUsers: canViewUsers,
     canViewReports: canViewReports,
     canManageActiveOnDuty: canManageActiveOnDuty,
     canManageSchedule: canManageSchedule
