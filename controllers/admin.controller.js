@@ -44,14 +44,55 @@ exports.createUser = async (req, res) => {
         return res.status(400).send({ message: "Invalid Role value." });
     }
 
-    // Validate role and manager_id requirements
-    if (roleInt === 2 && !approving_manager_id) {
-        return res.status(400).send({
-            message: "Manager role requires an approving admin manager."
-        });
-    }
-
     try {
+        // Get current user's role to check hierarchy
+        const Role = db.roles;
+        const currentUser = await TblStaff.findByPk(req.userId);
+        const currentUserRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        
+        // Get the role being assigned to check hierarchy
+        const newRole = await Role.findByPk(roleInt);
+        if (!newRole) {
+            return res.status(400).send({
+                message: "Invalid role specified."
+            });
+        }
+        
+        // Hierarchy check: users can only create users with LOWER authority (higher hierarchy_level)
+        // Exception: Super Admin (level 0) can create any role
+        if (currentUserRole) {
+            const currentLevel = currentUserRole.hierarchy_level;
+            const newRoleLevel = newRole.hierarchy_level;
+            
+            if (currentLevel > 0 && newRoleLevel <= currentLevel) {
+                return res.status(403).send({
+                    message: `You don't have permission to create users with ${newRole.display_name} role.`
+                });
+            }
+        }
+        
+        // Validate approving manager requirement based on role hierarchy
+        // Roles that need an approver (not super_admin level) should have approving_manager_id
+        if (newRole.hierarchy_level > 0 && !approving_manager_id) {
+            // Check if the role actually needs an approver
+            const potentialApprovers = await Role.findAll({
+                where: {
+                    hierarchy_level: { [Op.lte]: newRole.hierarchy_level },
+                    [Op.or]: [
+                        { can_approve_leave: { [Op.ne]: 'none' } },
+                        { can_approve_onduty: { [Op.ne]: 'none' } }
+                    ],
+                    active: true
+                }
+            });
+            
+            if (potentialApprovers.length > 0) {
+                return res.status(400).send({
+                    message: `${newRole.display_name} role requires an approving manager.`
+                });
+            }
+        }
+
         // Check if email already exists
         const existingUser = await TblStaff.findOne({ where: { email: email } });
         if (existingUser) {
@@ -182,6 +223,26 @@ exports.updateUser = async (req, res) => {
             }
         }
 
+        // Check role escalation: prevent assigning a role with equal or higher authority than current user
+        // Exception: Super Admin (level 0) can assign any role
+        const newRole = await Role.findByPk(roleInt);
+        if (!newRole) {
+            return res.status(400).send({
+                message: "Invalid role specified."
+            });
+        }
+        
+        if (currentUserRole) {
+            const currentLevel = currentUserRole.hierarchy_level;
+            const newRoleLevel = newRole.hierarchy_level;
+            
+            if (currentLevel > 0 && newRoleLevel <= currentLevel) {
+                return res.status(403).send({
+                    message: `You don't have permission to assign ${newRole.display_name} role.`
+                });
+            }
+        }
+
         // Check if new email is already used by another user
         if (email !== targetUser.email) {
             const existingUser = await TblStaff.findOne({ where: { email: email } });
@@ -259,10 +320,10 @@ exports.resetUserPassword = async (req, res) => {
             });
         }
 
-        // Check if user has admin permission (can_manage_users)
+        // Check if user has admin permission (can_manage_users) - role-based only
         const Role = db.roles;
         const userRole = await Role.findByPk(currentUser.role);
-        const hasAdminPermission = currentUser.admin === 1 || (userRole && userRole.can_manage_users);
+        const hasAdminPermission = userRole && (userRole.can_manage_users === 'all' || userRole.can_manage_users === 'subordinates');
 
         if (!hasAdminPermission) {
             return res.status(403).send({
