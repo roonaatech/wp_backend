@@ -240,7 +240,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.get("/api/admin/users", [verifyToken, authJwt.canManageUsers], controller.getAllUsers);
+    app.get("/api/admin/users", [verifyToken, authJwt.canViewUsers], controller.getAllUsers);
 
     /**
      * @swagger
@@ -257,7 +257,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.get("/api/admin/managers-admins", [verifyToken, authJwt.canManageUsers], controller.getManagersAndAdmins);
+    app.get("/api/admin/managers-admins", [verifyToken, authJwt.canViewUsers], controller.getManagersAndAdmins);
 
     app.post("/api/admin/users", [verifyToken, authJwt.canManageUsers], controller.createUser);
 

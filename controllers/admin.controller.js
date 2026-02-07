@@ -44,14 +44,55 @@ exports.createUser = async (req, res) => {
         return res.status(400).send({ message: "Invalid Role value." });
     }
 
-    // Validate role and manager_id requirements
-    if (roleInt === 2 && !approving_manager_id) {
-        return res.status(400).send({
-            message: "Manager role requires an approving admin manager."
-        });
-    }
-
     try {
+        // Get current user's role to check hierarchy
+        const Role = db.roles;
+        const currentUser = await TblStaff.findByPk(req.userId);
+        const currentUserRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        
+        // Get the role being assigned to check hierarchy
+        const newRole = await Role.findByPk(roleInt);
+        if (!newRole) {
+            return res.status(400).send({
+                message: "Invalid role specified."
+            });
+        }
+        
+        // Hierarchy check: users can only create users with LOWER authority (higher hierarchy_level)
+        // Exception: Super Admin (level 0) can create any role
+        if (currentUserRole) {
+            const currentLevel = currentUserRole.hierarchy_level;
+            const newRoleLevel = newRole.hierarchy_level;
+            
+            if (currentLevel > 0 && newRoleLevel <= currentLevel) {
+                return res.status(403).send({
+                    message: `You don't have permission to create users with ${newRole.display_name} role.`
+                });
+            }
+        }
+        
+        // Validate approving manager requirement based on role hierarchy
+        // Roles that need an approver (not super_admin level) should have approving_manager_id
+        if (newRole.hierarchy_level > 0 && !approving_manager_id) {
+            // Check if the role actually needs an approver
+            const potentialApprovers = await Role.findAll({
+                where: {
+                    hierarchy_level: { [Op.lte]: newRole.hierarchy_level },
+                    [Op.or]: [
+                        { can_approve_leave: { [Op.ne]: 'none' } },
+                        { can_approve_onduty: { [Op.ne]: 'none' } }
+                    ],
+                    active: true
+                }
+            });
+            
+            if (potentialApprovers.length > 0) {
+                return res.status(400).send({
+                    message: `${newRole.display_name} role requires an approving manager.`
+                });
+            }
+        }
+
         // Check if email already exists
         const existingUser = await TblStaff.findOne({ where: { email: email } });
         if (existingUser) {
@@ -120,7 +161,7 @@ exports.createUser = async (req, res) => {
     }
 };
 
-exports.updateUser = (req, res) => {
+exports.updateUser = async (req, res) => {
     const { id } = req.params;
     const { firstname, lastname, email, password, role, approving_manager_id, gender } = req.body;
 
@@ -146,82 +187,123 @@ exports.updateUser = (req, res) => {
         });
     }
 
-    // Find user by ID
-    TblStaff.findByPk(id)
-        .then(user => {
-            if (!user) {
-                return res.status(404).send({
-                    message: "User not found."
+    try {
+        // Get current user's role to check hierarchy
+        const currentUser = await TblStaff.findByPk(req.userId);
+        const Role = db.roles;
+        const currentUserRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        
+        // Get target user and their role
+        const targetUser = await TblStaff.findByPk(id);
+        if (!targetUser) {
+            return res.status(404).send({
+                message: "User not found."
+            });
+        }
+        
+        const targetUserRole = targetUser.role ? await Role.findByPk(targetUser.role) : null;
+        
+        // Check hierarchy: users can only edit users with HIGHER hierarchy level (lower authority)
+        // Exception: Super Admin (level 0) can edit anyone
+        // Exception: If current user is the approving manager of target user (same role reporting)
+        if (currentUserRole && targetUserRole) {
+            const currentLevel = currentUserRole.hierarchy_level;
+            const targetLevel = targetUserRole.hierarchy_level;
+            const isApprovingManager = targetUser.approving_manager_id === req.userId;
+            
+            // If current user is not super_admin (level 0), check hierarchy
+            // Allow if same level AND current user is the approving manager
+            if (currentLevel > 0 && targetLevel <= currentLevel) {
+                // Exception: allow if same level and is approving manager
+                if (!(targetLevel === currentLevel && isApprovingManager)) {
+                    return res.status(403).send({
+                        message: `You don't have permission to edit users with ${targetUserRole.display_name} role.`
+                    });
+                }
+            }
+        }
+
+        // Check role escalation: prevent assigning a role with equal or higher authority than current user
+        // Exception: Super Admin (level 0) can assign any role
+        const newRole = await Role.findByPk(roleInt);
+        if (!newRole) {
+            return res.status(400).send({
+                message: "Invalid role specified."
+            });
+        }
+        
+        if (currentUserRole) {
+            const currentLevel = currentUserRole.hierarchy_level;
+            const newRoleLevel = newRole.hierarchy_level;
+            
+            if (currentLevel > 0 && newRoleLevel <= currentLevel) {
+                return res.status(403).send({
+                    message: `You don't have permission to assign ${newRole.display_name} role.`
                 });
             }
+        }
 
-            // Check if new email is already used by another user
-            if (email !== user.email) {
-                TblStaff.findOne({ where: { email: email } })
-                    .then(existingUser => {
-                        if (existingUser) {
-                            return res.status(409).send({
-                                message: "Email already exists."
-                            });
-                        }
-                        performUpdate();
-                    })
-                    .catch(err => {
-                        return res.status(500).send({
-                            message: err.message || "Error checking email."
-                        });
-                    });
-            } else {
-                performUpdate();
+        // Check if new email is already used by another user
+        if (email !== targetUser.email) {
+            const existingUser = await TblStaff.findOne({ where: { email: email } });
+            if (existingUser) {
+                return res.status(409).send({
+                    message: "Email already exists."
+                });
             }
+        }
 
-            function performUpdate() {
-                // Build update object
-                const updateData = {
-                    firstname: firstname,
-                    lastname: lastname,
-                    email: email,
-                    role: roleInt,
-                    approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
-                    gender: gender,
-                    active: req.body.active !== undefined ? req.body.active : user.active
-                };
+        // Build update object
+        const updateData = {
+            firstname: firstname,
+            lastname: lastname,
+            email: email,
+            role: roleInt,
+            approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
+            gender: gender,
+            active: req.body.active !== undefined ? req.body.active : targetUser.active
+        };
 
-                // Only update password if provided
-                if (password) {
-                    updateData.password = bcrypt.hashSync(password, 8);
-                }
+        // Only update password if provided
+        if (password) {
+            updateData.password = bcrypt.hashSync(password, 8);
+        }
 
-                // Update user
-                user.update(updateData)
-                    .then(updatedUser => {
-                        res.send({
-                            message: "User updated successfully.",
-                            user: {
-                                staffid: updatedUser.staffid,
-                                firstname: updatedUser.firstname,
-                                lastname: updatedUser.lastname,
-                                email: updatedUser.email,
-                                gender: updatedUser.gender,
-                                role: updatedUser.role,
-                                userid: updatedUser.userid,
-                                approving_manager_id: updatedUser.approving_manager_id,
-                                active: updatedUser.active
-                            }
-                        });
-                    })
-                    .catch(err => {
-                        res.status(500).send({
-                            message: err.message || "Error updating user."
-                        });
-                    });
-            }
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: err.message || "Error finding user."
-            });
+        // Update user
+        const updatedUser = await targetUser.update(updateData);
+        
+        // Log activity
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'User',
+            entity_id: updatedUser.staffid,
+            affected_user_id: updatedUser.staffid,
+            description: `Updated user account for ${updatedUser.firstname} ${updatedUser.lastname}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
         });
+
+        res.send({
+            message: "User updated successfully.",
+            user: {
+                staffid: updatedUser.staffid,
+                firstname: updatedUser.firstname,
+                lastname: updatedUser.lastname,
+                email: updatedUser.email,
+                role: updatedUser.role,
+                userid: updatedUser.userid,
+                approving_manager_id: updatedUser.approving_manager_id,
+                gender: updatedUser.gender,
+                active: updatedUser.active
+            }
+        });
+    } catch (err) {
+        console.error('Error updating user:', err);
+        res.status(500).send({
+            message: err.message || "Error updating user."
+        });
+    }
 };
 
 // Reset user password (Admin only)
@@ -238,10 +320,10 @@ exports.resetUserPassword = async (req, res) => {
             });
         }
 
-        // Check if user has admin permission (can_manage_users)
+        // Check if user has admin permission (can_manage_users) - role-based only
         const Role = db.roles;
         const userRole = await Role.findByPk(currentUser.role);
-        const hasAdminPermission = currentUser.admin === 1 || (userRole && userRole.can_manage_users);
+        const hasAdminPermission = userRole && (userRole.can_manage_users === 'all' || userRole.can_manage_users === 'subordinates');
 
         if (!hasAdminPermission) {
             return res.status(403).send({
@@ -262,6 +344,26 @@ exports.resetUserPassword = async (req, res) => {
             return res.status(404).send({
                 message: "User not found."
             });
+        }
+
+        // Check hierarchy: users can only reset password for users with HIGHER hierarchy level (lower authority)
+        // Exception: If current user is the approving manager of target user (same role reporting)
+        const targetUserRole = user.role ? await Role.findByPk(user.role) : null;
+        if (userRole && targetUserRole) {
+            const currentLevel = userRole.hierarchy_level;
+            const targetLevel = targetUserRole.hierarchy_level;
+            const isApprovingManager = user.approving_manager_id === req.userId;
+            
+            // If current user is not super_admin (level 0), check hierarchy
+            // Allow if same level AND current user is the approving manager
+            if (currentLevel > 0 && targetLevel <= currentLevel) {
+                // Exception: allow if same level and is approving manager
+                if (!(targetLevel === currentLevel && isApprovingManager)) {
+                    return res.status(403).send({
+                        message: `You don't have permission to reset password for users with ${targetUserRole.display_name} role.`
+                    });
+                }
+            }
         }
 
         // Hash the new password
@@ -300,7 +402,16 @@ exports.getAllUsers = async (req, res) => {
         const currentUser = await TblStaff.findByPk(req.userId);
         const Role = db.roles;
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        
+        // Check both manage and view permissions for "all" access
         const canManageAllUsers = userRole && userRole.can_manage_users === 'all';
+        const canViewAllUsers = userRole && userRole.can_view_users === 'all';
+        const hasAllUsersAccess = canManageAllUsers || canViewAllUsers;
+        
+        // Check subordinates-level access
+        const canManageSubordinates = userRole && userRole.can_manage_users === 'subordinates';
+        const canViewSubordinates = userRole && userRole.can_view_users === 'subordinates';
+        const hasSubordinatesAccess = canManageSubordinates || canViewSubordinates;
 
         // Pagination parameters
         const page = req.query.page ? parseInt(req.query.page) : 1;
@@ -326,10 +437,15 @@ exports.getAllUsers = async (req, res) => {
         // Build where clause using AND conditions
         const andConditions = [];
 
-        // Manager constraint
-        if (!canManageAllUsers) {
-            // User can only see their assigned employees (subordinates)
-            andConditions.push({ approving_manager_id: req.userId });
+        // User access constraint based on permissions
+        if (!hasAllUsersAccess) {
+            if (hasSubordinatesAccess) {
+                // User can only see their assigned employees (subordinates)
+                andConditions.push({ approving_manager_id: req.userId });
+            } else {
+                // No access - return empty (should not happen if middleware works correctly)
+                return res.json({ users: [], total: 0, page: 1, totalPages: 0 });
+            }
         }
 
         // Search constraint

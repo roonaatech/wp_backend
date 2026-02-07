@@ -1,9 +1,6 @@
 {
   "development": {
-    "username": "root",
-    "password": "P@ssW0rd-1",
-    "database": "attendance_system",
-    "host": "localhost",
+    "use_env_variable": "DATABASE_URL",
     "dialect": "mysql",
     "pool": {
       "max": 5,
@@ -13,17 +10,17 @@
     }
   },
   "test": {
-    "username": "root",
-    "password": null,
-    "database": "database_test",
-    "host": "127.0.0.1",
+    "use_env_variable": "DATABASE_URL",
     "dialect": "mysql"
   },
   "production": {
-    "username": "workpulse_user",
-    "password": "P@ssW0rd-1",
-    "database": "workpulse_db",
-    "host": "91.108.105.10",
-    "dialect": "mysql"
+    "use_env_variable": "DATABASE_URL",
+    "dialect": "mysql",
+    "pool": {
+      "max": 5,
+      "min": 0,
+      "acquire": 30000,
+      "idle": 10000
+    }
   }
 }

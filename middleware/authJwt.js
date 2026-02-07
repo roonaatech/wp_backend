@@ -28,18 +28,13 @@ const Role = db.roles;
 /**
  * Middleware to check if user has approval permissions (can approve leave or onduty)
  * This replaces the old hardcoded isManagerOrAdmin check
+ * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
 isManagerOrAdmin = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
-        }
-
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
         }
 
         // Get role from database and check permissions
@@ -68,18 +63,13 @@ isManagerOrAdmin = async (req, res, next) => {
 /**
  * Middleware to check if user has admin permissions (can manage users)
  * This replaces the old hardcoded isAdmin check
+ * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
 isAdmin = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
-        }
-
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
         }
 
         // Get role from database and check can_manage_users permission
@@ -104,18 +94,13 @@ isAdmin = async (req, res, next) => {
 /**
  * Middleware to check if user can access webapp
  * Based on role hierarchy or any management/approval permissions
+ * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
 canAccessWebApp = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
-        }
-
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
         }
 
         // Get role from database
@@ -145,18 +130,13 @@ canAccessWebApp = async (req, res, next) => {
 
 /**
  * Middleware to check if user can manage leave types
+ * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
 canManageLeaveTypes = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
-        }
-
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
         }
 
         // Get role from database and check can_manage_leave_types permission
@@ -180,19 +160,13 @@ canManageLeaveTypes = async (req, res, next) => {
 /**
  * Middleware to check if user can view activities
  * Stores the permission level in req.activityPermission for use in controller
+ * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
 canViewActivities = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
-        }
-
-        // Legacy admin flag check - full access
-        if (user.admin === 1) {
-            req.activityPermission = 'all';
-            next();
-            return;
         }
 
         // Get role from database and check can_view_activities permission
@@ -221,12 +195,6 @@ const canManageRoles = async (req, res, next) => {
             return res.status(403).send({ message: "User not found!" });
         }
 
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
-        }
-
         // Get role from database and check can_manage_roles permission
         const role = await Role.findByPk(user.role);
         if (role && role.can_manage_roles === true) {
@@ -250,12 +218,6 @@ const canManageEmailSettings = async (req, res, next) => {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
-        }
-
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
         }
 
         // Get role from database and check can_manage_email_settings permission
@@ -283,12 +245,6 @@ const canManageUsers = async (req, res, next) => {
             return res.status(403).send({ message: "User not found!" });
         }
 
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
-        }
-
         // Get role from database
         const role = await Role.findByPk(user.role);
         if (role && (role.can_manage_users === 'all' || role.can_manage_users === 'subordinates')) {
@@ -307,17 +263,45 @@ const canManageUsers = async (req, res, next) => {
     }
 };
 
-const canViewReports = async (req, res, next) => {
+/**
+ * Middleware to check if user can view users (read-only access)
+ * Allows access if user has can_view_users OR can_manage_users permission
+ * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
+ */
+const canViewUsers = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
         }
 
-        // Legacy admin flag check
-        if (user.admin === 1) {
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        // Allow if user has view OR manage permission
+        if (role && (
+            role.can_view_users === 'all' || role.can_view_users === 'subordinates' ||
+            role.can_manage_users === 'all' || role.can_manage_users === 'subordinates'
+        )) {
             next();
             return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to view users!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canViewReports = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
         }
 
         // Get role from database
@@ -345,12 +329,6 @@ const canManageActiveOnDuty = async (req, res, next) => {
             return res.status(403).send({ message: "User not found!" });
         }
 
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
-        }
-
         // Get role from database
         const role = await Role.findByPk(user.role);
         if (role && (role.can_manage_active_onduty === 'all' || role.can_manage_active_onduty === 'subordinates')) {
@@ -374,12 +352,6 @@ const canManageSchedule = async (req, res, next) => {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(403).send({ message: "User not found!" });
-        }
-
-        // Legacy admin flag check
-        if (user.admin === 1) {
-            next();
-            return;
         }
 
         // Get role from database
@@ -410,6 +382,7 @@ const authJwt = {
     canManageRoles: canManageRoles,
     canManageEmailSettings: canManageEmailSettings,
     canManageUsers: canManageUsers,
+    canViewUsers: canViewUsers,
     canViewReports: canViewReports,
     canManageActiveOnDuty: canManageActiveOnDuty,
     canManageSchedule: canManageSchedule
