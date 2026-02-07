@@ -55,6 +55,7 @@ exports.create = async (req, res) => {
             can_view_reports,
             can_manage_active_onduty,
             can_manage_schedule,
+            can_view_activities,
             can_access_webapp,
             can_manage_roles,
             can_manage_email_settings,

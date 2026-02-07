@@ -60,7 +60,7 @@ module.exports = function (app) {
      * /api/leavetypes/admin/all:
      *   get:
      *     summary: Get all leave types (Admin)
-     *     description: Retrieve all leave types including inactive ones
+     *     description: Retrieve all leave types including inactive ones. Available to users with user management or leave type management permissions.
      *     tags: [Leave Types]
      *     security:
      *       - ApiKeyAuth: []
@@ -70,7 +70,7 @@ module.exports = function (app) {
      */
     app.get(
         "/api/leavetypes/admin/all",
-        [authJwt.verifyToken, authJwt.canManageLeaveTypes],
+        [authJwt.verifyToken, authJwt.canManageUsers],
         controller.findAllAdmin
     );
 
