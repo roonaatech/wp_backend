@@ -14,14 +14,15 @@ exports.applyTimeOff = async (req, res) => {
             return res.status(400).send({ message: "Date, start time, end time, and reason are required!" });
         }
 
-        // Validate time format (HH:MM)
+        // Validate time format (HH:MM or HH:MM:SS)
         const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
-        if (!timeRegex.test(start_time) || !timeRegex.test(end_time)) {
-            // Try to handle seconds if passed (HH:MM:SS)
-            const timeRegexWithSeconds = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
-            if (!timeRegexWithSeconds.test(start_time) && !timeRegex.test(start_time)) {
-                return res.status(400).send({ message: "Invalid time format. Use HH:MM or HH:MM:SS." });
-            }
+        const timeRegexWithSeconds = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
+
+        const isStartValid = timeRegex.test(start_time) || timeRegexWithSeconds.test(start_time);
+        const isEndValid = timeRegex.test(end_time) || timeRegexWithSeconds.test(end_time);
+
+        if (!isStartValid || !isEndValid) {
+            return res.status(400).send({ message: "Invalid time format. Use HH:MM or HH:MM:SS." });
         }
 
         // Check for overlapping Time-Off requests
@@ -96,7 +97,8 @@ exports.applyTimeOff = async (req, res) => {
 
         res.status(201).send({ message: "Time-Off applied successfully!", timeOff });
     } catch (err) {
-        res.status(500).send({ message: err.message });
+        console.error('[TimeOff Controller] Error applying for time-off:', err.message);
+        res.status(500).send({ message: "An error occurred while applying for time-off." });
     }
 };
 
