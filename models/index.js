@@ -76,4 +76,10 @@ db.user_leave_types.belongsTo(db.user, { foreignKey: 'user_id' });
 db.leave_types.hasMany(db.user_leave_types, { foreignKey: 'leave_type_id' });
 db.user_leave_types.belongsTo(db.leave_types, { foreignKey: 'leave_type_id', as: 'leave_type' });
 
+// Time Off Requests
+db.time_off_requests = require("./time_off_request.model.js")(sequelize, Sequelize);
+db.user.hasMany(db.time_off_requests, { foreignKey: 'staff_id' });
+db.time_off_requests.belongsTo(db.user, { foreignKey: 'staff_id', as: 'user' });
+db.time_off_requests.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' });
+
 module.exports = db;

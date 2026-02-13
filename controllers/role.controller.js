@@ -12,9 +12,9 @@ exports.findAll = async (req, res) => {
         res.json(roles);
     } catch (error) {
         console.error('Error fetching roles:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             message: "Error fetching roles",
-            error: error.message 
+            error: error.message
         });
     }
 };
@@ -24,17 +24,17 @@ exports.findOne = async (req, res) => {
     try {
         const id = req.params.id;
         const role = await Role.findByPk(id);
-        
+
         if (!role) {
             return res.status(404).json({ message: "Role not found" });
         }
-        
+
         res.json(role);
     } catch (error) {
         console.error('Error fetching role:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             message: "Error fetching role",
-            error: error.message 
+            error: error.message
         });
     }
 };
@@ -49,6 +49,7 @@ exports.create = async (req, res) => {
             hierarchy_level,
             can_approve_leave,
             can_approve_onduty,
+            can_approve_timeoff,
             can_manage_users,
             can_view_users,
             can_manage_leave_types,
@@ -64,16 +65,16 @@ exports.create = async (req, res) => {
 
         // Validate required fields
         if (!name || !display_name) {
-            return res.status(400).json({ 
-                message: "Name and display name are required" 
+            return res.status(400).json({
+                message: "Name and display name are required"
             });
         }
 
         // Check if role name already exists
         const existingRole = await Role.findOne({ where: { name } });
         if (existingRole) {
-            return res.status(400).json({ 
-                message: "Role name already exists" 
+            return res.status(400).json({
+                message: "Role name already exists"
             });
         }
 
@@ -85,6 +86,7 @@ exports.create = async (req, res) => {
             // Hierarchical permissions - 'none', 'subordinates', 'all'
             can_approve_leave: can_approve_leave || 'none',
             can_approve_onduty: can_approve_onduty || 'none',
+            can_approve_timeoff: can_approve_timeoff || 'none',
             can_manage_users: can_manage_users || 'none',
             can_view_users: can_view_users || 'none',
             can_view_reports: can_view_reports || 'none',
@@ -99,15 +101,15 @@ exports.create = async (req, res) => {
             active: active !== undefined ? active : true
         });
 
-        res.status(201).json({ 
+        res.status(201).json({
             message: "Role created successfully",
-            role 
+            role
         });
     } catch (error) {
         console.error('Error creating role:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             message: "Error creating role",
-            error: error.message 
+            error: error.message
         });
     }
 };
@@ -123,6 +125,7 @@ exports.update = async (req, res) => {
             hierarchy_level,
             can_approve_leave,
             can_approve_onduty,
+            can_approve_timeoff,
             can_manage_users,
             can_view_users,
             can_manage_leave_types,
@@ -137,22 +140,22 @@ exports.update = async (req, res) => {
         } = req.body;
 
         const role = await Role.findByPk(id);
-        
+
         if (!role) {
             return res.status(404).json({ message: "Role not found" });
         }
 
         // Check if new name conflicts with existing role
         if (name && name !== role.name) {
-            const existingRole = await Role.findOne({ 
-                where: { 
+            const existingRole = await Role.findOne({
+                where: {
                     name,
                     id: { [Op.ne]: id }
-                } 
+                }
             });
             if (existingRole) {
-                return res.status(400).json({ 
-                    message: "Role name already exists" 
+                return res.status(400).json({
+                    message: "Role name already exists"
                 });
             }
         }
@@ -164,6 +167,7 @@ exports.update = async (req, res) => {
             hierarchy_level: hierarchy_level !== undefined ? hierarchy_level : role.hierarchy_level,
             can_approve_leave: can_approve_leave !== undefined ? can_approve_leave : role.can_approve_leave,
             can_approve_onduty: can_approve_onduty !== undefined ? can_approve_onduty : role.can_approve_onduty,
+            can_approve_timeoff: can_approve_timeoff !== undefined ? can_approve_timeoff : role.can_approve_timeoff,
             can_manage_users: can_manage_users !== undefined ? can_manage_users : role.can_manage_users,
             can_view_users: can_view_users !== undefined ? can_view_users : role.can_view_users,
             can_manage_leave_types: can_manage_leave_types !== undefined ? can_manage_leave_types : role.can_manage_leave_types,
@@ -177,15 +181,15 @@ exports.update = async (req, res) => {
             active: active !== undefined ? active : role.active
         });
 
-        res.json({ 
+        res.json({
             message: "Role updated successfully",
-            role 
+            role
         });
     } catch (error) {
         console.error('Error updating role:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             message: "Error updating role",
-            error: error.message 
+            error: error.message
         });
     }
 };
@@ -194,7 +198,7 @@ exports.update = async (req, res) => {
 exports.delete = async (req, res) => {
     try {
         const id = req.params.id;
-        
+
         // Check if role exists
         const role = await Role.findByPk(id);
         if (!role) {
@@ -204,22 +208,22 @@ exports.delete = async (req, res) => {
         // Check if any users are assigned to this role
         const usersWithRole = await User.count({ where: { role: id } });
         if (usersWithRole > 0) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 message: `Cannot delete role. ${usersWithRole} user(s) are assigned to this role.`,
                 users_count: usersWithRole
             });
         }
 
         await role.destroy();
-        
-        res.json({ 
-            message: "Role deleted successfully" 
+
+        res.json({
+            message: "Role deleted successfully"
         });
     } catch (error) {
         console.error('Error deleting role:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             message: "Error deleting role",
-            error: error.message 
+            error: error.message
         });
     }
 };
@@ -228,10 +232,10 @@ exports.delete = async (req, res) => {
 exports.updateHierarchy = async (req, res) => {
     try {
         const { roles } = req.body; // Array of { id, hierarchy_level }
-        
+
         if (!roles || !Array.isArray(roles)) {
-            return res.status(400).json({ 
-                message: "Invalid request. Expected array of roles with id and hierarchy_level" 
+            return res.status(400).json({
+                message: "Invalid request. Expected array of roles with id and hierarchy_level"
             });
         }
 
@@ -245,14 +249,14 @@ exports.updateHierarchy = async (req, res) => {
             })
         );
 
-        res.json({ 
-            message: "Hierarchy updated successfully" 
+        res.json({
+            message: "Hierarchy updated successfully"
         });
     } catch (error) {
         console.error('Error updating hierarchy:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             message: "Error updating hierarchy",
-            error: error.message 
+            error: error.message
         });
     }
 };
@@ -280,9 +284,9 @@ exports.getStatistics = async (req, res) => {
         res.json(roles);
     } catch (error) {
         console.error('Error fetching role statistics:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             message: "Error fetching role statistics",
-            error: error.message 
+            error: error.message
         });
     }
 };

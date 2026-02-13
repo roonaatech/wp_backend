@@ -2,6 +2,7 @@ const db = require("../models");
 const LeaveRequest = db.leave_requests;
 const LeaveType = db.leave_types;
 const OnDutyLog = db.on_duty_logs;
+const TimeOffRequest = db.time_off_requests; // Add this
 const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
@@ -280,6 +281,69 @@ exports.getMyLeaves = async (req, res) => {
             }
         }
 
+        // Fetch Time Off Requests
+        // Note: TimeOffRequest is already defined at top of file
+        const timeOffRequests = await TimeOffRequest.findAll({
+            where: { staff_id: req.userId },
+            attributes: ['id', 'date', 'start_time', 'end_time', 'reason', 'status', 'rejection_reason', 'manager_id', 'createdAt'],
+            raw: true
+        });
+
+        const normalizedTimeOff = timeOffRequests.map(t => {
+            const formatDuration = (start, end) => {
+                if (!start || !end) return '';
+                const [startH, startM] = start.split(':').map(Number);
+                const [endH, endM] = end.split(':').map(Number);
+                const startMinutes = startH * 60 + startM;
+                const endMinutes = endH * 60 + endM;
+                let diff = endMinutes - startMinutes;
+
+                if (diff < 0) diff += 24 * 60; // Handle overnight if needed, though unlikely for single day time-off
+
+                const hours = Math.floor(diff / 60);
+                const minutes = diff % 60;
+
+                if (hours > 0 && minutes > 0) return `${hours}hrs ${minutes}mins`;
+                if (hours > 0) return `${hours}hrs`;
+                return `${minutes}mins`;
+            };
+
+            return ensureNumeric({
+                type: 'time_off',
+                id: t.id,
+                title: `Time-Off`,
+                subtitle: `${formatDuration(t.start_time, t.end_time)} : ${t.reason}`,
+                status: t.status,
+                start: t.date, // Use date for sorting/display
+                end: t.date,
+                rejection_reason: t.rejection_reason,
+                manager_id: t.manager_id,
+                date: t.date, // Use event date instead of createdAt
+                createdAt: t.createdAt,
+                start_time: t.start_time,
+                end_time: t.end_time,
+                reason: t.reason,
+                details: { // Extra details specific to time-off
+                    date: t.date,
+                    start_time: t.start_time,
+                    end_time: t.end_time
+                }
+            }, ['id', 'manager_id']);
+        });
+
+        // Add time-off to combined list
+        combined.push(...normalizedTimeOff);
+
+        // Fetch approver details for time-off requests
+        for (let item of normalizedTimeOff) {
+            if (item.manager_id) {
+                const approver = await Staff.findByPk(item.manager_id, {
+                    attributes: ['staffid', 'firstname', 'lastname', 'email']
+                });
+                item.approver = approver;
+            }
+        }
+
         // Sort by date descending
         combined.sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -299,14 +363,14 @@ exports.getPendingLeaves = async (req, res) => {
         // Get current user's role to determine filtering
         const currentUser = await Staff.findByPk(req.userId);
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        
+
         // Check if user has any leave approval permission
         if (!userRole || userRole.can_approve_leave === 'none') {
-            return res.status(403).send({ 
-                message: "You don't have permission to view leave requests." 
+            return res.status(403).send({
+                message: "You don't have permission to view leave requests."
             });
         }
-        
+
         const canApproveAllLeave = userRole.can_approve_leave === 'all';
 
         // If user can only approve subordinates, get their reportees
@@ -395,6 +459,42 @@ exports.getPendingLeaves = async (req, res) => {
         }));
 
         const combined = [...normalizedLeaves, ...normalizedOnDuty];
+
+        // Build where clause for Time-Off
+        let timeOffWhere = { status: 'Pending' };
+        if (!canApproveAllLeave) { // Assuming leave approval permission covers time-off for now
+            timeOffWhere.staff_id = { [Op.in]: reporteeIds };
+        }
+
+
+        const timeOffRequests = await TimeOffRequest.findAll({
+            where: timeOffWhere,
+            include: [{
+                model: Staff,
+                as: 'user',
+                attributes: ['firstname', 'lastname', 'email']
+            }],
+            order: [['createdAt', 'ASC']]
+        });
+
+        const normalizedTimeOff = timeOffRequests.map(t => ({
+            type: 'time_off',
+            id: t.id,
+            staff_id: t.staff_id,
+            tblstaff: t.user,
+            title: `Time-Off (${t.start_time} - ${t.end_time})`,
+            reason: t.reason,
+            start_date: t.date,
+            end_date: t.date,
+            createdAt: t.createdAt,
+            // Specific fields
+            date: t.date,
+            start_time: t.start_time,
+            end_time: t.end_time
+        }));
+
+        combined.push(...normalizedTimeOff);
+
         combined.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
         res.status(200).send({ items: combined });
@@ -481,7 +581,7 @@ exports.getManageableRequests = async (req, res) => {
         if (status === 'Pending') {
             onDutyWhere.end_time = { [Op.ne]: null };
         }
-        
+
         // Check if user has permission to view on-duty requests
         const hasOnDutyPermission = userRole && userRole.can_approve_onduty !== 'none';
         if (!hasOnDutyPermission) {
@@ -558,8 +658,56 @@ exports.getManageableRequests = async (req, res) => {
             };
         });
 
+        const combined = [...normalizedLeaves, ...normalizedOnDuty];
+
+        // Build where clause for Time-Off
+        const timeOffWhere = { status: status };
+        // Apply same filters as leaves (assuming same permission logic)
+        if (!canApproveAllLeave) {
+            if (reporteeIds.length > 0) {
+                timeOffWhere.staff_id = { [Op.in]: reporteeIds };
+            } else {
+                timeOffWhere.staff_id = { [Op.in]: [] }; // Force empty
+            }
+        }
+
+
+        const timeOffRequests = await TimeOffRequest.findAll({
+            where: timeOffWhere,
+            include: [{
+                model: Staff,
+                as: 'user',
+                attributes: ['firstname', 'lastname', 'email']
+            }],
+            order: [['createdAt', 'DESC']],
+            limit: limit,
+            offset: (page - 1) * limit
+        });
+
+        const totalTimeOffCount = await TimeOffRequest.count({ where: timeOffWhere });
+
+        const normalizedTimeOff = timeOffRequests.map(t => ({
+            type: 'time_off',
+            id: t.id,
+            staff_id: t.staff_id,
+            tblstaff: t.user,
+            title: `Time-Off`,
+            reason: `${t.start_time} - ${t.end_time}: ${t.reason}`,
+            start_date: t.date,
+            end_date: t.date,
+            status: t.status,
+            rejection_reason: t.rejection_reason,
+            manager_id: t.manager_id,
+            createdAt: t.createdAt,
+            updatedAt: t.updatedAt,
+            // Specifics
+            date: t.date,
+            start_time: t.start_time,
+            end_time: t.end_time
+        }));
+
         // Combine paginated results
-        const paginatedItems = [...normalizedLeaves, ...normalizedOnDuty];
+        const paginatedItems = [...normalizedLeaves, ...normalizedOnDuty, ...normalizedTimeOff];
 
         // Fetch approver details for approved/rejected items
         for (let item of paginatedItems) {
@@ -571,18 +719,19 @@ exports.getManageableRequests = async (req, res) => {
             }
         }
 
-        // Calculate pagination based on leaves (or on-duty, both have same limit)
-        const totalPages = Math.ceil(Math.max(totalLeaveCount, totalOnDutyCount) / limit);
+        // Calculate pagination based on max count of any stream
+        const totalPages = Math.ceil(Math.max(totalLeaveCount, totalOnDutyCount, totalTimeOffCount) / limit);
 
         res.status(200).send({
             items: paginatedItems,
             pagination: {
                 currentPage: page,
                 pageSize: limit,
-                totalCount: totalLeaveCount + totalOnDutyCount,
+                totalCount: totalLeaveCount + totalOnDutyCount + totalTimeOffCount,
                 totalPages: totalPages,
                 leaveCount: totalLeaveCount,
                 onDutyCount: totalOnDutyCount,
+                timeOffCount: totalTimeOffCount,
                 hasNextPage: page < totalPages,
                 hasPrevPage: page > 1
             }

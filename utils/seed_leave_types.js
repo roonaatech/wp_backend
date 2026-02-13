@@ -60,8 +60,7 @@ async function seedLeaveTypes() {
         });
 
         if (!created) {
-            await type.update(t);
-            console.log(`Updated leave type: ${t.name}`);
+            console.log(`Leave type already exists: ${t.name}`);
         } else {
             console.log(`Created leave type: ${t.name}`);
         }

@@ -37,6 +37,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: 'none',
             comment: 'none=no access, subordinates=only subordinates, all=everyone'
         },
+        can_approve_timeoff: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'none=no access, subordinates=only subordinates, all=everyone'
+        },
         can_manage_users: {
             type: Sequelize.ENUM('none', 'subordinates', 'all'),
             allowNull: false,
