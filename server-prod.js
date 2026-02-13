@@ -71,6 +71,7 @@ require('./routes/activity.routes')(app);
 require('./routes/apk.routes')(app);
 require('./routes/debug.routes')(app);
 require('./routes/email.routes')(app);
+require('./routes/timeoff.routes')(app);
 
 // Sync database and start HTTPS server
 db.sequelize.sync()
