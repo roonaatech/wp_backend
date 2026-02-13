@@ -20,6 +20,7 @@ async function seedRoles() {
       can_manage_active_onduty: "all",
       can_manage_schedule: "all",
       can_view_activities: "all",
+      can_approve_timeoff: "all",
       active: true
     },
     {
@@ -39,6 +40,7 @@ async function seedRoles() {
       can_manage_active_onduty: "subordinates",
       can_manage_schedule: "all",
       can_view_activities: "none",
+      can_approve_timeoff: "all",
       active: true
     },
     {
@@ -58,6 +60,7 @@ async function seedRoles() {
       can_manage_active_onduty: "all",
       can_manage_schedule: "all",
       can_view_activities: "all",
+      can_approve_timeoff: "all",
       active: true
     },
     {
@@ -77,6 +80,7 @@ async function seedRoles() {
       can_manage_active_onduty: "subordinates",
       can_manage_schedule: "subordinates",
       can_view_activities: "all",
+      can_approve_timeoff: "subordinates",
       active: true
     },
     {
@@ -96,6 +100,7 @@ async function seedRoles() {
       can_manage_active_onduty: "none",
       can_manage_schedule: "none",
       can_view_activities: "none",
+      can_approve_timeoff: "none",
       active: true
     }
   ];
@@ -107,8 +112,14 @@ async function seedRoles() {
     });
 
     if (!created) {
-      await role.update(r);
-      console.log(`Updated role: ${r.name}`);
+      // ONLY update Super Admin by default to ensure it always has full power
+      // For other roles, we don't want to reset user-customized permissions in the UI
+      if (r.id === 1) {
+        await role.update(r);
+        console.log(`Updated core role: ${r.name}`);
+      } else {
+        console.log(`Role already exists, skipping update: ${r.name}`);
+      }
     } else {
       console.log(`Created role: ${r.name}`);
     }
