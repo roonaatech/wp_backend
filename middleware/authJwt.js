@@ -43,6 +43,7 @@ isManagerOrAdmin = async (req, res, next) => {
         if (role && (
             (role.can_approve_leave && role.can_approve_leave !== 'none') ||
             (role.can_approve_onduty && role.can_approve_onduty !== 'none') ||
+            (role.can_approve_timeoff && role.can_approve_timeoff !== 'none') ||
             (role.can_manage_users && role.can_manage_users !== 'none')
         )) {
             next();
@@ -109,6 +110,7 @@ canAccessWebApp = async (req, res, next) => {
             role.can_access_webapp ||
             (role.can_approve_leave && role.can_approve_leave !== 'none') ||
             (role.can_approve_onduty && role.can_approve_onduty !== 'none') ||
+            (role.can_approve_timeoff && role.can_approve_timeoff !== 'none') ||
             (role.can_manage_users && role.can_manage_users !== 'none') ||
             role.can_manage_leave_types ||
             (role.can_view_reports && role.can_view_reports !== 'none')
@@ -347,6 +349,31 @@ const canManageActiveOnDuty = async (req, res, next) => {
     }
 };
 
+const canApproveTimeOff = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        if (role && (role.can_approve_timeoff === 'all' || role.can_approve_timeoff === 'subordinates')) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to approve time-off requests!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const canManageSchedule = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
@@ -385,6 +412,7 @@ const authJwt = {
     canViewUsers: canViewUsers,
     canViewReports: canViewReports,
     canManageActiveOnDuty: canManageActiveOnDuty,
-    canManageSchedule: canManageSchedule
+    canManageSchedule: canManageSchedule,
+    canApproveTimeOff: canApproveTimeOff
 };
 module.exports = authJwt;

@@ -2,6 +2,7 @@ const db = require("../models");
 const bcrypt = require("bcryptjs");
 const TblStaff = db.user;
 const OnDutyLog = db.on_duty_logs;
+const TimeOffRequest = db.time_off_requests;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const Op = db.Sequelize.Op;
@@ -49,7 +50,7 @@ exports.createUser = async (req, res) => {
         const Role = db.roles;
         const currentUser = await TblStaff.findByPk(req.userId);
         const currentUserRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        
+
         // Get the role being assigned to check hierarchy
         const newRole = await Role.findByPk(roleInt);
         if (!newRole) {
@@ -57,20 +58,20 @@ exports.createUser = async (req, res) => {
                 message: "Invalid role specified."
             });
         }
-        
+
         // Hierarchy check: users can only create users with LOWER authority (higher hierarchy_level)
         // Exception: Super Admin (level 0) can create any role
         if (currentUserRole) {
             const currentLevel = currentUserRole.hierarchy_level;
             const newRoleLevel = newRole.hierarchy_level;
-            
+
             if (currentLevel > 0 && newRoleLevel <= currentLevel) {
                 return res.status(403).send({
                     message: `You don't have permission to create users with ${newRole.display_name} role.`
                 });
             }
         }
-        
+
         // Validate approving manager requirement based on role hierarchy
         // Roles that need an approver (not super_admin level) should have approving_manager_id
         if (newRole.hierarchy_level > 0 && !approving_manager_id) {
@@ -85,7 +86,7 @@ exports.createUser = async (req, res) => {
                     active: true
                 }
             });
-            
+
             if (potentialApprovers.length > 0) {
                 return res.status(400).send({
                     message: `${newRole.display_name} role requires an approving manager.`
@@ -192,7 +193,7 @@ exports.updateUser = async (req, res) => {
         const currentUser = await TblStaff.findByPk(req.userId);
         const Role = db.roles;
         const currentUserRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        
+
         // Get target user and their role
         const targetUser = await TblStaff.findByPk(id);
         if (!targetUser) {
@@ -200,9 +201,9 @@ exports.updateUser = async (req, res) => {
                 message: "User not found."
             });
         }
-        
+
         const targetUserRole = targetUser.role ? await Role.findByPk(targetUser.role) : null;
-        
+
         // Check hierarchy: users can only edit users with HIGHER hierarchy level (lower authority)
         // Exception: Super Admin (level 0) can edit anyone
         // Exception: If current user is the approving manager of target user (same role reporting)
@@ -210,7 +211,7 @@ exports.updateUser = async (req, res) => {
             const currentLevel = currentUserRole.hierarchy_level;
             const targetLevel = targetUserRole.hierarchy_level;
             const isApprovingManager = targetUser.approving_manager_id === req.userId;
-            
+
             // If current user is not super_admin (level 0), check hierarchy
             // Allow if same level AND current user is the approving manager
             if (currentLevel > 0 && targetLevel <= currentLevel) {
@@ -231,11 +232,11 @@ exports.updateUser = async (req, res) => {
                 message: "Invalid role specified."
             });
         }
-        
+
         if (currentUserRole) {
             const currentLevel = currentUserRole.hierarchy_level;
             const newRoleLevel = newRole.hierarchy_level;
-            
+
             if (currentLevel > 0 && newRoleLevel <= currentLevel) {
                 return res.status(403).send({
                     message: `You don't have permission to assign ${newRole.display_name} role.`
@@ -271,7 +272,7 @@ exports.updateUser = async (req, res) => {
 
         // Update user
         const updatedUser = await targetUser.update(updateData);
-        
+
         // Log activity
         await logActivity({
             admin_id: req.userId,
@@ -353,7 +354,7 @@ exports.resetUserPassword = async (req, res) => {
             const currentLevel = userRole.hierarchy_level;
             const targetLevel = targetUserRole.hierarchy_level;
             const isApprovingManager = user.approving_manager_id === req.userId;
-            
+
             // If current user is not super_admin (level 0), check hierarchy
             // Allow if same level AND current user is the approving manager
             if (currentLevel > 0 && targetLevel <= currentLevel) {
@@ -402,12 +403,13 @@ exports.getAllUsers = async (req, res) => {
         const currentUser = await TblStaff.findByPk(req.userId);
         const Role = db.roles;
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        
+
         // Check both manage and view permissions for "all" access
         const canManageAllUsers = userRole && userRole.can_manage_users === 'all';
         const canViewAllUsers = userRole && userRole.can_view_users === 'all';
-        const hasAllUsersAccess = canManageAllUsers || canViewAllUsers;
-        
+        const canViewAllReports = userRole && userRole.can_view_reports === 'all';
+        const hasAllUsersAccess = canManageAllUsers || canViewAllUsers || canViewAllReports;
+
         // Check subordinates-level access
         const canManageSubordinates = userRole && userRole.can_manage_users === 'subordinates';
         const canViewSubordinates = userRole && userRole.can_view_users === 'subordinates';
@@ -748,6 +750,7 @@ exports.getAttendanceReports = async (req, res) => {
         const { Op } = require("sequelize");
         const LeaveRequest = db.leave_requests;
         const OnDutyLog = db.on_duty_logs;
+        const TimeOffRequest = db.time_off_requests;
         const Staff = db.user;
         const Role = db.roles;
 
@@ -799,6 +802,7 @@ exports.getAttendanceReports = async (req, res) => {
         // Build Date Query
         let dateWhereLeave = {};
         let dateWhereOnDuty = {};
+        let dateWhereTimeOff = {};
 
         if (dateFilter && dateFilter !== 'all') {
             const today = new Date();
@@ -809,6 +813,7 @@ exports.getAttendanceReports = async (req, res) => {
 
             dateWhereLeave.start_date = { [Op.gte]: startDate };
             dateWhereOnDuty.start_time = { [Op.gte]: startDate };
+            dateWhereTimeOff.date = { [Op.gte]: startDate };
         }
 
         // User Query
@@ -822,30 +827,36 @@ exports.getAttendanceReports = async (req, res) => {
         // Status Query (Complex mapping due to different statuses)
         let statusWhereLeave = {};
         let statusWhereOnDuty = {};
+        let statusWhereTimeOff = {};
 
         if (status && status !== 'all') {
             if (status === 'approved') {
                 statusWhereLeave.status = 'Approved';
                 statusWhereOnDuty.status = 'Approved';
+                statusWhereTimeOff.status = 'Approved';
             } else if (status === 'pending') {
                 // Pending = items pending approval that are completed/ready for review
                 statusWhereLeave.status = 'Pending';
                 // For on-duty, pending means completed session awaiting approval
                 statusWhereOnDuty.status = 'Pending';
                 statusWhereOnDuty.end_time = { [Op.ne]: null };
+                statusWhereTimeOff.status = 'Pending';
             } else if (status === 'rejected') {
                 statusWhereLeave.status = 'Rejected';
                 statusWhereOnDuty.status = 'Rejected';
+                statusWhereTimeOff.status = 'Rejected';
             } else if (status === 'active') {
                 // Active = on-duty with no end_time (still in progress)
                 statusWhereOnDuty.end_time = null;
-                // Leaves don't have "active" state - exclude leaves for this filter
+                // Leaves and time-off don't have "active" state - exclude them for this filter
                 statusWhereLeave.id = null;
+                statusWhereTimeOff.id = null;
             } else if (status === 'completed') {
                 // Completed = on-duty with end_time (session finished, any approval status)
                 statusWhereOnDuty.end_time = { [Op.ne]: null };
                 // For leaves, "completed" means approved
                 statusWhereLeave.status = 'Approved';
+                statusWhereTimeOff.status = 'Approved';
             }
         }
 
@@ -855,7 +866,7 @@ exports.getAttendanceReports = async (req, res) => {
         let allItems = [];
 
         // Fetch Leaves
-        if (type === 'both' || type === 'leave') {
+        if (type === 'both' || type === 'all' || type === 'leave') {
             const leaves = await LeaveRequest.findAll({
                 attributes: ['id', 'start_date', 'createdAt'],
                 where: { ...userWhere, ...dateWhereLeave, ...statusWhereLeave },
@@ -869,7 +880,7 @@ exports.getAttendanceReports = async (req, res) => {
         }
 
         // Fetch OnDuty
-        if (type === 'both' || type === 'onduty') {
+        if (type === 'both' || type === 'all' || type === 'onduty') {
             const onDuties = await OnDutyLog.findAll({
                 attributes: ['id', 'start_time', 'createdAt'],
                 where: { ...userWhere, ...dateWhereOnDuty, ...statusWhereOnDuty },
@@ -879,6 +890,20 @@ exports.getAttendanceReports = async (req, res) => {
                 id: o.id,
                 date: new Date(o.start_time || o.createdAt),
                 type: 'onduty'
+            })));
+        }
+
+        // Fetch Time-Off
+        if (type === 'both' || type === 'all' || type === 'timeoff') {
+            const timeOffs = await TimeOffRequest.findAll({
+                attributes: ['id', 'date', 'createdAt'],
+                where: { ...userWhere, ...dateWhereTimeOff, ...statusWhereTimeOff },
+                raw: true
+            });
+            allItems = allItems.concat(timeOffs.map(t => ({
+                id: t.id,
+                date: new Date(t.date || t.createdAt),
+                type: 'timeoff'
             })));
         }
 
@@ -905,6 +930,7 @@ exports.getAttendanceReports = async (req, res) => {
         // --- 6. Fetch Full Details for Sliced Items ---
         const leaveIds = pagedItems.filter(i => i.type === 'leave').map(i => i.id);
         const onDutyIds = pagedItems.filter(i => i.type === 'onduty').map(i => i.id);
+        const timeOffIds = pagedItems.filter(i => i.type === 'timeoff').map(i => i.id);
 
         let finalReports = [];
 
@@ -961,6 +987,31 @@ exports.getAttendanceReports = async (req, res) => {
             })));
         }
 
+        if (timeOffIds.length > 0) {
+            const fullTimeOffs = await TimeOffRequest.findAll({
+                where: { id: { [Op.in]: timeOffIds } },
+                include: [
+                    { model: db.user, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] },
+                    { model: db.user, as: 'approver', attributes: ['staffid', 'firstname', 'lastname', 'email'], required: false }
+                ]
+            });
+
+            finalReports = finalReports.concat(fullTimeOffs.map(timeOff => ({
+                id: timeOff.id,
+                staff_id: timeOff.staff_id,
+                type: 'timeoff',
+                date: timeOff.date,
+                start_time: timeOff.start_time,
+                end_time: timeOff.end_time,
+                reason: timeOff.reason,
+                status: timeOff.status,
+                rejection_reason: timeOff.rejection_reason,
+                on_duty: false,
+                tblstaff: timeOff.user,
+                approver: timeOff.approver || null
+            })));
+        }
+
         // --- 7. Final Sort (to match the sliced order) ---
         finalReports.sort((a, b) => {
             const dateA = new Date(a.date || a.check_in_time || a.start_date);
@@ -987,6 +1038,7 @@ exports.getDashboardStats = async (req, res) => {
     const { Op } = require("sequelize");
     const OnDutyLog = db.on_duty_logs;
     const LeaveRequest = db.leave_requests;
+    const TimeOffRequest = db.time_off_requests;
     const Role = db.roles;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1128,10 +1180,31 @@ exports.getDashboardStats = async (req, res) => {
                     end_time: null,
                     ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
+            }),
+            // Pending time-off
+            TimeOffRequest.count({
+                where: {
+                    status: 'Pending',
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                }
+            }),
+            // Approved time-off
+            TimeOffRequest.count({
+                where: {
+                    status: 'Approved',
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                }
+            }),
+            // Rejected time-off
+            TimeOffRequest.count({
+                where: {
+                    status: 'Rejected',
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                }
             })
         ]);
 
-        const [totalUsers, newUsersToday, newUsersYesterday, presentToday, presentYesterday, onDuty, pendingLeaves, approvedLeaves, rejectedLeaves, pendingOnDuty, approvedOnDuty, rejectedOnDuty, activeOnDuty] = results;
+        const [totalUsers, newUsersToday, newUsersYesterday, presentToday, presentYesterday, onDuty, pendingLeaves, approvedLeaves, rejectedLeaves, pendingOnDuty, approvedOnDuty, rejectedOnDuty, activeOnDuty, pendingTimeOff, approvedTimeOff, rejectedTimeOff] = results;
 
         // Calculate new users trend
         let usersTrend = 0;
@@ -1156,7 +1229,10 @@ exports.getDashboardStats = async (req, res) => {
             pendingOnDuty,
             approvedOnDuty,
             rejectedOnDuty,
-            activeOnDuty
+            activeOnDuty,
+            pendingTimeOff,
+            approvedTimeOff,
+            rejectedTimeOff
         });
 
         res.send({
@@ -1171,7 +1247,10 @@ exports.getDashboardStats = async (req, res) => {
             pendingOnDuty,
             approvedOnDuty,
             rejectedOnDuty,
-            activeOnDuty
+            activeOnDuty,
+            pendingTimeOff,
+            approvedTimeOff,
+            rejectedTimeOff
         });
     } catch (err) {
         res.status(500).send({
@@ -1264,11 +1343,24 @@ exports.getDailyTrendData = async (req, res) => {
                 }
             });
 
+            // Count approved time-off on this day
+            const approvedTimeOffCount = await TimeOffRequest.count({
+                where: {
+                    status: 'Approved',
+                    updatedAt: {
+                        [Op.gte]: startOfDay,
+                        [Op.lt]: endOfDay
+                    },
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                }
+            });
+
             trendData.push({
                 day: dateStr,
                 leaves: approvedLeavesCount,
                 onDuty: approvedOnDutyCount,
-                total: approvedLeavesCount + approvedOnDutyCount
+                timeOff: approvedTimeOffCount,
+                total: approvedLeavesCount + approvedOnDutyCount + approvedTimeOffCount
             });
 
             // Move to next day
@@ -1292,19 +1384,29 @@ exports.getCalendarEvents = async (req, res) => {
     const Staff = db.user;
 
     try {
+        console.log('--- getCalendarEvents Called ---');
         const year = parseInt(req.query.year) || new Date().getFullYear();
         const month = parseInt(req.query.month) || new Date().getMonth() + 1;
         const userId = req.userId; // From JWT token middleware
+        console.log(`User ID: ${userId}, Year: ${year}, Month: ${month}`);
 
         // Get the first and last day of the month
         const firstDay = new Date(year, month - 1, 1);
         const lastDay = new Date(year, month, 0);
+
+        // Format dates for DATEONLY comparison (YYYY-MM-DD) to avoid timezone issues
+        const firstDayStr = `${year}-${String(month).padStart(2, '0')}-01`;
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const lastDayStr = `${year}-${String(month).padStart(2, '0')}-${daysInMonth}`;
+
+        console.log(`Fetching calendar events for range: ${firstDayStr} to ${lastDayStr}`);
 
         // Get current user's role
         const Role = db.roles;
         const currentUser = await Staff.findByPk(userId);
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
         const canViewAllSchedules = userRole && userRole.can_manage_schedule === 'all';
+        console.log(`Can view all schedules: ${canViewAllSchedules}`);
 
         // Determine which staff to fetch events for
         let reporteeIds = [];
@@ -1318,12 +1420,15 @@ exports.getCalendarEvents = async (req, res) => {
                 raw: true
             });
             reporteeIds = reportees.map(r => r.staffid);
+            console.log(`User has ${reporteeIds.length} reportees`);
 
             if (reporteeIds.length === 0) {
                 // User has no reportees, return empty array
+                console.log('No reportees found, returning empty events');
                 return res.send([]);
             }
         } else {
+            console.log('User is Admin/Manager with full access');
         }
 
         // Build the base where condition for leave requests
@@ -1373,6 +1478,7 @@ exports.getCalendarEvents = async (req, res) => {
             }],
             raw: false
         });
+        console.log(`Found ${leaveRequests.length} leave requests`);
 
         // Build the base where condition for on-duty logs
         // Include all statuses to show complete history
@@ -1399,6 +1505,37 @@ exports.getCalendarEvents = async (req, res) => {
             }],
             raw: false
         });
+        console.log(`Found ${onDutyLogs.length} on-duty logs`);
+
+        // Build the base where condition for time-off requests
+        const timeOffWhere = {
+            status: { [Op.in]: ['Approved', 'Rejected', 'Pending'] },
+            date: {
+                [Op.between]: [firstDayStr, lastDayStr]
+            }
+        };
+
+        // If user can only view subordinates, filter by reportee IDs
+        if (!canViewAllSchedules) {
+            timeOffWhere.staff_id = { [Op.in]: reporteeIds };
+        }
+
+        console.log('Fetching time-off requests with where:', JSON.stringify(timeOffWhere));
+
+        // Fetch approved and pending time-off requests for the month
+        const timeOffRequests = await db.time_off_requests.findAll({
+            where: timeOffWhere,
+            include: [{
+                model: Staff,
+                as: 'user',
+                attributes: ['staffid', 'firstname', 'lastname'],
+                required: true
+            }],
+            raw: false
+        });
+
+        console.log(`Found ${timeOffRequests.length} time-off requests`);
+
 
         // Transform leave requests into calendar events
 
@@ -1438,10 +1575,14 @@ exports.getCalendarEvents = async (req, res) => {
             let location = onDuty.location || '';
 
             // If no purpose but reason exists, try to extract from reason format "purpose (location)"
-            if (!purpose && onDuty.reason) {
+            if (!purpose && onDuty.reason && typeof onDuty.reason === 'string') {
                 const reasonMatch = onDuty.reason.match(/^(.+?)\s*\((.+?)\)$/);
-                purpose = reasonMatch ? reasonMatch[1] : onDuty.reason;
-                location = reasonMatch ? reasonMatch[2] : location;
+                if (reasonMatch) {
+                    purpose = reasonMatch[1];
+                    location = reasonMatch[2];
+                } else {
+                    location = onDuty.reason;
+                }
             }
 
             events.push({
@@ -1458,10 +1599,35 @@ exports.getCalendarEvents = async (req, res) => {
             });
         });
 
-        console.log(`Calendar events for ${year}-${month}:`, events);
+        // Process time-off requests
+        timeOffRequests.forEach(timeOff => {
+            // Hande date conversion carefully. timeOff.date is YYYY-MM-DD string or Date object
+            let dateStr;
+            if (typeof timeOff.date === 'string') {
+                dateStr = timeOff.date;
+            } else {
+                dateStr = new Date(timeOff.date).toISOString().split('T')[0];
+            }
+
+            const staffName = `${timeOff.user.firstname} ${timeOff.user.lastname}`;
+
+            events.push({
+                date: dateStr,
+                type: 'time_off',
+                staff_name: staffName,
+                title: 'Time-Off',
+                reason: timeOff.reason,
+                start_time: timeOff.start_time,
+                end_time: timeOff.end_time,
+                status: timeOff.status,
+                rejection_reason: timeOff.rejection_reason
+            });
+        });
+
+        console.log(`Sending ${events.length} calendar events (Time-Off: ${events.filter(e => e.type === 'time_off').length})`);
         res.send(events);
     } catch (error) {
-        console.error('Error fetching calendar events:', error);
+        console.error('Error in getCalendarEvents:', error);
         res.status(500).send({
             message: error.message || "Error occurred while fetching calendar events."
         });
