@@ -4,6 +4,18 @@ const User = db.user;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+const timezoneUtil = require("../utils/timezone.util");
+const Setting = db.settings;
+
+// Helper to get application timezone
+const getAppTimezone = async () => {
+    try {
+        const tzSetting = await Setting.findOne({ where: { key: 'application_timezone' } });
+        return tzSetting ? tzSetting.value : 'Asia/Kolkata'; // Default to IST per user requirement
+    } catch (e) {
+        return 'Asia/Kolkata';
+    }
+};
 
 // Helper to format date as dd-MM-yyyy HH:mm
 const formatDate = (date) => {
@@ -19,13 +31,16 @@ const formatDate = (date) => {
 
 
 // Start on-duty visit
-exports.startOnDuty = (req, res) => {
+exports.startOnDuty = async (req, res) => {
     const { client_name, location, purpose, latitude, longitude } = req.body;
 
     // Validate required fields
     if (!client_name || !location || !purpose) {
         return res.status(400).send({ message: "Client name, location, and purpose are required" });
     }
+
+    const tz = await getAppTimezone();
+    const nowString = timezoneUtil.getNowStringInTimezone(tz);
 
     OnDutyLog.create({
         staff_id: req.userId,
@@ -34,7 +49,7 @@ exports.startOnDuty = (req, res) => {
         purpose: purpose,
         start_lat: latitude,
         start_long: longitude,
-        start_time: new Date(),
+        start_time: nowString,
         end_time: null
     })
         .then(async (onDuty) => {
@@ -72,14 +87,17 @@ exports.endOnDuty = (req, res) => {
         },
         order: [['start_time', 'DESC']]
     })
-        .then(onDuty => {
+        .then(async onDuty => {
             if (!onDuty) {
                 return res.status(404).send({ message: "No active on-duty visit found" });
             }
 
+            const tz = await getAppTimezone();
+            const nowString = timezoneUtil.getNowStringInTimezone(tz);
+
             // Update the on-duty record with end time
             return onDuty.update({
-                end_time: new Date(),
+                end_time: nowString,
                 end_lat: latitude,
                 end_long: longitude,
                 status: 'Pending'
@@ -221,14 +239,14 @@ exports.getOnDutyByStatus = async (req, res) => {
         // Get current user's role to determine filtering
         const currentUser = await User.findByPk(req.userId);
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
-        
+
         // Check if user has any on-duty approval permission
         if (!userRole || userRole.can_approve_onduty === 'none') {
-            return res.status(403).send({ 
-                message: "You don't have permission to view on-duty requests." 
+            return res.status(403).send({
+                message: "You don't have permission to view on-duty requests."
             });
         }
-        
+
         const canApproveAllOnDuty = userRole.can_approve_onduty === 'all';
 
         // If user can only approve subordinates, get their reportees

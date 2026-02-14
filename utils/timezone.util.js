@@ -97,6 +97,34 @@ const getCurrentTimeInTimezone = (timezone = 'America/Chicago') => {
 };
 
 /**
+ * Get current time as a string formatted for MySQL (YYYY-MM-DD HH:mm:ss) 
+ * in the specified timezone.
+ * @param {string} timezone - IANA timezone string
+ * @returns {string} Formatted date time string
+ */
+const getNowStringInTimezone = (timezone = 'America/Chicago') => {
+    const now = new Date();
+
+    // Use Intl to get parts in target timezone
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+
+    const parts = formatter.formatToParts(now);
+    const p = {};
+    parts.forEach(part => { p[part.type] = part.value; });
+
+    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+};
+
+/**
  * Convert UTC date to application timezone
  * @param {Date|string} utcDate - UTC date
  * @param {string} timezone - Target timezone
@@ -134,6 +162,7 @@ module.exports = {
     formatDateOnly,
     formatTimeOnly,
     getCurrentTimeInTimezone,
+    getNowStringInTimezone,
     convertFromUTC,
     getTimezoneOffset
 };
