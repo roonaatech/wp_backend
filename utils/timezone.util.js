@@ -26,11 +26,11 @@ const TIMEZONE_OPTIONS = [
 /**
  * Format a date/time in the application's configured timezone
  * @param {Date|string} date - Date to format
- * @param {string} timezone - IANA timezone string (e.g., 'America/Chicago')
+ * @param {string} timezone - IANA timezone string (e.g., 'Asia/Kolkata')
  * @param {object} options - Intl.DateTimeFormat options
  * @returns {string} Formatted date string
  */
-const formatInTimezone = (date, timezone = 'America/Chicago', options = {}) => {
+const formatInTimezone = (date, timezone = 'Asia/Kolkata', options = {}) => {
     try {
         const dateObj = typeof date === 'string' ? new Date(date) : date;
 
@@ -59,7 +59,7 @@ const formatInTimezone = (date, timezone = 'America/Chicago', options = {}) => {
  * @param {string} timezone - IANA timezone string
  * @returns {string} Formatted date string (MM/DD/YYYY)
  */
-const formatDateOnly = (date, timezone = 'America/Chicago') => {
+const formatDateOnly = (date, timezone = 'Asia/Kolkata') => {
     return formatInTimezone(date, timezone, {
         year: 'numeric',
         month: '2-digit',
@@ -76,7 +76,7 @@ const formatDateOnly = (date, timezone = 'America/Chicago') => {
  * @param {string} timezone - IANA timezone string
  * @returns {string} Formatted time string (HH:MM AM/PM)
  */
-const formatTimeOnly = (date, timezone = 'America/Chicago') => {
+const formatTimeOnly = (date, timezone = 'Asia/Kolkata') => {
     return formatInTimezone(date, timezone, {
         year: undefined,
         month: undefined,
@@ -92,7 +92,7 @@ const formatTimeOnly = (date, timezone = 'America/Chicago') => {
  * @param {string} timezone - IANA timezone string
  * @returns {Date} Current date/time
  */
-const getCurrentTimeInTimezone = (timezone = 'America/Chicago') => {
+const getCurrentTimeInTimezone = (timezone = 'Asia/Kolkata') => {
     return new Date(new Date().toLocaleString('en-US', { timeZone: timezone }));
 };
 
@@ -102,11 +102,11 @@ const getCurrentTimeInTimezone = (timezone = 'America/Chicago') => {
  * @param {string} timezone - IANA timezone string
  * @returns {string} Formatted date time string
  */
-const getNowStringInTimezone = (timezone = 'America/Chicago') => {
+const getNowStringInTimezone = (timezone = 'Asia/Kolkata') => {
     const now = new Date();
 
     // Use Intl to get parts in target timezone
-    const formatter = new Intl.DateTimeFormat('en-GB', {
+    const formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: timezone,
         year: 'numeric',
         month: '2-digit',
@@ -114,7 +114,8 @@ const getNowStringInTimezone = (timezone = 'America/Chicago') => {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
-        hour12: false
+        hour12: false,
+        hourCycle: 'h23'
     });
 
     const parts = formatter.formatToParts(now);
@@ -130,7 +131,7 @@ const getNowStringInTimezone = (timezone = 'America/Chicago') => {
  * @param {string} timezone - Target timezone
  * @returns {Date} Converted date
  */
-const convertFromUTC = (utcDate, timezone = 'America/Chicago') => {
+const convertFromUTC = (utcDate, timezone = 'Asia/Kolkata') => {
     const date = typeof utcDate === 'string' ? new Date(utcDate) : utcDate;
     return new Date(date.toLocaleString('en-US', { timeZone: timezone }));
 };
@@ -140,7 +141,7 @@ const convertFromUTC = (utcDate, timezone = 'America/Chicago') => {
  * @param {string} timezone - IANA timezone string
  * @returns {string} Offset string
  */
-const getTimezoneOffset = (timezone = 'America/Chicago') => {
+const getTimezoneOffset = (timezone = 'Asia/Kolkata') => {
     try {
         const date = new Date();
         const formatter = new Intl.DateTimeFormat('en-US', {
