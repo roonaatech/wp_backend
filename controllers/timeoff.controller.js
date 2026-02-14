@@ -1,9 +1,18 @@
 const db = require("../models");
 const TimeOffRequest = db.time_off_requests;
 const Staff = db.user;
+const Setting = db.settings;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+
+// Helper to calculate hours difference
+const calculateHours = (start, end) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = new Date(`${today}T${start}`);
+    const endDate = new Date(`${today}T${end}`);
+    return (endDate - startDate) / (1000 * 60 * 60);
+};
 
 // Apply for Time Off
 exports.applyTimeOff = async (req, res) => {
@@ -23,6 +32,54 @@ exports.applyTimeOff = async (req, res) => {
 
         if (!isStartValid || !isEndValid) {
             return res.status(400).send({ message: "Invalid time format. Use HH:MM or HH:MM:SS." });
+        }
+
+        // Validate duration against system setting
+        const maxTimeOffSetting = await Setting.findOne({ where: { key: 'max_time_off_hours' } });
+        const maxHours = maxTimeOffSetting ? parseFloat(maxTimeOffSetting.value) : 4; // Default to 4 hours
+
+        // Add today's date prefix to properly calculate time difference
+        // Handle cases where time string is HH:MM or HH:MM:SS
+        const formatTime = (t) => t.length === 5 ? `${t}:00` : t;
+        const sTime = new Date(`1970-01-01T${formatTime(start_time)}`);
+        const eTime = new Date(`1970-01-01T${formatTime(end_time)}`);
+
+        const durationHours = (eTime - sTime) / (1000 * 60 * 60);
+
+        if (durationHours <= 0) {
+            return res.status(400).send({ message: "End time must be after start time." });
+        }
+
+        if (durationHours > maxHours) {
+            return res.status(400).send({
+                message: `Time-off request exceeds the maximum allowance of ${maxHours} hours per day.`
+            });
+        }
+
+        // Check total time-off hours for the day (including existing requests)
+        const existingRequests = await TimeOffRequest.findAll({
+            where: {
+                staff_id: req.userId,
+                date: date,
+                status: { [Op.in]: ['Pending', 'Approved'] }
+            }
+        });
+
+        // Calculate total hours already requested for this day
+        let totalExistingHours = 0;
+        for (const request of existingRequests) {
+            const reqStartTime = new Date(`1970-01-01T${formatTime(request.start_time)}`);
+            const reqEndTime = new Date(`1970-01-01T${formatTime(request.end_time)}`);
+            const reqHours = (reqEndTime - reqStartTime) / (1000 * 60 * 60);
+            totalExistingHours += reqHours;
+        }
+
+        // Check if adding this new request would exceed the daily limit
+        const totalHoursWithNewRequest = totalExistingHours + durationHours;
+        if (totalHoursWithNewRequest > maxHours) {
+            return res.status(400).send({
+                message: `This request would exceed the daily limit of ${maxHours} hours. You have already requested ${totalExistingHours} hours for ${date}. Adding ${durationHours} hours would total ${totalHoursWithNewRequest} hours.`
+            });
         }
 
         // Check for overlapping Time-Off requests

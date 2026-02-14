@@ -413,6 +413,30 @@ const authJwt = {
     canViewReports: canViewReports,
     canManageActiveOnDuty: canManageActiveOnDuty,
     canManageSchedule: canManageSchedule,
-    canApproveTimeOff: canApproveTimeOff
+    canApproveTimeOff: canApproveTimeOff,
+    canManageSystemSettings: async (req, res, next) => {
+        try {
+            const user = await User.findByPk(req.userId);
+            if (!user) {
+                return res.status(403).send({ message: "User not found!" });
+            }
+
+            // Get role from database
+            const role = await Role.findByPk(user.role);
+            if (role && role.can_manage_system_settings === 'all') {
+                next();
+                return;
+            }
+
+            res.status(403).send({
+                message: "You don't have permission to manage system settings!"
+            });
+        } catch (error) {
+            console.error('Auth middleware error:', error);
+            return res.status(500).send({
+                message: "Unable to validate User role!"
+            });
+        }
+    }
 };
 module.exports = authJwt;
