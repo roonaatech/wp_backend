@@ -276,7 +276,9 @@ const options = {
     './routes/role.routes.js',
     './routes/userleavetype.routes.js',
     './routes/email.routes.js',
-    './routes/apk.routes.js'
+    './routes/apk.routes.js',
+    './routes/setting.routes.js',
+    './routes/timeoff.routes.js'
   ]
 };
 
