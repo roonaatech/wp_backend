@@ -39,8 +39,9 @@ exports.startOnDuty = async (req, res) => {
         return res.status(400).send({ message: "Client name, location, and purpose are required" });
     }
 
-    const tz = await getAppTimezone();
-    const nowString = timezoneUtil.getNowStringInTimezone(tz);
+    // Store actual UTC timestamp (Date object), NOT a formatted string
+    // We'll format it when sending to frontend
+    const now = new Date();
 
     OnDutyLog.create({
         staff_id: req.userId,
@@ -49,7 +50,7 @@ exports.startOnDuty = async (req, res) => {
         purpose: purpose,
         start_lat: latitude,
         start_long: longitude,
-        start_time: nowString,
+        start_time: now,
         end_time: null
     })
         .then(async (onDuty) => {
@@ -92,12 +93,12 @@ exports.endOnDuty = (req, res) => {
                 return res.status(404).send({ message: "No active on-duty visit found" });
             }
 
-            const tz = await getAppTimezone();
-            const nowString = timezoneUtil.getNowStringInTimezone(tz);
+            // Store actual UTC timestamp (Date object), NOT a formatted string
+            const now = new Date();
 
             // Update the on-duty record with end time
             return onDuty.update({
-                end_time: nowString,
+                end_time: now,
                 end_lat: latitude,
                 end_long: longitude,
                 status: 'Pending'
