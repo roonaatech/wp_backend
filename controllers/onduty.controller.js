@@ -109,6 +109,30 @@ exports.endOnDuty = (req, res) => {
                 console.log('Staff ID:', req.userId);
                 console.log('On-Duty Log ID:', updatedOnDuty.id);
 
+                // Get timezone to format times correctly
+                const tz = await getAppTimezone();
+
+                // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+                const formatDateInTimezone = (dateObj) => {
+                    if (!dateObj) return null;
+                    const formatter = new Intl.DateTimeFormat('en-US', {
+                        timeZone: tz,
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        hourCycle: 'h23'
+                    });
+
+                    const parts = formatter.formatToParts(dateObj);
+                    const p = {};
+                    parts.forEach(part => { p[part.type] = part.value; });
+                    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+                };
+
                 // Log activity
                 await logActivity({
                     admin_id: req.userId,
@@ -184,17 +208,54 @@ exports.endOnDuty = (req, res) => {
 
                 console.log('=== EndOnDuty Complete ===\n');
 
+                // Format the response with timezone-aware time strings
+                const formattedData = {
+                    ...updatedOnDuty.toJSON(),
+                    start_time: formatDateInTimezone(updatedOnDuty.start_time),
+                    end_time: formatDateInTimezone(updatedOnDuty.end_time)
+                };
+
                 res.status(200).send({
                     message: "On-duty ended successfully",
-                    data: updatedOnDuty
+                    data: formattedData
                 });
             } catch (err) {
                 console.error('❌ Error creating approval:', err.message);
                 console.error(err.stack);
+
+                // Format the response even in error case
+                const tz = await getAppTimezone();
+
+                const formatDateInTimezone = (dateObj) => {
+                    if (!dateObj) return null;
+                    const formatter = new Intl.DateTimeFormat('en-US', {
+                        timeZone: tz,
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        hourCycle: 'h23'
+                    });
+
+                    const parts = formatter.formatToParts(dateObj);
+                    const p = {};
+                    parts.forEach(part => { p[part.type] = part.value; });
+                    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+                };
+
+                const formattedData = {
+                    ...updatedOnDuty.toJSON(),
+                    start_time: formatDateInTimezone(updatedOnDuty.start_time),
+                    end_time: formatDateInTimezone(updatedOnDuty.end_time)
+                };
+
                 // Still send success response even if approval creation fails
                 res.status(200).send({
                     message: "On-duty ended successfully",
-                    data: updatedOnDuty
+                    data: formattedData
                 });
             }
         })
@@ -204,26 +265,58 @@ exports.endOnDuty = (req, res) => {
 };
 
 // Get active on-duty visit for the current user
-exports.getActiveOnDuty = (req, res) => {
-    OnDutyLog.findOne({
-        where: {
-            staff_id: req.userId,
-            end_time: null // Only get visits that haven't ended
-        },
-        order: [['start_time', 'DESC']]
-    })
-        .then(onDuty => {
-            if (!onDuty) {
-                return res.status(200).send({ active: false });
-            }
-            res.status(200).send({
-                active: true,
-                data: onDuty
-            });
-        })
-        .catch(err => {
-            res.status(500).send({ message: err.message });
+exports.getActiveOnDuty = async (req, res) => {
+    try {
+        const onDuty = await OnDutyLog.findOne({
+            where: {
+                staff_id: req.userId,
+                end_time: null // Only get visits that haven't ended
+            },
+            order: [['start_time', 'DESC']]
         });
+
+        if (!onDuty) {
+            return res.status(200).send({ active: false });
+        }
+
+        // Get timezone to format times correctly
+        const tz = await getAppTimezone();
+
+        // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+        const formatDateInTimezone = (dateObj) => {
+            if (!dateObj) return null;
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                hourCycle: 'h23'
+            });
+
+            const parts = formatter.formatToParts(dateObj);
+            const p = {};
+            parts.forEach(part => { p[part.type] = part.value; });
+            return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+        };
+
+        // Format the response with timezone-aware time strings
+        const formattedData = {
+            ...onDuty.toJSON(),
+            start_time: formatDateInTimezone(onDuty.start_time),
+            end_time: formatDateInTimezone(onDuty.end_time)
+        };
+
+        res.status(200).send({
+            active: true,
+            data: formattedData
+        });
+    } catch (err) {
+        res.status(500).send({ message: err.message });
+    }
 };
 
 // Get On-Duty Logs by Status (for manager/admin approvals)
@@ -285,6 +378,30 @@ exports.getOnDutyByStatus = async (req, res) => {
             order: [['start_time', 'DESC']]
         });
 
+        // Get timezone to format times correctly
+        const tz = await getAppTimezone();
+
+        // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+        const formatDateInTimezone = (dateObj) => {
+            if (!dateObj) return null;
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                hourCycle: 'h23'
+            });
+
+            const parts = formatter.formatToParts(dateObj);
+            const p = {};
+            parts.forEach(part => { p[part.type] = part.value; });
+            return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+        };
+
         // Format the response
         const formattedLogs = onDutyLogs.map(log => ({
             id: log.id,
@@ -292,8 +409,8 @@ exports.getOnDutyByStatus = async (req, res) => {
             client_name: log.client_name,
             location: log.location,
             purpose: log.purpose,
-            start_time: log.start_time,
-            end_time: log.end_time,
+            start_time: formatDateInTimezone(log.start_time),
+            end_time: formatDateInTimezone(log.end_time),
             status: log.status,
             rejection_reason: log.rejection_reason,
             manager_id: log.manager_id,
@@ -354,6 +471,30 @@ exports.getAllActiveOnDuty = async (req, res) => {
             order: [['start_time', 'DESC']]
         });
 
+        // Get timezone to format times correctly
+        const tz = await getAppTimezone();
+
+        // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+        const formatDateInTimezone = (dateObj) => {
+            if (!dateObj) return null;
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                hourCycle: 'h23'
+            });
+
+            const parts = formatter.formatToParts(dateObj);
+            const p = {};
+            parts.forEach(part => { p[part.type] = part.value; });
+            return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+        };
+
         // Format the response
         const formattedLogs = activeOnDutyLogs.map(log => ({
             id: log.id,
@@ -361,8 +502,8 @@ exports.getAllActiveOnDuty = async (req, res) => {
             client_name: log.client_name,
             location: log.location,
             purpose: log.purpose,
-            start_time: log.start_time,
-            end_time: log.end_time,
+            start_time: formatDateInTimezone(log.start_time),
+            end_time: formatDateInTimezone(log.end_time),
             status: log.status,
             start_lat: log.start_lat,
             start_long: log.start_long,
