@@ -82,4 +82,7 @@ db.user.hasMany(db.time_off_requests, { foreignKey: 'staff_id' });
 db.time_off_requests.belongsTo(db.user, { foreignKey: 'staff_id', as: 'user' });
 db.time_off_requests.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' });
 
+// System Settings
+db.settings = require("./setting.model.js")(sequelize, Sequelize);
+
 module.exports = db;

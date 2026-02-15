@@ -103,6 +103,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage email settings'
         },
+        can_manage_system_settings: {
+            type: Sequelize.ENUM('none', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'Manage system settings - none=no access, all=access'
+        },
         active: {
             type: Sequelize.BOOLEAN,
             allowNull: false,

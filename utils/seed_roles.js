@@ -21,6 +21,7 @@ async function seedRoles() {
       can_manage_schedule: "all",
       can_view_activities: "all",
       can_approve_timeoff: "all",
+      can_manage_system_settings: "all",
       active: true
     },
     {
@@ -41,6 +42,7 @@ async function seedRoles() {
       can_manage_schedule: "all",
       can_view_activities: "none",
       can_approve_timeoff: "all",
+      can_manage_system_settings: "all",
       active: true
     },
     {
@@ -112,9 +114,9 @@ async function seedRoles() {
     });
 
     if (!created) {
-      // ONLY update Super Admin by default to ensure it always has full power
+      // Update Super Admin and Admin roles to ensure they always have full permissions
       // For other roles, we don't want to reset user-customized permissions in the UI
-      if (r.id === 1) {
+      if (r.id === 1 || r.id === 3) {
         await role.update(r);
         console.log(`Updated core role: ${r.name}`);
       } else {

@@ -804,16 +804,78 @@ exports.getAttendanceReports = async (req, res) => {
         let dateWhereOnDuty = {};
         let dateWhereTimeOff = {};
 
-        if (dateFilter && dateFilter !== 'all') {
-            const today = new Date();
-            let startDate = new Date();
-            if (dateFilter === '7days') startDate.setDate(today.getDate() - 7);
-            if (dateFilter === '30days') startDate.setDate(today.getDate() - 30);
-            if (dateFilter === '90days') startDate.setDate(today.getDate() - 90);
+        // Support startDate/endDate (custom range) or dateFilter presets
+        const { startDate, endDate } = req.query;
 
-            dateWhereLeave.start_date = { [Op.gte]: startDate };
-            dateWhereOnDuty.start_time = { [Op.gte]: startDate };
-            dateWhereTimeOff.date = { [Op.gte]: startDate };
+        if (startDate && endDate) {
+            const s = new Date(startDate);
+            const e = new Date(endDate);
+            e.setHours(23,59,59,999);
+            dateWhereLeave.start_date = { [Op.between]: [s, e] }; // Leave requests
+            dateWhereOnDuty.start_time = { [Op.between]: [s, e] }; // On-duty logs
+            dateWhereTimeOff.date = { [Op.between]: [s, e] }; // Time-off requests
+        } else if (dateFilter && dateFilter !== 'all') {
+            const today = new Date();
+            let from = null;
+            let to = null;
+            if (dateFilter === 'today') {
+                from = new Date();
+                from.setHours(0,0,0,0);
+                to = new Date();
+                to.setHours(23,59,59,999);
+            } else if (dateFilter === '7days') {
+                from = new Date();
+                from.setDate(today.getDate() - 7);
+                from.setHours(0,0,0,0);
+            } else if (dateFilter === '30days') {
+                from = new Date();
+                from.setDate(today.getDate() - 30);
+                from.setHours(0,0,0,0);
+            } else if (dateFilter === '90days') {
+                from = new Date();
+                from.setDate(today.getDate() - 90);
+                from.setHours(0,0,0,0);
+            } else if (dateFilter === 'thismonth') {
+                from = new Date(today.getFullYear(), today.getMonth(), 1);
+                to = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+                to.setHours(23,59,59,999);
+            } else if (dateFilter === 'lastmonth') {
+                from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                to = new Date(today.getFullYear(), today.getMonth(), 0);
+                to.setHours(23,59,59,999);
+            } else if (dateFilter === 'thisyear') {
+                from = new Date(today.getFullYear(), 0, 1);
+                to = new Date(today.getFullYear(), 11, 31);
+                to.setHours(23,59,59,999);
+            } else if (dateFilter === 'lastyear') {
+                from = new Date(today.getFullYear() - 1, 0, 1);
+                to = new Date(today.getFullYear() - 1, 11, 31);
+                to.setHours(23,59,59,999);
+            } else if (dateFilter === 'thisquarter' || dateFilter === 'lastquarter') {
+                const month = today.getMonth();
+                const currentQuarterStart = Math.floor(month / 3) * 3;
+                if (dateFilter === 'thisquarter') {
+                    from = new Date(today.getFullYear(), currentQuarterStart, 1);
+                    to = new Date(today.getFullYear(), currentQuarterStart + 3, 0);
+                } else {
+                    let start = currentQuarterStart - 3;
+                    let year = today.getFullYear();
+                    if (start < 0) { start += 12; year -= 1; }
+                    from = new Date(year, start, 1);
+                    to = new Date(year, start + 3, 0);
+                }
+                to.setHours(23,59,59,999);
+            }
+
+            if (from && to) {
+                dateWhereLeave.start_date = { [Op.between]: [from, to] };
+                dateWhereOnDuty.start_time = { [Op.between]: [from, to] };
+                dateWhereTimeOff.date = { [Op.between]: [from, to] };
+            } else if (from) {
+                dateWhereLeave.start_date = { [Op.gte]: from };
+                dateWhereOnDuty.start_time = { [Op.gte]: from };
+                dateWhereTimeOff.date = { [Op.gte]: from };
+            }
         }
 
         // User Query
@@ -954,6 +1016,8 @@ exports.getAttendanceReports = async (req, res) => {
                 reason: leave.reason,
                 status: leave.status,
                 rejection_reason: leave.rejection_reason,
+                createdAt: leave.createdAt,
+                updatedAt: leave.updatedAt,
                 on_duty: false,
                 tblstaff: leave.user,
                 approver: leave.approver || null
@@ -981,6 +1045,8 @@ exports.getAttendanceReports = async (req, res) => {
                 purpose: log.purpose,
                 status: log.status,
                 rejection_reason: log.rejection_reason,
+                createdAt: log.createdAt,
+                updatedAt: log.updatedAt,
                 on_duty: true,
                 tblstaff: log.user,
                 approver: log.approver || null
@@ -1006,6 +1072,8 @@ exports.getAttendanceReports = async (req, res) => {
                 reason: timeOff.reason,
                 status: timeOff.status,
                 rejection_reason: timeOff.rejection_reason,
+                createdAt: timeOff.createdAt,
+                updatedAt: timeOff.updatedAt,
                 on_duty: false,
                 tblstaff: timeOff.user,
                 approver: timeOff.approver || null

@@ -1,9 +1,65 @@
 const db = require("../models");
 const TimeOffRequest = db.time_off_requests;
 const Staff = db.user;
+const Setting = db.settings;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+
+// Helper to calculate hours difference
+const calculateHours = (start, end) => {
+    const formatTime = (t) => t.length === 5 ? `${t}:00` : t;
+    const sTime = new Date(`1970-01-01T${formatTime(start)}`);
+    const eTime = new Date(`1970-01-01T${formatTime(end)}`);
+    return (eTime - sTime) / (1000 * 60 * 60);
+};
+
+// Internal validation function for time-off hours
+const validateTimeOffHours = async (staff_id, date, start_time, end_time, excludeId = null) => {
+    const maxTimeOffSetting = await Setting.findOne({ where: { key: 'max_time_off_hours' } });
+    const maxHours = maxTimeOffSetting ? parseFloat(maxTimeOffSetting.value) : 4;
+
+    const durationHours = calculateHours(start_time, end_time);
+
+    if (durationHours <= 0) {
+        return { valid: false, message: "End time must be after start time." };
+    }
+
+    if (durationHours > maxHours) {
+        return {
+            valid: false,
+            message: `Time-off request exceeds the maximum allowance of ${maxHours} hours per day.`
+        };
+    }
+
+    // Check total time-off hours for the day (including existing requests)
+    const whereClause = {
+        staff_id: staff_id,
+        date: date,
+        status: { [Op.in]: ['Pending', 'Approved'] }
+    };
+
+    if (excludeId) {
+        whereClause.id = { [Op.ne]: excludeId };
+    }
+
+    const existingRequests = await TimeOffRequest.findAll({ where: whereClause });
+
+    let totalExistingHours = 0;
+    for (const request of existingRequests) {
+        totalExistingHours += calculateHours(request.start_time, request.end_time);
+    }
+
+    const totalHoursWithThisRequest = totalExistingHours + durationHours;
+    if (totalHoursWithThisRequest > maxHours) {
+        return {
+            valid: false,
+            message: `This request would exceed the daily limit of ${maxHours} hours. You have already requested ${totalExistingHours} hours for ${date}. This request of ${durationHours} hours would total ${totalHoursWithThisRequest} hours.`
+        };
+    }
+
+    return { valid: true, durationHours, maxHours };
+};
 
 // Apply for Time Off
 exports.applyTimeOff = async (req, res) => {
@@ -23,6 +79,12 @@ exports.applyTimeOff = async (req, res) => {
 
         if (!isStartValid || !isEndValid) {
             return res.status(400).send({ message: "Invalid time format. Use HH:MM or HH:MM:SS." });
+        }
+
+        // Validate duration and daily limit
+        const validation = await validateTimeOffHours(req.userId, date, start_time, end_time);
+        if (!validation.valid) {
+            return res.status(400).send({ message: validation.message });
         }
 
         // Check for overlapping Time-Off requests
@@ -132,6 +194,48 @@ exports.updateTimeOffDetails = async (req, res) => {
             }
             if (end_time && !timeRegex.test(end_time) && !timeRegexWithSeconds.test(end_time)) {
                 return res.status(400).send({ message: "Invalid end time format." });
+            }
+        }
+
+        // Validate updated duration and daily limit if time or date is changing
+        const newDate = date || timeOff.date;
+        const newStart = start_time || timeOff.start_time;
+        const newEnd = end_time || timeOff.end_time;
+
+        if (date || start_time || end_time) {
+            const validation = await validateTimeOffHours(req.userId, newDate, newStart, newEnd, id);
+            if (!validation.valid) {
+                return res.status(400).send({ message: validation.message });
+            }
+
+            // Check for overlapping Time-Off requests (excluding current one)
+            const overlappingRequest = await TimeOffRequest.findOne({
+                where: {
+                    id: { [Op.ne]: id },
+                    staff_id: req.userId,
+                    date: newDate,
+                    status: { [Op.in]: ['Pending', 'Approved'] },
+                    [Op.or]: [
+                        {
+                            start_time: { [Op.lte]: newStart },
+                            end_time: { [Op.gte]: newStart }
+                        },
+                        {
+                            start_time: { [Op.lte]: newEnd },
+                            end_time: { [Op.gte]: newEnd }
+                        },
+                        {
+                            start_time: { [Op.gte]: newStart },
+                            end_time: { [Op.lte]: newEnd }
+                        }
+                    ]
+                }
+            });
+
+            if (overlappingRequest) {
+                return res.status(409).send({
+                    message: `This updated request overlaps with an existing time-off request on ${newDate} from ${overlappingRequest.start_time} to ${overlappingRequest.end_time}.`,
+                });
             }
         }
 
