@@ -435,6 +435,7 @@ exports.getAllUsers = async (req, res) => {
         const status = req.query.status || 'all';
         const letter = req.query.letter || '';
         const role = req.query.role || ''; // Comma-separated role ids
+        const userType = req.query.userType || ''; // 'workpulse' or 'external'
 
         // Build where clause using AND conditions
         const andConditions = [];
@@ -476,6 +477,19 @@ exports.getAllUsers = async (req, res) => {
                     role: { [Op.in]: roleIds }
                 });
             }
+        }
+
+        // User Type constraint (WorkPulse-only vs External system users)
+        if (userType === 'workpulse') {
+            // WorkPulse-only users (userid is NULL)
+            andConditions.push({
+                userid: null
+            });
+        } else if (userType === 'external') {
+            // External system users (userid is NOT NULL)
+            andConditions.push({
+                userid: { [Op.not]: null }
+            });
         }
 
         // Status constraint

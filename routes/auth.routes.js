@@ -121,6 +121,45 @@ const { verifyToken } = require("../middleware/authJwt");
  *         description: Unauthorized
  */
 
+/**
+ * @swagger
+ * /api/auth/change-password:
+ *   post:
+ *     tags:
+ *       - Authentication
+ *     summary: Change user password
+ *     description: Change password for WorkPulse-only users (not synced from external system)
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - oldPassword
+ *               - newPassword
+ *             properties:
+ *               oldPassword:
+ *                 type: string
+ *                 example: currentPassword123
+ *               newPassword:
+ *                 type: string
+ *                 example: newPassword456
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *       400:
+ *         description: Invalid input or validation error
+ *       401:
+ *         description: Current password is incorrect
+ *       403:
+ *         description: Not allowed for external system users
+ *       404:
+ *         description: User not found
+ */
+
 module.exports = function (app) {
     app.use(function (req, res, next) {
         res.header(
@@ -133,4 +172,5 @@ module.exports = function (app) {
     app.post("/api/auth/signup", controller.signup);
     app.post("/api/auth/signin", controller.signin);
     app.post("/api/auth/logout", [verifyToken], controller.logout);
+    app.post("/api/auth/change-password", [verifyToken], controller.changePassword);
 };

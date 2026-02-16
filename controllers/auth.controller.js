@@ -236,6 +236,7 @@ exports.signin = async (req, res) => {
         res.status(200).send({
             id: user.staffid,
             staffid: user.staffid,
+            userid: user.userid, // Include userid to check if WorkPulse-only user (null) or external (not null)
             firstname: user.firstname,
             lastname: user.lastname,
             email: user.email,
@@ -277,6 +278,75 @@ exports.logout = async (req, res) => {
         res.status(200).send({
             success: true,
             message: "User logged out successfully"
+        });
+    } catch (err) {
+        res.status(500).send({ message: err.message });
+    }
+};
+
+exports.changePassword = async (req, res) => {
+    try {
+        const userId = req.userId; // From authJwt middleware
+        const { oldPassword, newPassword } = req.body;
+
+        // Validate input
+        if (!oldPassword || !newPassword) {
+            return res.status(400).send({ message: "Old password and new password are required." });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).send({ message: "New password must be at least 6 characters long." });
+        }
+
+        // Find user
+        const user = await TblStaff.findOne({
+            where: {
+                staffid: userId
+            }
+        });
+
+        if (!user) {
+            return res.status(404).send({ message: "User not found." });
+        }
+
+        // Check if user is WorkPulse-only (not synced from PHP app)
+        if (user.userid !== null) {
+            return res.status(403).send({
+                message: "Password change is not allowed for users synced from the external system. Please use the main application to change your password."
+            });
+        }
+
+        // Verify old password
+        const passwordIsValid = bcrypt.compareSync(oldPassword, user.password);
+        if (!passwordIsValid) {
+            return res.status(401).send({ message: "Current password is incorrect." });
+        }
+
+        // Check if new password is same as old password
+        const isSamePassword = bcrypt.compareSync(newPassword, user.password);
+        if (isSamePassword) {
+            return res.status(400).send({ message: "New password must be different from current password." });
+        }
+
+        // Hash and update new password
+        const hashedPassword = bcrypt.hashSync(newPassword, 8);
+        await user.update({ password: hashedPassword });
+
+        // Log activity
+        await logActivity({
+            admin_id: userId,
+            action: 'PASSWORD_CHANGE',
+            entity: 'User',
+            entity_id: userId,
+            affected_user_id: userId,
+            description: `${user.firstname} ${user.lastname} changed their password`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.status(200).send({
+            success: true,
+            message: "Password changed successfully!"
         });
     } catch (err) {
         res.status(500).send({ message: err.message });
