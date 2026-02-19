@@ -734,28 +734,61 @@ exports.getPendingApprovals = async (req, res) => {
     }
 };
 
-exports.approveAttendance = (req, res) => {
+exports.approveAttendance = async (req, res) => {
     const id = req.params.id;
 
-    Approval.update(req.body, {
-        where: { id: id }
-    })
-        .then(num => {
-            if (num == 1) {
-                res.send({
-                    message: "Approval status was updated successfully."
-                });
-            } else {
-                res.send({
-                    message: `Cannot update Approval with id=${id}. Maybe Approval was not found or req.body is empty!`
-                });
-            }
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: "Error updating Approval with id=" + id
-            });
-        });
+    // Whitelist only the two allowed fields — prevents mass assignment
+    const { status, rejection_reason } = req.body;
+
+    // Validate status is a known enum value
+    const allowedStatuses = ['Approved', 'Rejected'];
+    if (!status || !allowedStatuses.includes(status)) {
+        return res.status(400).send({ message: "Invalid status value. Must be 'Approved' or 'Rejected'." });
+    }
+
+    // rejection_reason is mandatory when rejecting
+    if (status === 'Rejected' && !rejection_reason) {
+        return res.status(400).send({ message: "rejection_reason is required when rejecting." });
+    }
+
+    try {
+        // Fetch the approval record to verify it exists and check scope
+        const approval = await Approval.findByPk(id);
+        if (!approval) {
+            return res.status(404).send({ message: `Approval with id=${id} not found.` });
+        }
+
+        // Scope check: caller must be the designated manager on this approval,
+        // OR have a role with global approval permission (can_approve_* === 'all')
+        const Role = db.roles;
+        const currentUser = await TblStaff.findByPk(req.userId);
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        const hasGlobalApproval = userRole && (
+            userRole.can_approve_leave === 'all' ||
+            userRole.can_approve_onduty === 'all' ||
+            userRole.can_approve_timeoff === 'all'
+        );
+        const isDesignatedManager = approval.manager_id === req.userId;
+
+        if (!isDesignatedManager && !hasGlobalApproval) {
+            return res.status(403).send({ message: "You are not authorised to act on this approval." });
+        }
+
+        // Update only the whitelisted fields
+        const [num] = await Approval.update(
+            { status, rejection_reason: rejection_reason || null },
+            { where: { id } }
+        );
+
+        if (num === 1) {
+            res.send({ message: "Approval status was updated successfully." });
+        } else {
+            res.status(400).send({ message: `Cannot update Approval with id=${id}.` });
+        }
+    } catch (err) {
+        res.status(500).send({ message: "Error updating Approval with id=" + id });
+    }
 };
 
 exports.getAttendanceReports = async (req, res) => {
