@@ -237,6 +237,44 @@ const fs = require("fs");
  *         description: APK not found
  */
 
+/**
+ * @swagger
+ * /api/apk/{id}/release-notes:
+ *   put:
+ *     tags:
+ *       - APK Management
+ *     summary: Update APK release notes
+ *     description: Update the release notes for an APK version (requires admin permission)
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - release_notes
+ *             properties:
+ *               release_notes:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Release notes updated successfully
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: APK not found
+ */
+
 module.exports = function (app) {
     app.use(function (req, res, next) {
         res.header(
@@ -330,5 +368,11 @@ module.exports = function (app) {
         "/api/apk/:id/visibility",
         [authJwt.verifyToken, authJwt.isAdmin],
         controller.updateVisibility
+    );
+
+    app.put(
+        "/api/apk/:id/release-notes",
+        [authJwt.verifyToken, authJwt.isAdmin],
+        controller.updateReleaseNotes
     );
 };

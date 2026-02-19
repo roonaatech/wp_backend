@@ -286,6 +286,34 @@ exports.updateVisibility = async (req, res) => {
     }
 };
 
+exports.updateReleaseNotes = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const { release_notes } = req.body;
+
+        if (release_notes === undefined) {
+            return res.status(400).send({ message: "Release notes are required." });
+        }
+
+        const apk = await ApkVersion.findByPk(id);
+        if (!apk) {
+            return res.status(404).send({ message: "APK not found." });
+        }
+
+        apk.release_notes = release_notes;
+        await apk.save();
+
+        res.status(200).send({
+            message: "Release notes updated successfully!",
+            apk: apk
+        });
+    } catch (err) {
+        res.status(500).send({
+            message: "Error updating release notes. " + err.message
+        });
+    }
+};
+
 // Helper function to compare version strings (e.g., "1.0.0+1" vs "1.0.1+2")
 // Supports formats: "1.0.0", "1.0.0+7", "1.3.0+8"
 const compareVersions = (v1, v2) => {
