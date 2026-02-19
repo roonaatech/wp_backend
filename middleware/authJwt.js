@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
 const config = process.env;
 
-verifyToken = (req, res, next) => {
+const verifyToken = (req, res, next) => {
     let token = req.headers["x-access-token"];
 
     if (!token) {
@@ -30,7 +30,7 @@ const Role = db.roles;
  * This replaces the old hardcoded isManagerOrAdmin check
  * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
-isManagerOrAdmin = async (req, res, next) => {
+const isManagerOrAdmin = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
@@ -66,7 +66,7 @@ isManagerOrAdmin = async (req, res, next) => {
  * This replaces the old hardcoded isAdmin check
  * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
-isAdmin = async (req, res, next) => {
+const isAdmin = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
@@ -97,7 +97,7 @@ isAdmin = async (req, res, next) => {
  * Based on role hierarchy or any management/approval permissions
  * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
-canAccessWebApp = async (req, res, next) => {
+const canAccessWebApp = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
@@ -134,7 +134,7 @@ canAccessWebApp = async (req, res, next) => {
  * Middleware to check if user can manage leave types
  * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
-canManageLeaveTypes = async (req, res, next) => {
+const canManageLeaveTypes = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
@@ -164,7 +164,7 @@ canManageLeaveTypes = async (req, res, next) => {
  * Stores the permission level in req.activityPermission for use in controller
  * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
-canViewActivities = async (req, res, next) => {
+const canViewActivities = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {

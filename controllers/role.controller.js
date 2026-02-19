@@ -6,7 +6,19 @@ const { Op } = require("sequelize");
 // Get all roles
 exports.findAll = async (req, res) => {
     try {
+        // Fetch the current user and their role to determine permission level
+        const currentUser = await User.findByPk(req.userId);
+        const callerRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const isRoleManager = callerRole && callerRole.can_manage_roles === true;
+
+        // If user has can_manage_roles permission, return all fields
+        // Otherwise, return only safe fields needed for display name lookups
+        const attributes = isRoleManager
+            ? undefined  // return all fields for role managers
+            : ['id', 'name', 'display_name', 'hierarchy_level', 'active'];  // safe subset
+
         const roles = await Role.findAll({
+            attributes,
             order: [['hierarchy_level', 'ASC'], ['id', 'ASC']]
         });
         res.json(roles);
@@ -143,6 +155,29 @@ exports.update = async (req, res) => {
 
         if (!role) {
             return res.status(404).json({ message: "Role not found" });
+        }
+
+        // Hierarchy check: prevent self-privilege escalation
+        // Fetch the caller's role to check their hierarchy level
+        const currentUser = await User.findByPk(req.userId);
+        const callerRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        // Only Super Admin (level 0) can modify any role
+        // Other role managers cannot modify roles with equal or higher authority
+        if (callerRole && callerRole.hierarchy_level > 0) {
+            // Block modification of roles with equal or higher authority (same or lower hierarchy_level number)
+            if (role.hierarchy_level <= callerRole.hierarchy_level) {
+                return res.status(403).json({
+                    message: "You don't have permission to modify a role with equal or higher authority."
+                });
+            }
+
+            // If updating hierarchy_level, ensure it's not being set to equal or higher authority
+            if (hierarchy_level !== undefined && hierarchy_level <= callerRole.hierarchy_level) {
+                return res.status(403).json({
+                    message: `You cannot set a role's hierarchy level to ${hierarchy_level}. You can only assign levels greater than your own (${callerRole.hierarchy_level}).`
+                });
+            }
         }
 
         // Check if new name conflicts with existing role
