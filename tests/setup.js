@@ -30,6 +30,10 @@ beforeAll(async () => {
       console.warn('   Consider using a separate test database to avoid data conflicts');
     }
 
+    // Sync database (create tables from models)
+    await db.sequelize.sync({ alter: false });
+    console.log('✅ Database tables synced');
+
     // Seed roles if they don't exist
     const seedRoles = require('../utils/seed_roles');
     await seedRoles();

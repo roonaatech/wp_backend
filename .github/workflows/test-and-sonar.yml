@@ -53,12 +53,6 @@ jobs:
           echo "DB_PORT=3306" >> .env
           echo "JWT_SECRET=test_jwt_secret_key" >> .env
 
-      - name: Run database migrations
-        run: npx sequelize-cli db:migrate
-        env:
-          NODE_ENV: test
-        continue-on-error: true
-
       - name: Run tests with coverage
         run: npm run test:coverage
         env:
