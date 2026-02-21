@@ -54,9 +54,10 @@ jobs:
           echo "JWT_SECRET=test_jwt_secret_key" >> .env
 
       - name: Run tests with coverage
-        run: npm run test:coverage
+        run: npm run test:all
         env:
           NODE_ENV: test
+          CI: true
         continue-on-error: true
 
       - name: SonarQube Analysis
@@ -65,10 +66,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      - name: Upload Coverage Report
+      - name: Upload Test Results Excel
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: test-results/coverage/
+          name: test-results-excel
+          path: test-results/consolidated-test-results-latest.xlsx
           retention-days: 30
