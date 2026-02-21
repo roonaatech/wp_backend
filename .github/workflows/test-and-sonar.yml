@@ -1,0 +1,54 @@
+name: Test & SonarQube
+
+on:
+  push:
+    branches:
+      - '**'  # Run on all branches
+  pull_request:
+    branches:
+      - '**'  # Run on PRs to all branches
+
+jobs:
+  test-and-analyze:
+    name: Run Tests and SonarQube Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: wp_backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./wp_backend
+        run: npm ci
+
+      - name: Run all tests (consolidated)
+        working-directory: ./wp_backend
+        run: npm run test:all
+        env:
+          NODE_ENV: test
+        continue-on-error: true
+
+      - name: SonarQube Analysis
+        uses: SonarSource/sonarqube-scan-action@master
+        with:
+          projectBaseDir: wp_backend
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Upload Excel Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-test-results
+          path: wp_backend/test-results/consolidated-test-results-latest.xlsx
+          retention-days: 30
