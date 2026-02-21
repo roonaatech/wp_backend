@@ -181,7 +181,7 @@ class ConsolidatedTestRunner {
 
     async runCoverageTests() {
         const result = await this.runCommand(
-            'NODE_ENV=test jest --config tests/jest.config.js --coverage --json',
+            'NODE_ENV=test jest --config tests/jest.config.js --coverage',
             'Coverage Tests (All Tests + RBAC)',
             'Run all tests with code coverage analysis'
         );
