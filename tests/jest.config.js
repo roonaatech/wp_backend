@@ -54,8 +54,8 @@ module.exports = {
   // Timeout for async tests (5 seconds)
   testTimeout: 5000,
 
-  // Verbose output
-  verbose: true,
+  // Verbose output (disabled to reduce buffer overflow risk)
+  verbose: false,
 
   // Clear mocks between tests
   clearMocks: true,
