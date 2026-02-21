@@ -70,6 +70,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-excel
+          name: test-results-excel.xlsx
           path: test-results/consolidated-test-results-latest.xlsx
           retention-days: 30
