@@ -24,12 +24,15 @@ module.exports = {
 
   // Coverage configuration
   collectCoverageFrom: [
-    'middleware/authJwt.js',
-    'controllers/admin.controller.js',
-    'controllers/role.controller.js',
-    'controllers/leave.controller.js',
-    'controllers/onduty.controller.js',
-    'routes/**/*.routes.js'
+    'middleware/**/*.js',
+    'controllers/**/*.js',
+    'routes/**/*.routes.js',
+    'utils/**/*.js',
+    '!utils/seed_*.js', // Exclude seed files
+    '!utils/fix_*.js', // Exclude one-time fix/migration scripts
+    '!**/node_modules/**',
+    '!**/test-results/**',
+    '!**/tests/**'
   ],
 
   // Coverage thresholds
