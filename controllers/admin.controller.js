@@ -674,7 +674,7 @@ exports.getPendingApprovals = async (req, res) => {
                     if (!onDutyLogRaw) {
                         console.log('⚠️  on_duty_log not found for ID:', approval.on_duty_log_id);
                     } else {
-                        console.log('✅ on_duty_log found:', onDutyLog.client_name);
+                        console.log('✅ on_duty_log found:', onDutyLogRaw.client_name);
                     }
                 } else {
                     enriched.on_duty_log = null;
@@ -734,28 +734,61 @@ exports.getPendingApprovals = async (req, res) => {
     }
 };
 
-exports.approveAttendance = (req, res) => {
+exports.approveAttendance = async (req, res) => {
     const id = req.params.id;
 
-    Approval.update(req.body, {
-        where: { id: id }
-    })
-        .then(num => {
-            if (num == 1) {
-                res.send({
-                    message: "Approval status was updated successfully."
-                });
-            } else {
-                res.send({
-                    message: `Cannot update Approval with id=${id}. Maybe Approval was not found or req.body is empty!`
-                });
-            }
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: "Error updating Approval with id=" + id
-            });
-        });
+    // Whitelist only the two allowed fields — prevents mass assignment
+    const { status, rejection_reason } = req.body;
+
+    // Validate status is a known enum value
+    const allowedStatuses = ['Approved', 'Rejected'];
+    if (!status || !allowedStatuses.includes(status)) {
+        return res.status(400).send({ message: "Invalid status value. Must be 'Approved' or 'Rejected'." });
+    }
+
+    // rejection_reason is mandatory when rejecting
+    if (status === 'Rejected' && !rejection_reason) {
+        return res.status(400).send({ message: "rejection_reason is required when rejecting." });
+    }
+
+    try {
+        // Fetch the approval record to verify it exists and check scope
+        const approval = await Approval.findByPk(id);
+        if (!approval) {
+            return res.status(404).send({ message: `Approval with id=${id} not found.` });
+        }
+
+        // Scope check: caller must be the designated manager on this approval,
+        // OR have a role with global approval permission (can_approve_* === 'all')
+        const Role = db.roles;
+        const currentUser = await TblStaff.findByPk(req.userId);
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        const hasGlobalApproval = userRole && (
+            userRole.can_approve_leave === 'all' ||
+            userRole.can_approve_onduty === 'all' ||
+            userRole.can_approve_timeoff === 'all'
+        );
+        const isDesignatedManager = approval.manager_id === req.userId;
+
+        if (!isDesignatedManager && !hasGlobalApproval) {
+            return res.status(403).send({ message: "You are not authorised to act on this approval." });
+        }
+
+        // Update only the whitelisted fields
+        const [num] = await Approval.update(
+            { status, rejection_reason: rejection_reason || null },
+            { where: { id } }
+        );
+
+        if (num === 1) {
+            res.send({ message: "Approval status was updated successfully." });
+        } else {
+            res.status(400).send({ message: `Cannot update Approval with id=${id}.` });
+        }
+    } catch (err) {
+        res.status(500).send({ message: "Error updating Approval with id=" + id });
+    }
 };
 
 exports.getAttendanceReports = async (req, res) => {
@@ -824,7 +857,7 @@ exports.getAttendanceReports = async (req, res) => {
         if (startDate && endDate) {
             const s = new Date(startDate);
             const e = new Date(endDate);
-            e.setHours(23,59,59,999);
+            e.setHours(23, 59, 59, 999);
             dateWhereLeave.start_date = { [Op.between]: [s, e] }; // Leave requests
             dateWhereOnDuty.start_time = { [Op.between]: [s, e] }; // On-duty logs
             dateWhereTimeOff.date = { [Op.between]: [s, e] }; // Time-off requests
@@ -834,37 +867,37 @@ exports.getAttendanceReports = async (req, res) => {
             let to = null;
             if (dateFilter === 'today') {
                 from = new Date();
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
                 to = new Date();
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === '7days') {
                 from = new Date();
                 from.setDate(today.getDate() - 7);
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
             } else if (dateFilter === '30days') {
                 from = new Date();
                 from.setDate(today.getDate() - 30);
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
             } else if (dateFilter === '90days') {
                 from = new Date();
                 from.setDate(today.getDate() - 90);
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
             } else if (dateFilter === 'thismonth') {
                 from = new Date(today.getFullYear(), today.getMonth(), 1);
                 to = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'lastmonth') {
                 from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
                 to = new Date(today.getFullYear(), today.getMonth(), 0);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'thisyear') {
                 from = new Date(today.getFullYear(), 0, 1);
                 to = new Date(today.getFullYear(), 11, 31);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'lastyear') {
                 from = new Date(today.getFullYear() - 1, 0, 1);
                 to = new Date(today.getFullYear() - 1, 11, 31);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'thisquarter' || dateFilter === 'lastquarter') {
                 const month = today.getMonth();
                 const currentQuarterStart = Math.floor(month / 3) * 3;
@@ -878,7 +911,7 @@ exports.getAttendanceReports = async (req, res) => {
                     from = new Date(year, start, 1);
                     to = new Date(year, start + 3, 0);
                 }
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             }
 
             if (from && to) {

@@ -43,7 +43,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized - Invalid or missing token
      */
-    app.get("/api/admin/dashboard/stats", [verifyToken], controller.getDashboardStats);
+    app.get("/api/admin/dashboard/stats", [verifyToken, authJwt.canAccessWebApp], controller.getDashboardStats);
 
     /**
      * @swagger
@@ -80,7 +80,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized - Invalid or missing token
      */
-    app.get("/api/admin/dashboard/daily-trend", [verifyToken], controller.getDailyTrendData);
+    app.get("/api/admin/dashboard/daily-trend", [verifyToken, authJwt.canAccessWebApp], controller.getDailyTrendData);
 
     /**
      * @swagger
@@ -374,7 +374,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.get("/api/admin/approvals", [verifyToken], controller.getPendingApprovals);
+    app.get("/api/admin/approvals", [verifyToken, authJwt.isManagerOrAdmin], controller.getPendingApprovals);
 
     /**
      * @swagger
@@ -413,7 +413,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized
      */
-    app.put("/api/admin/approvals/:id", [verifyToken], controller.approveAttendance);
+    app.put("/api/admin/approvals/:id", [verifyToken, authJwt.isManagerOrAdmin], controller.approveAttendance);
 
     /**
      * @swagger

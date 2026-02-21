@@ -7,27 +7,39 @@ module.exports = function (app) {
         next();
     });
 
+    // Debug routes are only available in non-production environments
+    if (process.env.NODE_ENV === 'production') {
+        return;
+    }
+
     const db = require("../models");
+    const { authJwt } = require("../middleware");
 
     /**
      * @swagger
      * tags:
      *   name: Debug
-     *   description: API for system debugging and troubleshooting
+     *   description: API for system debugging and troubleshooting (development only)
      */
 
     /**
      * @swagger
      * /api/debug/approvals-count:
      *   get:
-     *     summary: Get counts of various entities for debugging
+     *     summary: Get counts of various entities for debugging (development only)
      *     description: Retrieve counts of approvals, on-duty logs, and attendance logs
      *     tags: [Debug]
+     *     security:
+     *       - ApiKeyAuth: []
      *     responses:
      *       200:
      *         description: Debug counts retrieved successfully
+     *       401:
+     *         description: Unauthorized
+     *       403:
+     *         description: Forbidden - Role management permission required
      */
-    app.get("/api/debug/approvals-count", async (req, res) => {
+    app.get("/api/debug/approvals-count", [authJwt.verifyToken, authJwt.canManageRoles], async (req, res) => {
         try {
             const approvals = await db.approvals.findAll();
             const onDutyLogs = await db.on_duty_logs.findAll();
