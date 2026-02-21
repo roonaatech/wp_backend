@@ -72,10 +72,9 @@ module.exports = {
   // Maximum number of concurrent workers
   maxWorkers: 1, // Run tests sequentially to avoid database conflicts
 
-  // Add the custom CSV reporter
+  // Reporters
   reporters: [
-    'default',
-    '<rootDir>/tests/csv-reporter.js'
+    'default'
   ],
 
   // Save test results to test-results folder
