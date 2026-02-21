@@ -23,12 +23,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: wp_backend/package-lock.json
 
       - name: Install dependencies
         working-directory: ./wp_backend
-        run: npm ci
+        run: npm install
 
       - name: Run all tests (consolidated)
         working-directory: ./wp_backend
