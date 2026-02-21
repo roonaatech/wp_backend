@@ -210,8 +210,9 @@ exports.endOnDuty = (req, res) => {
                 console.log('=== EndOnDuty Complete ===\n');
 
                 // Format the response with timezone-aware time strings
+                const baseData = updatedOnDuty.get ? updatedOnDuty.get({ plain: true }) : updatedOnDuty;
                 const formattedData = {
-                    ...updatedOnDuty.toJSON(),
+                    ...baseData,
                     start_time: formatDateInTimezone(updatedOnDuty.start_time),
                     end_time: formatDateInTimezone(updatedOnDuty.end_time)
                 };
@@ -247,8 +248,9 @@ exports.endOnDuty = (req, res) => {
                     return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
                 };
 
+                const baseData = updatedOnDuty.get ? updatedOnDuty.get({ plain: true }) : updatedOnDuty;
                 const formattedData = {
-                    ...updatedOnDuty.toJSON(),
+                    ...baseData,
                     start_time: formatDateInTimezone(updatedOnDuty.start_time),
                     end_time: formatDateInTimezone(updatedOnDuty.end_time)
                 };

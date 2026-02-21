@@ -674,7 +674,7 @@ exports.getPendingApprovals = async (req, res) => {
                     if (!onDutyLogRaw) {
                         console.log('⚠️  on_duty_log not found for ID:', approval.on_duty_log_id);
                     } else {
-                        console.log('✅ on_duty_log found:', onDutyLog.client_name);
+                        console.log('✅ on_duty_log found:', onDutyLogRaw.client_name);
                     }
                 } else {
                     enriched.on_duty_log = null;
@@ -857,7 +857,7 @@ exports.getAttendanceReports = async (req, res) => {
         if (startDate && endDate) {
             const s = new Date(startDate);
             const e = new Date(endDate);
-            e.setHours(23,59,59,999);
+            e.setHours(23, 59, 59, 999);
             dateWhereLeave.start_date = { [Op.between]: [s, e] }; // Leave requests
             dateWhereOnDuty.start_time = { [Op.between]: [s, e] }; // On-duty logs
             dateWhereTimeOff.date = { [Op.between]: [s, e] }; // Time-off requests
@@ -867,37 +867,37 @@ exports.getAttendanceReports = async (req, res) => {
             let to = null;
             if (dateFilter === 'today') {
                 from = new Date();
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
                 to = new Date();
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === '7days') {
                 from = new Date();
                 from.setDate(today.getDate() - 7);
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
             } else if (dateFilter === '30days') {
                 from = new Date();
                 from.setDate(today.getDate() - 30);
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
             } else if (dateFilter === '90days') {
                 from = new Date();
                 from.setDate(today.getDate() - 90);
-                from.setHours(0,0,0,0);
+                from.setHours(0, 0, 0, 0);
             } else if (dateFilter === 'thismonth') {
                 from = new Date(today.getFullYear(), today.getMonth(), 1);
                 to = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'lastmonth') {
                 from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
                 to = new Date(today.getFullYear(), today.getMonth(), 0);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'thisyear') {
                 from = new Date(today.getFullYear(), 0, 1);
                 to = new Date(today.getFullYear(), 11, 31);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'lastyear') {
                 from = new Date(today.getFullYear() - 1, 0, 1);
                 to = new Date(today.getFullYear() - 1, 11, 31);
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             } else if (dateFilter === 'thisquarter' || dateFilter === 'lastquarter') {
                 const month = today.getMonth();
                 const currentQuarterStart = Math.floor(month / 3) * 3;
@@ -911,7 +911,7 @@ exports.getAttendanceReports = async (req, res) => {
                     from = new Date(year, start, 1);
                     to = new Date(year, start + 3, 0);
                 }
-                to.setHours(23,59,59,999);
+                to.setHours(23, 59, 59, 999);
             }
 
             if (from && to) {

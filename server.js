@@ -65,16 +65,22 @@ require('./routes/timeoff.routes')(app);
 db.sequelize.sync()
     .then(() => {
         console.log('Synced db.');
-        // Seed Email Templates
-        require('./utils/seed_templates')();
+        // Only run background services if not in test mode
+        if (process.env.NODE_ENV !== 'test') {
+            // Seed Email Templates
+            require('./utils/seed_templates')();
 
-        app.listen(PORT, () => {
-            console.log(`Server is running on port ${PORT}.`);
-            console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);
-            // Keep process alive check
-            setInterval(() => { }, 1000 * 60);
-        });
+            app.listen(PORT, () => {
+                console.log(`Server is running on port ${PORT}.`);
+                console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);
+                // Keep process alive check
+                setInterval(() => { }, 1000 * 60);
+            });
+        }
     })
     .catch((err) => {
         console.log('Failed to sync db: ' + err.message);
     });
+
+// Export app for testing
+module.exports = app;
