@@ -29,10 +29,7 @@ function cleanupTestResults() {
     }
 
     const filesToKeep = [
-        'README.md',
-        'latest.json',
-        'exhaustive-latest.json',
-        'consolidated-test-results-latest.xlsx'
+        'README.md'
     ];
 
     let removedCount = 0;

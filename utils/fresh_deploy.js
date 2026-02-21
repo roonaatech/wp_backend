@@ -24,7 +24,7 @@ async function freshDeploy() {
         const migrationsDir = path.join(__dirname, '../migrations');
         const migrationFiles = fs.readdirSync(migrationsDir)
             .filter(file => file.endsWith('.js'))
-            .sort();
+            .sort((a, b) => a.localeCompare(b));
 
         for (const filename of migrationFiles) {
             const [exists] = await db.sequelize.query(
