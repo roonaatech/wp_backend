@@ -68,17 +68,10 @@ module.exports = {
   // Maximum number of concurrent workers
   maxWorkers: 1, // Run tests sequentially to avoid database conflicts
 
-  // Add the custom CSV reporter and SonarQube reporter
+  // Add the custom CSV reporter
   reporters: [
     'default',
-    '<rootDir>/tests/csv-reporter.js',
-    [
-      'jest-sonar-reporter',
-      {
-        outputDirectory: '<rootDir>/test-results',
-        outputName: 'sonar-test-report.xml'
-      }
-    ]
+    '<rootDir>/tests/csv-reporter.js'
   ],
 
   // Save test results to test-results folder
