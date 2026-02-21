@@ -25,11 +25,9 @@ jobs:
           node-version: '18'
 
       - name: Install dependencies
-        working-directory: ./wp_backend
         run: npm install
 
       - name: Run all tests (consolidated)
-        working-directory: ./wp_backend
         run: npm run test:all
         env:
           NODE_ENV: test
@@ -37,8 +35,6 @@ jobs:
 
       - name: SonarQube Analysis
         uses: SonarSource/sonarqube-scan-action@master
-        with:
-          projectBaseDir: wp_backend
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
@@ -48,5 +44,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: consolidated-test-results
-          path: wp_backend/test-results/consolidated-test-results-latest.xlsx
+          path: test-results/consolidated-test-results-latest.xlsx
           retention-days: 30
