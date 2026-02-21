@@ -77,6 +77,9 @@ module.exports = {
   // Save test results to test-results folder
   coverageDirectory: '<rootDir>/test-results/coverage',
 
+  // Coverage report formats (lcov required for SonarQube)
+  coverageReporters: ['text', 'lcov', 'json-summary', 'html'],
+
   // Additional test result outputs
   testResultsProcessor: '<rootDir>/tests/test-results-processor.js'
 };
