@@ -3,15 +3,31 @@ name: Test & SonarQube
 on:
   push:
     branches:
-      - '**'  # Run on all branches
+      - '**'
   pull_request:
     branches:
-      - '**'  # Run on PRs to all branches
+      - '**'
 
 jobs:
   test-and-analyze:
     name: Run Tests and SonarQube Analysis
     runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root_password
+          MYSQL_DATABASE: workpulse_test
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
 
     steps:
       - name: Checkout code
@@ -27,8 +43,24 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run all tests (consolidated)
-        run: npm run test:all
+      - name: Create test environment file
+        run: |
+          echo "NODE_ENV=test" > .env
+          echo "DB_HOST=127.0.0.1" >> .env
+          echo "DB_USER=testuser" >> .env
+          echo "DB_PASSWORD=testpass" >> .env
+          echo "DB_NAME=workpulse_test" >> .env
+          echo "DB_PORT=3306" >> .env
+          echo "JWT_SECRET=test_jwt_secret_key" >> .env
+
+      - name: Run database migrations
+        run: npx sequelize-cli db:migrate
+        env:
+          NODE_ENV: test
+        continue-on-error: true
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
         env:
           NODE_ENV: test
         continue-on-error: true
@@ -39,10 +71,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      - name: Upload Excel Report
+      - name: Upload Coverage Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: consolidated-test-results
-          path: test-results/consolidated-test-results-latest.xlsx
+          name: coverage-report
+          path: test-results/coverage/
           retention-days: 30
