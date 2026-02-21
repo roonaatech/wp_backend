@@ -182,11 +182,22 @@ class ConsolidatedTestRunner {
     async runCoverageTests() {
         const result = await this.runCommand(
             'NODE_ENV=test jest --config tests/jest.config.js --coverage --json',
-            'Coverage Tests',
-            'Run tests with code coverage analysis'
+            'Coverage Tests (All Tests + RBAC)',
+            'Run all tests with code coverage analysis'
         );
 
         try {
+            // Read test results (includes all Jest and RBAC tests)
+            const latestFile = path.join(TEST_RESULTS_DIR, 'latest.json');
+            if (fs.existsSync(latestFile)) {
+                const testResults = JSON.parse(fs.readFileSync(latestFile, 'utf-8'));
+                // Populate both jestResults and rbacResults with same data
+                // (since coverage run includes all tests)
+                this.results.jestResults = testResults;
+                this.results.rbacResults = testResults;
+            }
+
+            // Read coverage summary
             const coverageSummaryFile = path.join(TEST_RESULTS_DIR, 'coverage', 'coverage-summary.json');
             if (fs.existsSync(coverageSummaryFile)) {
                 this.results.coverageResults = JSON.parse(fs.readFileSync(coverageSummaryFile, 'utf-8'));
@@ -498,9 +509,7 @@ class ConsolidatedTestRunner {
         const startTime = Date.now();
         const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
 
-        // Run all test suites
-        await this.runJestTests();
-        await this.runRBACTests();
+        // Run all test suites with coverage (includes Jest + RBAC tests)
         await this.runCoverageTests();
 
         // Skip exhaustive tests in CI (requires database + takes too long)

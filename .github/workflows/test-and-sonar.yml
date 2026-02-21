@@ -65,11 +65,3 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      - name: Upload Test Results Excel
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-excel.xlsx
-          path: test-results/consolidated-test-results-latest.xlsx
-          retention-days: 30
