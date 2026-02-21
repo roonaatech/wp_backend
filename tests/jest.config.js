@@ -15,7 +15,8 @@ module.exports = {
   // Test file patterns
   testMatch: [
     '<rootDir>/tests/rbac/**/*.test.js',
-    '<rootDir>/tests/integration/**/*.test.js'
+    '<rootDir>/tests/integration/**/*.test.js',
+    '<rootDir>/tests/controllers/**/*.test.js'
   ],
 
   // Setup files
