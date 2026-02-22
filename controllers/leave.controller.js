@@ -570,6 +570,8 @@ exports.getManageableRequests = async (req, res) => {
 
         // Get status from query, default to 'Pending'
         const status = req.query.status || 'Pending';
+        const staffNameFilter = req.query.staff_name;
+        const leaveTypeFilter = req.query.leave_type;
 
         // Get pagination parameters
         const page = parseInt(req.query.page) || 1;
@@ -582,28 +584,41 @@ exports.getManageableRequests = async (req, res) => {
         const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
         const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
 
-        // If user can only approve subordinates, get their reportees
-        let reporteeIds = [];
-        if (!canApproveAllLeave || !canApproveAllOnDuty) {
-            const reportees = await Staff.findAll({
-                attributes: ['staffid'],
-                where: {
-                    approving_manager_id: req.userId
-                },
+        // Get all manageable staff members for filtering and hierarchy check
+        let manageableStaff = [];
+        if (canApproveAllLeave || canApproveAllOnDuty) {
+            manageableStaff = await Staff.findAll({
+                attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                where: { active: 1 },
                 raw: true
             });
-            reporteeIds = reportees.map(r => r.staffid);
-            console.log(`User ${req.userId} - filtering by reportees:`, reporteeIds);
+        } else {
+            manageableStaff = await Staff.findAll({
+                attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                where: { approving_manager_id: req.userId, active: 1 },
+                raw: true
+            });
         }
+
+        const reporteeIds = manageableStaff.map(s => s.staffid);
+        console.log(`User ${req.userId} - identified ${manageableStaff.length} manageable staff members`);
 
         // Build where clause for leaves
         let leaveWhere = { status: status };
-        if (!canApproveAllLeave && reporteeIds.length > 0) {
+
+        // Apply staff name filter if provided
+        if (staffNameFilter && staffNameFilter !== 'All') {
+            const filteredIds = manageableStaff
+                .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
+                .map(s => s.staffid);
+            leaveWhere.staff_id = { [Op.in]: filteredIds };
+        } else if (!canApproveAllLeave && reporteeIds.length > 0) {
             leaveWhere.staff_id = { [Op.in]: reporteeIds };
         } else if (!canApproveAllLeave && reporteeIds.length === 0) {
             // User has no reportees, return empty
             return res.status(200).send({
                 items: [],
+                manageableStaff: manageableStaff, // Return full list even if no results
                 pagination: {
                     currentPage: page,
                     pageSize: limit,
@@ -615,6 +630,11 @@ exports.getManageableRequests = async (req, res) => {
                     hasPrevPage: false
                 }
             });
+        }
+
+        // Apply leave type filter
+        if (leaveTypeFilter && leaveTypeFilter !== 'All') {
+            leaveWhere.leave_type = leaveTypeFilter;
         }
 
         // Fetch Leaves with pagination
@@ -641,16 +661,22 @@ exports.getManageableRequests = async (req, res) => {
             onDutyWhere.end_time = { [Op.ne]: null };
         }
 
-        // Check if user has permission to view on-duty requests
-        const hasOnDutyPermission = userRole && userRole.can_approve_onduty !== 'none';
-        if (!hasOnDutyPermission) {
-            // User has no on-duty approval permission, skip on-duty logs
-            onDutyWhere.staff_id = { [Op.in]: [] }; // Empty result
+        // Apply staff name filter if provided
+        if (staffNameFilter && staffNameFilter !== 'All') {
+            const filteredIds = manageableStaff
+                .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
+                .map(s => s.staffid);
+            onDutyWhere.staff_id = { [Op.in]: filteredIds };
         } else if (!canApproveAllOnDuty && reporteeIds.length > 0) {
             onDutyWhere.staff_id = { [Op.in]: reporteeIds };
         } else if (!canApproveAllOnDuty && reporteeIds.length === 0) {
             // User has subordinates permission but no reportees, skip on-duty logs
             onDutyWhere.staff_id = { [Op.in]: [] }; // Empty result
+        }
+
+        // Apply leave type filter - if a specific leave type is selected, on-duty logs won't match
+        if (leaveTypeFilter && leaveTypeFilter !== 'All') {
+            onDutyWhere.id = { [Op.in]: [] }; // Force empty for on-duty when filtering by leave type
         }
 
         const onDutyLogs = await OnDutyLog.findAll({
@@ -722,13 +748,23 @@ exports.getManageableRequests = async (req, res) => {
 
         // Build where clause for Time-Off
         const timeOffWhere = { status: status };
-        // Apply same filters as leaves (assuming same permission logic)
-        if (!canApproveAllLeave) {
+        // Apply staff name filter if provided
+        if (staffNameFilter && staffNameFilter !== 'All') {
+            const filteredIds = manageableStaff
+                .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
+                .map(s => s.staffid);
+            timeOffWhere.staff_id = { [Op.in]: filteredIds };
+        } else if (!canApproveAllLeave) {
             if (reporteeIds.length > 0) {
                 timeOffWhere.staff_id = { [Op.in]: reporteeIds };
             } else {
                 timeOffWhere.staff_id = { [Op.in]: [] }; // Force empty
             }
+        }
+
+        // Apply leave type filter - Time-Off is not a leave type, so skip if specific leave type selected
+        if (leaveTypeFilter && leaveTypeFilter !== 'All') {
+            timeOffWhere.id = { [Op.in]: [] };
         }
 
 
@@ -784,6 +820,7 @@ exports.getManageableRequests = async (req, res) => {
 
         res.status(200).send({
             items: paginatedItems,
+            manageableStaff: manageableStaff, // For frontend filtering
             pagination: {
                 currentPage: page,
                 pageSize: limit,

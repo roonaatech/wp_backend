@@ -13,12 +13,7 @@ exports.findAll = async (req, res) => {
 
         // If user has can_manage_roles permission, return all fields
         // Otherwise, return only safe fields needed for display name lookups
-        const attributes = isRoleManager
-            ? undefined  // return all fields for role managers
-            : ['id', 'name', 'display_name', 'hierarchy_level', 'active'];  // safe subset
-
         const roles = await Role.findAll({
-            attributes,
             order: [['hierarchy_level', 'ASC'], ['id', 'ASC']]
         });
         res.json(roles);

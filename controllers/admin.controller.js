@@ -1469,37 +1469,38 @@ exports.getDailyTrendData = async (req, res) => {
             reporteeIds = reportees.map(r => r.staffid);
         }
 
+        const tz = await getAppTimezone();
         const trendData = [];
-        const today = new Date();
-        let dateStart, dateEnd;
+        let dateStartStr, dateEndStr;
 
         // Determine the date range to use
         if (startDate && endDate) {
-            // Use custom date range
-            dateStart = new Date(startDate + 'T00:00:00');
-            dateEnd = new Date(endDate + 'T23:59:59');
+            dateStartStr = startDate;
+            dateEndStr = endDate;
         } else {
-            // Use default days range
-            dateStart = new Date(today);
-            dateStart.setDate(dateStart.getDate() - (days - 1));
-            dateStart.setHours(0, 0, 0, 0);
-            dateEnd = new Date(today);
-            dateEnd.setHours(23, 59, 59, 999);
+            const nowInTz = formatDateInTimezone(new Date(), tz);
+            const todayStr = nowInTz.split(' ')[0];
+            const end = new Date(todayStr + 'T00:00:00');
+            const start = new Date(end);
+            start.setDate(start.getDate() - (days - 1));
+
+            dateStartStr = start.toISOString().split('T')[0];
+            dateEndStr = todayStr;
         }
 
-        // Generate dates for the range
-        const currentDate = new Date(dateStart);
-        while (currentDate <= dateEnd) {
-            const startOfDay = new Date(currentDate);
-            startOfDay.setHours(0, 0, 0, 0);
+        // Generate Dates
+        let current = new Date(dateStartStr + 'T00:00:00');
+        const final = new Date(dateEndStr + 'T00:00:00');
 
-            const endOfDay = new Date(currentDate);
-            endOfDay.setHours(23, 59, 59, 999);
+        while (current <= final) {
+            const dateStrISO = current.toISOString().split('T')[0];
+            const [startOfDay, endOfDay] = getUTCBounds(dateStrISO, tz);
 
-            const day = String(currentDate.getDate()).padStart(2, '0');
-            const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-            const year = String(currentDate.getFullYear()).slice(-2);
-            const dateStr = `${day}/${month}/${year}`;
+            // Format for display (DD/MM/YY)
+            const d = String(current.getDate()).padStart(2, '0');
+            const m = String(current.getMonth() + 1).padStart(2, '0');
+            const y = String(current.getFullYear()).slice(-2);
+            const displayDateStr = `${d}/${m}/${y}`;
 
             // Count approved leaves on this day
             const approvedLeavesCount = await LeaveRequest.count({
@@ -1538,15 +1539,14 @@ exports.getDailyTrendData = async (req, res) => {
             });
 
             trendData.push({
-                day: dateStr,
+                day: displayDateStr,
                 leaves: approvedLeavesCount,
                 onDuty: approvedOnDutyCount,
                 timeOff: approvedTimeOffCount,
                 total: approvedLeavesCount + approvedOnDutyCount + approvedTimeOffCount
             });
 
-            // Move to next day
-            currentDate.setDate(currentDate.getDate() + 1);
+            current.setDate(current.getDate() + 1);
         }
 
         console.log(`Daily trend data for ${days} days:`, trendData);

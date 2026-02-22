@@ -9,7 +9,7 @@ exports.findByUserGender = async (req, res) => {
 
         // Get user's gender
         const user = await User.findByPk(req.userId);
-        
+
         if (!user) {
             return res.status(404).send({
                 message: "User not found."
@@ -82,11 +82,20 @@ exports.create = (req, res) => {
         return res.status(400).send({ message: "Leave type name is required!" });
     }
 
+    let finalGenderRestriction = null;
+    if (gender_restriction) {
+        if (Array.isArray(gender_restriction)) {
+            finalGenderRestriction = gender_restriction.length > 0 ? gender_restriction : null;
+        } else if (typeof gender_restriction === 'string' && gender_restriction.trim().length > 0) {
+            finalGenderRestriction = [gender_restriction];
+        }
+    }
+
     LeaveType.create({
         name: name,
         description: description || null,
         days_allowed: days_allowed || 0,
-        gender_restriction: gender_restriction && gender_restriction.length > 0 ? gender_restriction : null,
+        gender_restriction: finalGenderRestriction,
         status: true
     })
         .then(data => {
@@ -117,7 +126,11 @@ exports.update = (req, res) => {
                 name: name !== undefined ? name : leaveType.name,
                 description: description !== undefined ? description : leaveType.description,
                 days_allowed: days_allowed !== undefined ? days_allowed : leaveType.days_allowed,
-                gender_restriction: gender_restriction !== undefined ? (gender_restriction && gender_restriction.length > 0 ? gender_restriction : null) : leaveType.gender_restriction,
+                gender_restriction: gender_restriction !== undefined
+                    ? (Array.isArray(gender_restriction)
+                        ? (gender_restriction.length > 0 ? gender_restriction : null)
+                        : (typeof gender_restriction === 'string' && gender_restriction.trim().length > 0 ? [gender_restriction] : null))
+                    : leaveType.gender_restriction,
                 status: status !== undefined ? status : leaveType.status
             });
         })
