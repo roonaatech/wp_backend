@@ -12,6 +12,7 @@ async function seedRoles() {
       can_approve_leave: "all",
       can_approve_onduty: "all",
       can_manage_users: "all",
+      can_view_users: "all",
       can_manage_leave_types: true,
       can_view_reports: "all",
       can_access_webapp: true,

@@ -28,7 +28,7 @@ const validateTimeOffHours = async (staff_id, date, start_time, end_time, exclud
     if (durationHours > maxHours) {
         return {
             valid: false,
-            message: `Time-off request exceeds the maximum allowance of ${maxHours} hours per day.`
+            message: `Time-off request of ${parseFloat(durationHours.toFixed(2))} hours exceeds the maximum allowance of ${maxHours} hours per day.`
         };
     }
 
@@ -54,7 +54,7 @@ const validateTimeOffHours = async (staff_id, date, start_time, end_time, exclud
     if (totalHoursWithThisRequest > maxHours) {
         return {
             valid: false,
-            message: `This request would exceed the daily limit of ${maxHours} hours. You have already requested ${totalExistingHours} hours for ${date}. This request of ${durationHours} hours would total ${totalHoursWithThisRequest} hours.`
+            message: `This request would exceed the daily limit of ${maxHours} hours. You have already requested ${parseFloat(totalExistingHours.toFixed(2))} hours for ${date}. This request of ${parseFloat(durationHours.toFixed(2))} hours would total ${parseFloat(totalHoursWithThisRequest.toFixed(2))} hours.`
         };
     }
 
@@ -68,6 +68,13 @@ exports.applyTimeOff = async (req, res) => {
 
         if (!date || !start_time || !end_time || !reason) {
             return res.status(400).send({ message: "Date, start time, end time, and reason are required!" });
+        }
+
+        // Validate that date is not a Sunday
+        const dateParts = String(date).split('T')[0].split('-');
+        const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+        if (dateObj.getDay() === 0) {
+            return res.status(400).send({ message: "Time-off requests cannot be submitted for Sundays." });
         }
 
         // Validate time format (HH:MM or HH:MM:SS)
@@ -182,6 +189,15 @@ exports.updateTimeOffDetails = async (req, res) => {
 
         if (timeOff.status !== 'Pending') {
             return res.status(400).send({ message: "Cannot update a request that has already been processed." });
+        }
+
+        // Validate that updated date is not a Sunday
+        if (date) {
+            const dateParts = String(date).split('T')[0].split('-');
+            const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+            if (dateObj.getDay() === 0) {
+                return res.status(400).send({ message: "Time-off requests cannot be submitted for Sundays." });
+            }
         }
 
         // Validate time format (HH:MM)

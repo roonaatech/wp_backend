@@ -7,12 +7,57 @@ const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+const Setting = db.settings;
+
+// Helper to get application timezone
+const getAppTimezone = async () => {
+    try {
+        const tzSetting = await Setting.findOne({ where: { key: 'application_timezone' } });
+        return tzSetting ? tzSetting.value : 'Asia/Kolkata';
+    } catch (e) {
+        return 'Asia/Kolkata';
+    }
+};
+
+// Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+const formatDateInTimezone = (dateObj, tz) => {
+    if (!dateObj) return null;
+    try {
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            hourCycle: 'h23'
+        });
+        const parts = formatter.formatToParts(new Date(dateObj));
+        const p = {};
+        parts.forEach(part => { p[part.type] = part.value; });
+        return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+    } catch (e) {
+        return String(dateObj);
+    }
+};
 
 
 // Helper to calculate days excluding Sundays
 const calculateLeaveDays = (startDate, endDate) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    // Parse YYYY-MM-DD manually to avoid UTC timezone shift issues
+    const parseDate = (dateStr) => {
+        if (typeof dateStr !== 'string') return new Date(dateStr);
+        const parts = String(dateStr).split('T')[0].split('-');
+        if (parts.length === 3) {
+            return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        }
+        return new Date(dateStr);
+    };
+
+    const start = parseDate(startDate);
+    const end = parseDate(endDate);
     let count = 0;
     const current = new Date(start);
 
@@ -38,6 +83,17 @@ exports.applyLeave = async (req, res) => {
 
         if (!leave_type || !start_date || !end_date) {
             return res.status(400).send({ message: "Leave type, start date, and end date are required!" });
+        }
+
+        // Validate that start/end dates do not fall on a Sunday
+        const parseDateParts = (d) => { const p = String(d).split('T')[0].split('-'); return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2])); };
+        const startDay = parseDateParts(start_date);
+        const endDay = parseDateParts(end_date);
+        if (startDay.getDay() === 0) {
+            return res.status(400).send({ message: "Start date cannot be a Sunday." });
+        }
+        if (endDay.getDay() === 0) {
+            return res.status(400).send({ message: "End date cannot be a Sunday." });
         }
 
         // --- Validate Leave Balance ---
@@ -437,6 +493,9 @@ exports.getPendingLeaves = async (req, res) => {
             createdAt: l.createdAt
         }));
 
+        // Get timezone for formatting on-duty times
+        const tz1 = await getAppTimezone();
+
         const normalizedOnDuty = onDutyLogs.map(l => ({
             type: 'on_duty',
             id: l.id,
@@ -444,14 +503,14 @@ exports.getPendingLeaves = async (req, res) => {
             tblstaff: l.user,
             title: `On-Duty: ${l.client_name}`,
             reason: `${l.purpose} (${l.location})`,
-            start_date: l.start_time,
-            end_date: l.end_time,
+            start_date: formatDateInTimezone(l.start_time, tz1),
+            end_date: formatDateInTimezone(l.end_time, tz1),
             createdAt: l.start_time,
             client_name: l.client_name,
             location: l.location,
             purpose: l.purpose,
-            start_time: l.start_time,
-            end_time: l.end_time,
+            start_time: formatDateInTimezone(l.start_time, tz1),
+            end_time: formatDateInTimezone(l.end_time, tz1),
             start_lat: l.start_lat,
             start_long: l.start_long,
             end_lat: l.end_lat,
@@ -630,7 +689,8 @@ exports.getManageableRequests = async (req, res) => {
             };
         });
 
-        // Normalize on-duty logs
+        // Normalize on-duty logs with timezone-aware formatting
+        const tz = await getAppTimezone();
         const normalizedOnDuty = onDutyLogs.map(l => {
             return {
                 type: 'on_duty',
@@ -639,8 +699,8 @@ exports.getManageableRequests = async (req, res) => {
                 tblstaff: l.user,
                 title: `On-Duty: ${l.client_name}`,
                 reason: `${l.purpose} (${l.location})`,
-                start_date: l.start_time,
-                end_date: l.end_time,
+                start_date: formatDateInTimezone(l.start_time, tz),
+                end_date: formatDateInTimezone(l.end_time, tz),
                 status: l.status,
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
@@ -649,8 +709,8 @@ exports.getManageableRequests = async (req, res) => {
                 client_name: l.client_name,
                 location: l.location,
                 purpose: l.purpose,
-                start_time: l.start_time,
-                end_time: l.end_time,
+                start_time: formatDateInTimezone(l.start_time, tz),
+                end_time: formatDateInTimezone(l.end_time, tz),
                 start_lat: l.start_lat,
                 start_long: l.start_long,
                 end_lat: l.end_lat,
@@ -891,7 +951,16 @@ exports.updateLeaveDetails = async (req, res) => {
             return res.status(403).send({ message: "Unauthorized to edit this request." });
         }
 
-        // Check for overlapping leaves (excluding current leave being edited)
+        // Validate that updated dates do not fall on a Sunday
+        if (start_date || end_date) {
+            const parseDateParts = (d) => { const p = String(d).split('T')[0].split('-'); return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2])); };
+            if (start_date && parseDateParts(start_date).getDay() === 0) {
+                return res.status(400).send({ message: "Start date cannot be a Sunday." });
+            }
+            if (end_date && parseDateParts(end_date).getDay() === 0) {
+                return res.status(400).send({ message: "End date cannot be a Sunday." });
+            }
+        }
         if (start_date || end_date) {
             const checkStartDate = start_date || leave.start_date;
             const checkEndDate = end_date || leave.end_date;

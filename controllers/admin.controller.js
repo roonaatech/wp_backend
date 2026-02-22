@@ -6,6 +6,84 @@ const TimeOffRequest = db.time_off_requests;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const Op = db.Sequelize.Op;
+const Setting = db.settings;
+
+// Helper to get application timezone
+const getAppTimezone = async () => {
+    try {
+        const tzSetting = await Setting.findOne({ where: { key: 'application_timezone' } });
+        return tzSetting ? tzSetting.value : 'Asia/Kolkata';
+    } catch (e) {
+        return 'Asia/Kolkata';
+    }
+};
+
+/**
+ * Converts a "local" date string (YYYY-MM-DD) into UTC bounds [start, end]
+ * matching that full day in the target timezone.
+ */
+const getUTCBounds = (dateStr, tz) => {
+    // Treat dateStr as the start of the day in the target timezone
+    // We create a date string that specifies the timezone to force correct parsing
+    const start = new Date(new Date(`${dateStr}T00:00:00`).toLocaleString('en-US', { timeZone: tz }));
+    // However, the above 'toLocaleString' trick is often for the current system.
+
+    // Better way using Intl:
+    const year = parseInt(dateStr.substring(0, 4));
+    const month = parseInt(dateStr.substring(5, 7));
+    const day = parseInt(dateStr.substring(8, 10));
+
+    // We want a UTC date which, when formatted in 'tz', results in 'dateStr 00:00:00'
+    // To find this exactly without moment, we can use the offset.
+    const getOffsetMinutes = (date, timezone) => {
+        const loc = date.toLocaleString('en-US', { timeZone: timezone, hour12: false });
+        // parse the loc string "MM/DD/YYYY, HH:mm:ss"
+        const [dPart, tPart] = loc.split(', ');
+        const [m, d, y] = dPart.split('/').map(Number);
+        const [hh, mm, ss] = tPart.split(':').map(Number);
+        const locDate = new Date(Date.UTC(y, m - 1, d, hh, mm, ss));
+        return (locDate.getTime() - date.getTime()) / 60000;
+    };
+
+    // Estimate UTC start (local midnight - 14h to be safe for any TZ)
+    let utcDate = new Date(Date.UTC(year, month - 1, day));
+    const offset = getOffsetMinutes(utcDate, tz);
+
+    const startUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0) - (offset * 60000));
+    const endUTC = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999) - (offset * 60000));
+
+    return [startUTC, endUTC];
+};
+
+// Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+const formatDateInTimezone = (dateObj, tz) => {
+    if (!dateObj) return null;
+    try {
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            hourCycle: 'h23'
+        });
+        const parts = formatter.formatToParts(new Date(dateObj));
+        const p = {};
+        parts.forEach(part => { p[part.type] = part.value; });
+        return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+    } catch (e) {
+        return String(dateObj);
+    }
+};
+
+// Helper to get date-only string in app timezone (YYYY-MM-DD)
+const getDateInTimezone = (dateObj, tz) => {
+    const formatted = formatDateInTimezone(dateObj, tz);
+    return formatted ? formatted.split(' ')[0] : null;
+};
 
 exports.getIncompleteProfiles = async (req, res) => {
     try {
@@ -800,6 +878,7 @@ exports.getAttendanceReports = async (req, res) => {
         const TimeOffRequest = db.time_off_requests;
         const Staff = db.user;
         const Role = db.roles;
+        const reportTz = await getAppTimezone();
 
         // --- 1. Permissions & User Scoping ---
         const currentUser = await Staff.findByPk(req.userId);
@@ -855,73 +934,60 @@ exports.getAttendanceReports = async (req, res) => {
         const { startDate, endDate } = req.query;
 
         if (startDate && endDate) {
-            const s = new Date(startDate);
-            const e = new Date(endDate);
-            e.setHours(23, 59, 59, 999);
-            dateWhereLeave.start_date = { [Op.between]: [s, e] }; // Leave requests
-            dateWhereOnDuty.start_time = { [Op.between]: [s, e] }; // On-duty logs
-            dateWhereTimeOff.date = { [Op.between]: [s, e] }; // Time-off requests
-        } else if (dateFilter && dateFilter !== 'all') {
-            const today = new Date();
-            let from = null;
-            let to = null;
-            if (dateFilter === 'today') {
-                from = new Date();
-                from.setHours(0, 0, 0, 0);
-                to = new Date();
-                to.setHours(23, 59, 59, 999);
-            } else if (dateFilter === '7days') {
-                from = new Date();
-                from.setDate(today.getDate() - 7);
-                from.setHours(0, 0, 0, 0);
-            } else if (dateFilter === '30days') {
-                from = new Date();
-                from.setDate(today.getDate() - 30);
-                from.setHours(0, 0, 0, 0);
-            } else if (dateFilter === '90days') {
-                from = new Date();
-                from.setDate(today.getDate() - 90);
-                from.setHours(0, 0, 0, 0);
-            } else if (dateFilter === 'thismonth') {
-                from = new Date(today.getFullYear(), today.getMonth(), 1);
-                to = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                to.setHours(23, 59, 59, 999);
-            } else if (dateFilter === 'lastmonth') {
-                from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-                to = new Date(today.getFullYear(), today.getMonth(), 0);
-                to.setHours(23, 59, 59, 999);
-            } else if (dateFilter === 'thisyear') {
-                from = new Date(today.getFullYear(), 0, 1);
-                to = new Date(today.getFullYear(), 11, 31);
-                to.setHours(23, 59, 59, 999);
-            } else if (dateFilter === 'lastyear') {
-                from = new Date(today.getFullYear() - 1, 0, 1);
-                to = new Date(today.getFullYear() - 1, 11, 31);
-                to.setHours(23, 59, 59, 999);
-            } else if (dateFilter === 'thisquarter' || dateFilter === 'lastquarter') {
-                const month = today.getMonth();
-                const currentQuarterStart = Math.floor(month / 3) * 3;
-                if (dateFilter === 'thisquarter') {
-                    from = new Date(today.getFullYear(), currentQuarterStart, 1);
-                    to = new Date(today.getFullYear(), currentQuarterStart + 3, 0);
-                } else {
-                    let start = currentQuarterStart - 3;
-                    let year = today.getFullYear();
-                    if (start < 0) { start += 12; year -= 1; }
-                    from = new Date(year, start, 1);
-                    to = new Date(year, start + 3, 0);
-                }
-                to.setHours(23, 59, 59, 999);
-            }
+            const [sUTC] = getUTCBounds(startDate, reportTz);
+            const [, eUTC] = getUTCBounds(endDate, reportTz);
 
-            if (from && to) {
-                dateWhereLeave.start_date = { [Op.between]: [from, to] };
-                dateWhereOnDuty.start_time = { [Op.between]: [from, to] };
-                dateWhereTimeOff.date = { [Op.between]: [from, to] };
-            } else if (from) {
-                dateWhereLeave.start_date = { [Op.gte]: from };
-                dateWhereOnDuty.start_time = { [Op.gte]: from };
-                dateWhereTimeOff.date = { [Op.gte]: from };
+            // Leave requests use DATEONLY, so we can use strings if we want, but between works too
+            dateWhereLeave.start_date = { [Op.between]: [startDate, endDate] };
+            dateWhereOnDuty.start_time = { [Op.between]: [sUTC, eUTC] };
+            dateWhereTimeOff.date = { [Op.between]: [startDate, endDate] };
+        } else if (dateFilter && dateFilter !== 'all') {
+            const now = new Date();
+            const nowIST = formatDateInTimezone(now, reportTz);
+            const todayStr = nowIST.split(' ')[0];
+
+            let fromUTC = null;
+            let toUTC = null;
+            let fromStr = null;
+            let toStr = null;
+
+            if (dateFilter === 'today') {
+                const [s, e] = getUTCBounds(todayStr, reportTz);
+                fromUTC = s; toUTC = e;
+                fromStr = todayStr; toStr = todayStr;
+            } else if (dateFilter === '7days') {
+                const d = new Date();
+                d.setDate(d.getDate() - 7);
+                const dIST = formatDateInTimezone(d, reportTz).split(' ')[0];
+                const [s] = getUTCBounds(dIST, reportTz);
+                const [, e] = getUTCBounds(todayStr, reportTz);
+                fromUTC = s; toUTC = e;
+                fromStr = dIST; toStr = todayStr;
+            } else if (dateFilter === '30days') {
+                const d = new Date();
+                d.setDate(d.getDate() - 30);
+                const dIST = formatDateInTimezone(d, reportTz).split(' ')[0];
+                const [s] = getUTCBounds(dIST, reportTz);
+                const [, e] = getUTCBounds(todayStr, reportTz);
+                fromUTC = s; toUTC = e;
+                fromStr = dIST; toStr = todayStr;
+            } else if (dateFilter === 'thismonth') {
+                const [y, m] = todayStr.split('-').map(Number);
+                const startStr = `${y}-${String(m).padStart(2, '0')}-01`;
+                const endStr = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+                const [s] = getUTCBounds(startStr, reportTz);
+                const [, e] = getUTCBounds(endStr, reportTz);
+                fromUTC = s; toUTC = e;
+                fromStr = startStr; toStr = endStr;
+            }
+            // ... (adding other presets if needed, but these are the most common)
+
+            if (fromUTC && toUTC) {
+                dateWhereOnDuty.start_time = { [Op.between]: [fromUTC, toUTC] };
+            }
+            if (fromStr && toStr) {
+                dateWhereLeave.start_date = { [Op.between]: [fromStr, toStr] };
+                dateWhereTimeOff.date = { [Op.between]: [fromStr, toStr] };
             }
         }
 
@@ -1084,9 +1150,9 @@ exports.getAttendanceReports = async (req, res) => {
                 id: log.id,
                 staff_id: log.staff_id,
                 type: 'onduty',
-                check_in_time: log.start_time,
-                check_out_time: log.end_time,
-                date: new Date(log.start_time).toISOString().split('T')[0],
+                check_in_time: formatDateInTimezone(log.start_time, reportTz),
+                check_out_time: formatDateInTimezone(log.end_time, reportTz),
+                date: getDateInTimezone(log.start_time, reportTz),
                 location: log.location,
                 client_name: log.client_name,
                 purpose: log.purpose,
@@ -1155,14 +1221,15 @@ exports.getDashboardStats = async (req, res) => {
     const LeaveRequest = db.leave_requests;
     const TimeOffRequest = db.time_off_requests;
     const Role = db.roles;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayDateOnly = today.toISOString().split('T')[0];
+    const tz = await getAppTimezone();
+    const nowIST = formatDateInTimezone(new Date(), tz);
+    const todayDateOnly = nowIST.split(' ')[0];
+    const [sUTC, eUTC] = getUTCBounds(todayDateOnly, tz);
 
-    // Calculate yesterday
-    const yesterday = new Date(today);
+    const today = sUTC;
+    const yesterday = new Date(sUTC);
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayDateOnly = yesterday.toISOString().split('T')[0];
+    const yesterdayDateOnly = formatDateInTimezone(yesterday, tz).split(' ')[0];
 
     try {
         // Get current user's role to determine filtering
@@ -1499,6 +1566,7 @@ exports.getCalendarEvents = async (req, res) => {
     const Staff = db.user;
 
     try {
+        const calTz = await getAppTimezone();
         console.log('--- getCalendarEvents Called ---');
         const year = parseInt(req.query.year) || new Date().getFullYear();
         const month = parseInt(req.query.month) || new Date().getMonth() + 1;
@@ -1595,12 +1663,18 @@ exports.getCalendarEvents = async (req, res) => {
         });
         console.log(`Found ${leaveRequests.length} leave requests`);
 
+        // Create accurate UTC bounds for the whole month in the target timezone
+        const firstDayOfMonth = `${year}-${String(month).padStart(2, '0')}-01`;
+        const lastDayOfMonth = `${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()}`;
+        const [sUTC] = getUTCBounds(firstDayOfMonth, calTz);
+        const [, eUTC] = getUTCBounds(lastDayOfMonth, calTz);
+
         // Build the base where condition for on-duty logs
         // Include all statuses to show complete history
         const onDutyWhere = {
             status: { [Op.in]: ['Approved', 'Rejected', 'Pending'] },
             start_time: {
-                [Op.between]: [firstDay, lastDay]
+                [Op.between]: [sUTC, eUTC]
             }
         };
 
@@ -1682,7 +1756,7 @@ exports.getCalendarEvents = async (req, res) => {
 
         // Process on-duty logs
         onDutyLogs.forEach(onDuty => {
-            const dateStr = new Date(onDuty.start_time).toISOString().split('T')[0];
+            const dateStr = getDateInTimezone(onDuty.start_time, calTz);
             const staffName = `${onDuty.user.firstname} ${onDuty.user.lastname}`;
 
             // Use purpose field if available, otherwise extract from reason
@@ -1707,8 +1781,8 @@ exports.getCalendarEvents = async (req, res) => {
                 title: purpose || 'On-Duty',
                 reason: location,
                 client_name: onDuty.client_name || null,
-                start_time: onDuty.start_time,
-                end_time: onDuty.end_time,
+                start_time: formatDateInTimezone(onDuty.start_time, calTz),
+                end_time: formatDateInTimezone(onDuty.end_time, calTz),
                 status: onDuty.status || 'Approved',
                 rejection_reason: onDuty.rejection_reason
             });

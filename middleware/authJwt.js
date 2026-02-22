@@ -143,7 +143,7 @@ const canManageLeaveTypes = async (req, res, next) => {
 
         // Get role from database and check can_manage_leave_types permission
         const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_leave_types === true) {
+        if (role && role.can_manage_leave_types == true) {
             next();
             return;
         }
@@ -199,7 +199,7 @@ const canManageRoles = async (req, res, next) => {
 
         // Get role from database and check can_manage_roles permission
         const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_roles === true) {
+        if (role && role.can_manage_roles == true) {
             next();
             return;
         }
@@ -224,7 +224,7 @@ const canManageEmailSettings = async (req, res, next) => {
 
         // Get role from database and check can_manage_email_settings permission
         const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_email_settings === true) {
+        if (role && role.can_manage_email_settings == true) {
             next();
             return;
         }

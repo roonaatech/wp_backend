@@ -26,12 +26,14 @@ exports.checkIn = async (req, res) => {
     }
 
     const tz = await getAppTimezone();
+    const now = new Date();
+    // For dateonly "date" field, we need the date in the target timezone
     const nowString = timezoneUtil.getNowStringInTimezone(tz);
     const todayDateOnly = nowString.split(' ')[0];
 
     const attendance = {
         staff_id: req.userId,
-        check_in_time: nowString,
+        check_in_time: now,
         date: todayDateOnly,
         phone_model: req.body.phone_model,
         ip_address: req.body.ip_address,
@@ -54,6 +56,7 @@ exports.checkIn = async (req, res) => {
 exports.checkOut = async (req, res) => {
     // Find today's attendance log for the user
     const tz = await getAppTimezone();
+    const now = new Date();
     const nowString = timezoneUtil.getNowStringInTimezone(tz);
     const todayDateOnly = nowString.split(' ')[0];
 
@@ -73,7 +76,7 @@ exports.checkOut = async (req, res) => {
             }
 
             log.update({
-                check_out_time: nowString
+                check_out_time: now
             })
                 .then(async (updatedLog) => {
                     try {
