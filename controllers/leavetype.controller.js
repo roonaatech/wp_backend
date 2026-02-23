@@ -112,61 +112,142 @@ exports.create = (req, res) => {
 };
 
 // Update leave type
-exports.update = (req, res) => {
+exports.update = async (req, res) => {
     const id = req.params.id;
     const { name, description, status, days_allowed, gender_restriction } = req.body;
 
-    LeaveType.findByPk(id)
-        .then(leaveType => {
-            if (!leaveType) {
-                return res.status(404).send({ message: "Leave type not found!" });
-            }
+    try {
+        const leaveType = await LeaveType.findByPk(id);
 
-            return leaveType.update({
-                name: name !== undefined ? name : leaveType.name,
-                description: description !== undefined ? description : leaveType.description,
-                days_allowed: days_allowed !== undefined ? days_allowed : leaveType.days_allowed,
-                gender_restriction: gender_restriction !== undefined
-                    ? (Array.isArray(gender_restriction)
-                        ? (gender_restriction.length > 0 ? gender_restriction : null)
-                        : (typeof gender_restriction === 'string' && gender_restriction.trim().length > 0 ? [gender_restriction] : null))
-                    : leaveType.gender_restriction,
-                status: status !== undefined ? status : leaveType.status
+        if (!leaveType) {
+            return res.status(404).send({ message: "Leave type not found!" });
+        }
+
+        // Check if trying to deactivate (change status from true to false)
+        if (status !== undefined && status === false && leaveType.status === true) {
+            const UserLeaveType = db.user_leave_types;
+            const User = db.user;
+
+            // Check if this leave type is assigned to any users
+            const assignedUsers = await UserLeaveType.findAll({
+                where: { leave_type_id: id },
+                include: [{
+                    model: User,
+                    attributes: ['staffid', 'firstname', 'lastname', 'email', 'userid'],
+                    required: true
+                }],
+                attributes: ['id', 'user_id', 'days_allowed', 'days_used']
             });
-        })
-        .then(updatedLeaveType => {
-            res.send({
-                message: "Leave type updated successfully!",
-                data: updatedLeaveType
-            });
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: err.message || "Some error occurred while updating leave type."
-            });
+
+            if (assignedUsers.length > 0) {
+                // Leave type is assigned to users, cannot deactivate
+                const employeeList = assignedUsers.map(assignment => ({
+                    id: assignment.user.staffid,
+                    name: `${assignment.user.firstname} ${assignment.user.lastname}`,
+                    email: assignment.user.email,
+                    employee_id: assignment.user.userid,
+                    days_allowed: assignment.days_allowed,
+                    days_used: assignment.days_used
+                }));
+
+                const message = assignedUsers.length === 1
+                    ? `Cannot deactivate leave type. It is currently assigned to 1 employee. Please remove this leave type from the following employee before deactivating it.`
+                    : `Cannot deactivate leave type. It is currently assigned to ${assignedUsers.length} employees. Please remove this leave type from the following employees before deactivating it.`;
+
+                return res.status(400).send({
+                    message: message,
+                    canDeactivate: false,
+                    assignedEmployees: employeeList,
+                    assignedCount: assignedUsers.length,
+                    instruction: ""
+                });
+            }
+        }
+
+        // Proceed with update if validation passed
+        const updatedLeaveType = await leaveType.update({
+            name: name !== undefined ? name : leaveType.name,
+            description: description !== undefined ? description : leaveType.description,
+            days_allowed: days_allowed !== undefined ? days_allowed : leaveType.days_allowed,
+            gender_restriction: gender_restriction !== undefined
+                ? (Array.isArray(gender_restriction)
+                    ? (gender_restriction.length > 0 ? gender_restriction : null)
+                    : (typeof gender_restriction === 'string' && gender_restriction.trim().length > 0 ? [gender_restriction] : null))
+                : leaveType.gender_restriction,
+            status: status !== undefined ? status : leaveType.status
         });
+
+        res.send({
+            message: "Leave type updated successfully!",
+            data: updatedLeaveType
+        });
+
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Some error occurred while updating leave type."
+        });
+    }
 };
 
 // Delete leave type
-exports.delete = (req, res) => {
+exports.delete = async (req, res) => {
     const id = req.params.id;
 
-    LeaveType.findByPk(id)
-        .then(leaveType => {
-            if (!leaveType) {
-                return res.status(404).send({ message: "Leave type not found!" });
-            }
+    try {
+        const leaveType = await LeaveType.findByPk(id);
 
-            return leaveType.destroy();
-        })
-        .then(() => {
-            res.send({
-                message: "Leave type deleted successfully!"
-            });
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: err.message || "Some error occurred while deleting leave type."
-            });
+        if (!leaveType) {
+            return res.status(404).send({ message: "Leave type not found!" });
+        }
+
+        const UserLeaveType = db.user_leave_types;
+        const User = db.user;
+
+        // Check if this leave type is assigned to any users
+        const assignedUsers = await UserLeaveType.findAll({
+            where: { leave_type_id: id },
+            include: [{
+                model: User,
+                attributes: ['staffid', 'firstname', 'lastname', 'email', 'userid'],
+                required: true
+            }],
+            attributes: ['id', 'user_id', 'days_allowed', 'days_used']
         });
+
+        if (assignedUsers.length > 0) {
+            // Leave type is assigned to users, cannot delete
+            const employeeList = assignedUsers.map(assignment => ({
+                id: assignment.user.staffid,
+                name: `${assignment.user.firstname} ${assignment.user.lastname}`,
+                email: assignment.user.email,
+                employee_id: assignment.user.userid,
+                days_allowed: assignment.days_allowed,
+                days_used: assignment.days_used
+            }));
+
+            const message = assignedUsers.length === 1
+                ? `Cannot delete leave type. It is currently assigned to 1 employee. Please remove this leave type from the following employee before deleting it.`
+                : `Cannot delete leave type. It is currently assigned to ${assignedUsers.length} employees. Please remove this leave type from the following employees before deleting it.`;
+
+            return res.status(400).send({
+                message: message,
+                canDelete: false,
+                assignedEmployees: employeeList,
+                assignedCount: assignedUsers.length,
+                instruction: ""
+            });
+        }
+
+        // Proceed with deletion if validation passed
+        await leaveType.destroy();
+
+        res.send({
+            message: "Leave type deleted successfully!"
+        });
+
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Some error occurred while deleting leave type."
+        });
+    }
 };
