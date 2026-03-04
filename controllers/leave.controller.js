@@ -583,53 +583,72 @@ exports.getManageableRequests = async (req, res) => {
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
         const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
         const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
+        const canApproveAllTimeOff = userRole && userRole.can_approve_timeoff === 'all';
 
-        // Get all manageable staff members for filtering and hierarchy check
-        let manageableStaff = [];
-        if (canApproveAllLeave || canApproveAllOnDuty) {
-            manageableStaff = await Staff.findAll({
+        // Get subordinates (direct reportees) for filtering
+        const subordinates = await Staff.findAll({
+            attributes: ['staffid', 'firstname', 'lastname', 'email'],
+            where: { approving_manager_id: req.userId, active: 1 },
+            raw: true
+        });
+        const subordinateIds = subordinates.map(s => s.staffid);
+
+        // Get all active staff for 'all' permissions
+        let allStaff = [];
+        if (canApproveAllLeave || canApproveAllOnDuty || canApproveAllTimeOff) {
+            allStaff = await Staff.findAll({
                 attributes: ['staffid', 'firstname', 'lastname', 'email'],
                 where: { active: 1 },
                 raw: true
             });
-        } else {
-            manageableStaff = await Staff.findAll({
-                attributes: ['staffid', 'firstname', 'lastname', 'email'],
-                where: { approving_manager_id: req.userId, active: 1 },
-                raw: true
-            });
         }
 
-        const reporteeIds = manageableStaff.map(s => s.staffid);
-        console.log(`User ${req.userId} - identified ${manageableStaff.length} manageable staff members`);
+        // Determine manageable staff for name filter dropdown
+        // Use the broadest permission available
+        let manageableStaff = [];
+        if (canApproveAllLeave || canApproveAllOnDuty || canApproveAllTimeOff) {
+            manageableStaff = allStaff;
+        } else {
+            manageableStaff = subordinates;
+        }
+
+        console.log('=== APPROVAL PERMISSIONS DEBUG ===');
+        console.log('User ID:', req.userId);
+        console.log('User Role:', userRole ? {
+            id: userRole.id,
+            name: userRole.name,
+            can_approve_leave: userRole.can_approve_leave,
+            can_approve_onduty: userRole.can_approve_onduty,
+            can_approve_timeoff: userRole.can_approve_timeoff
+        } : null);
+        console.log('Calculated "all" permissions:', {
+            canApproveAllLeave,
+            canApproveAllOnDuty,
+            canApproveAllTimeOff
+        });
+        console.log(`Subordinates count: ${subordinateIds.length}, IDs:`, subordinateIds);
+        console.log(`All staff count: ${allStaff.length}`);
 
         // Build where clause for leaves
         let leaveWhere = { status: status };
 
+        // Determine which staff to use for leave requests based on permission
+        const leaveStaffList = canApproveAllLeave ? allStaff : subordinates;
+        const leaveStaffIds = leaveStaffList.map(s => s.staffid);
+
         // Apply staff name filter if provided
         if (staffNameFilter && staffNameFilter !== 'All') {
-            const filteredIds = manageableStaff
+            // Filter by name from the staff this user can approve leave for
+            const filteredIds = leaveStaffList
                 .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
                 .map(s => s.staffid);
-            leaveWhere.staff_id = { [Op.in]: filteredIds };
-        } else if (!canApproveAllLeave && reporteeIds.length > 0) {
-            leaveWhere.staff_id = { [Op.in]: reporteeIds };
-        } else if (!canApproveAllLeave && reporteeIds.length === 0) {
-            // User has no reportees, return empty
-            return res.status(200).send({
-                items: [],
-                manageableStaff: manageableStaff, // Return full list even if no results
-                pagination: {
-                    currentPage: page,
-                    pageSize: limit,
-                    totalCount: 0,
-                    totalPages: 0,
-                    leaveCount: 0,
-                    onDutyCount: 0,
-                    hasNextPage: false,
-                    hasPrevPage: false
-                }
-            });
+            leaveWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
+        } else {
+            // No name filter - apply permission-based filtering
+            if (!canApproveAllLeave) {
+                leaveWhere.staff_id = { [Op.in]: leaveStaffIds };
+            }
+            // If canApproveAllLeave is true, no staff_id filter needed (show all)
         }
 
         // Apply leave type filter
@@ -661,18 +680,35 @@ exports.getManageableRequests = async (req, res) => {
             onDutyWhere.end_time = { [Op.ne]: null };
         }
 
+        // Determine which staff to use for on-duty requests based on permission
+        const onDutyStaffList = canApproveAllOnDuty ? allStaff : subordinates;
+        const onDutyStaffIds = onDutyStaffList.map(s => s.staffid);
+
+        console.log('=== ON-DUTY FILTERING DEBUG ===');
+        console.log('canApproveAllOnDuty:', canApproveAllOnDuty);
+        console.log('onDutyStaffList length:', onDutyStaffList.length);
+        console.log('onDutyStaffIds:', onDutyStaffIds);
+        console.log('staffNameFilter:', staffNameFilter);
+
         // Apply staff name filter if provided
         if (staffNameFilter && staffNameFilter !== 'All') {
-            const filteredIds = manageableStaff
+            // Filter by name from the staff this user can approve on-duty for
+            const filteredIds = onDutyStaffList
                 .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
                 .map(s => s.staffid);
-            onDutyWhere.staff_id = { [Op.in]: filteredIds };
-        } else if (!canApproveAllOnDuty && reporteeIds.length > 0) {
-            onDutyWhere.staff_id = { [Op.in]: reporteeIds };
-        } else if (!canApproveAllOnDuty && reporteeIds.length === 0) {
-            // User has subordinates permission but no reportees, skip on-duty logs
-            onDutyWhere.staff_id = { [Op.in]: [] }; // Empty result
+            onDutyWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
+            console.log('Applying name filter, filtered IDs:', filteredIds);
+        } else {
+            // No name filter - apply permission-based filtering
+            if (!canApproveAllOnDuty) {
+                onDutyWhere.staff_id = { [Op.in]: onDutyStaffIds };
+                console.log('Applying subordinates filter, IDs:', onDutyStaffIds);
+            } else {
+                console.log('User has "all" permission - no staff_id filter applied');
+            }
+            // If canApproveAllOnDuty is true, no staff_id filter needed (show all)
         }
+        console.log('Final onDutyWhere:', JSON.stringify(onDutyWhere));
 
         // Apply leave type filter - if a specific leave type is selected, on-duty logs won't match
         if (leaveTypeFilter && leaveTypeFilter !== 'All') {
@@ -748,18 +784,24 @@ exports.getManageableRequests = async (req, res) => {
 
         // Build where clause for Time-Off
         const timeOffWhere = { status: status };
+
+        // Determine which staff to use for time-off requests based on permission
+        const timeOffStaffList = canApproveAllTimeOff ? allStaff : subordinates;
+        const timeOffStaffIds = timeOffStaffList.map(s => s.staffid);
+
         // Apply staff name filter if provided
         if (staffNameFilter && staffNameFilter !== 'All') {
-            const filteredIds = manageableStaff
+            // Filter by name from the staff this user can approve time-off for
+            const filteredIds = timeOffStaffList
                 .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
                 .map(s => s.staffid);
-            timeOffWhere.staff_id = { [Op.in]: filteredIds };
-        } else if (!canApproveAllLeave) {
-            if (reporteeIds.length > 0) {
-                timeOffWhere.staff_id = { [Op.in]: reporteeIds };
-            } else {
-                timeOffWhere.staff_id = { [Op.in]: [] }; // Force empty
+            timeOffWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
+        } else {
+            // No name filter - apply permission-based filtering
+            if (!canApproveAllTimeOff) {
+                timeOffWhere.staff_id = { [Op.in]: timeOffStaffIds };
             }
+            // If canApproveAllTimeOff is true, no staff_id filter needed (show all)
         }
 
         // Apply leave type filter - Time-Off is not a leave type, so skip if specific leave type selected
@@ -847,6 +889,23 @@ exports.updateLeaveStatus = async (req, res) => {
         const leave = await LeaveRequest.findByPk(id);
         if (!leave) {
             return res.status(404).send({ message: "Leave request not found." });
+        }
+
+        // Validate user has permission to approve leave requests
+        const currentUser = await Staff.findByPk(req.userId);
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        if (!userRole || !userRole.can_approve_leave || userRole.can_approve_leave === 'none') {
+            return res.status(403).send({ message: "You don't have permission to approve leave requests." });
+        }
+
+        // If permission is 'subordinates', validate the request is from a subordinate
+        if (userRole.can_approve_leave === 'subordinates') {
+            const requestingUser = await Staff.findByPk(leave.staff_id);
+            if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
+                return res.status(403).send({ message: "You can only approve leave requests from your direct subordinates." });
+            }
         }
 
         const oldStatus = leave.status;

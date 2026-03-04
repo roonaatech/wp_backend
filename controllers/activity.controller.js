@@ -22,6 +22,10 @@ exports.getAllActivities = async (req, res) => {
     try {
         const { action, entity, admin_id, affected_user_id, startDate, endDate, page = 1, limit = 20 } = req.query;
 
+        console.log('=== ACTIVITIES PERMISSION DEBUG ===');
+        console.log('User ID:', req.userId);
+        console.log('Activity Permission:', req.activityPermission);
+
         // Build filter
         let where = {};
 
@@ -29,6 +33,7 @@ exports.getAllActivities = async (req, res) => {
         if (req.activityPermission === 'subordinates') {
             // Get subordinate user IDs
             const subordinateIds = await getSubordinateIds(req.userId);
+            console.log('Subordinate IDs:', subordinateIds);
             // Include activities performed by subordinates OR activities affecting subordinates
             // Also include the user's own activities
             subordinateIds.push(req.userId);
@@ -36,8 +41,13 @@ exports.getAllActivities = async (req, res) => {
                 { admin_id: { [Op.in]: subordinateIds } },
                 { affected_user_id: { [Op.in]: subordinateIds } }
             ];
+            console.log('Applying subordinates filter');
+        } else {
+            console.log('Permission is "all" - no filtering applied');
         }
         // 'all' permission has no restriction
+
+        console.log('Query parameters:', { action, entity, admin_id, affected_user_id, startDate, endDate });
 
         if (action) where.action = action;
         if (entity) where.entity = entity;
@@ -59,6 +69,13 @@ exports.getAllActivities = async (req, res) => {
                 const endISO = endDate + 'T23:59:59.999Z';
                 where.createdAt[db.Sequelize.Op.lte] = new Date(endISO);
             }
+        }
+
+        // Better debugging that shows Symbol keys
+        console.log('Final WHERE object keys:', Object.keys(where), 'Symbols:', Object.getOwnPropertySymbols(where).map(s => s.toString()));
+        console.log('Has Op.or:', !!where[Op.or]);
+        if (where[Op.or]) {
+            console.log('Op.or conditions:', JSON.stringify(where[Op.or]));
         }
 
         const offset = (parseInt(page) - 1) * parseInt(limit);

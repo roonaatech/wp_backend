@@ -289,6 +289,24 @@ exports.updateTimeOffStatus = async (req, res) => {
             return res.status(404).send({ message: "Time-Off request not found." });
         }
 
+        // Validate user has permission to approve time-off requests
+        const User = db.user;
+        const currentUser = await User.findByPk(req.userId);
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        if (!userRole || !userRole.can_approve_timeoff || userRole.can_approve_timeoff === 'none') {
+            return res.status(403).send({ message: "You don't have permission to approve time-off requests." });
+        }
+
+        // If permission is 'subordinates', validate the request is from a subordinate
+        if (userRole.can_approve_timeoff === 'subordinates') {
+            const requestingUser = await User.findByPk(timeOff.staff_id);
+            if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
+                return res.status(403).send({ message: "You can only approve time-off requests from your direct subordinates." });
+            }
+        }
+
         const oldStatus = timeOff.status;
 
         if (!['Approved', 'Rejected', 'Pending'].includes(status)) {

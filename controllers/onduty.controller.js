@@ -620,6 +620,23 @@ exports.updateOnDutyStatus = async (req, res) => {
             return res.status(404).send({ message: "On-Duty log not found." });
         }
 
+        // Validate user has permission to approve on-duty requests
+        const currentUser = await User.findByPk(req.userId);
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        if (!userRole || !userRole.can_approve_onduty || userRole.can_approve_onduty === 'none') {
+            return res.status(403).send({ message: "You don't have permission to approve on-duty requests." });
+        }
+
+        // If permission is 'subordinates', validate the request is from a subordinate
+        if (userRole.can_approve_onduty === 'subordinates') {
+            const requestingUser = await User.findByPk(log.staff_id);
+            if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
+                return res.status(403).send({ message: "You can only approve on-duty requests from your direct subordinates." });
+            }
+        }
+
         const oldStatus = log.status;
         const oldReason = log.rejection_reason;
 
