@@ -47,6 +47,7 @@ async function freshDeploy() {
         const seedRoles = require("./seed_roles");
         const seedLeaveTypes = require("./seed_leave_types");
         const seedTemplates = require("./seed_templates");
+        const seedSettings = require("./seed_settings");
 
         console.log("\n--- Seeding Roles ---");
         await seedRoles();
@@ -56,6 +57,9 @@ async function freshDeploy() {
 
         console.log("\n--- Seeding Email Templates ---");
         await seedTemplates();
+
+        console.log("\n--- Seeding Settings ---");
+        await seedSettings();
 
         console.log("\n✅ Fresh Deployment completed successfully!");
         process.exit(0);
