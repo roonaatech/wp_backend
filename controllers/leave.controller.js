@@ -612,22 +612,6 @@ exports.getManageableRequests = async (req, res) => {
             manageableStaff = subordinates;
         }
 
-        console.log('=== APPROVAL PERMISSIONS DEBUG ===');
-        console.log('User ID:', req.userId);
-        console.log('User Role:', userRole ? {
-            id: userRole.id,
-            name: userRole.name,
-            can_approve_leave: userRole.can_approve_leave,
-            can_approve_onduty: userRole.can_approve_onduty,
-            can_approve_timeoff: userRole.can_approve_timeoff
-        } : null);
-        console.log('Calculated "all" permissions:', {
-            canApproveAllLeave,
-            canApproveAllOnDuty,
-            canApproveAllTimeOff
-        });
-        console.log(`Subordinates count: ${subordinateIds.length}, IDs:`, subordinateIds);
-        console.log(`All staff count: ${allStaff.length}`);
 
         // Build where clause for leaves
         let leaveWhere = { status: status };
@@ -684,12 +668,6 @@ exports.getManageableRequests = async (req, res) => {
         const onDutyStaffList = canApproveAllOnDuty ? allStaff : subordinates;
         const onDutyStaffIds = onDutyStaffList.map(s => s.staffid);
 
-        console.log('=== ON-DUTY FILTERING DEBUG ===');
-        console.log('canApproveAllOnDuty:', canApproveAllOnDuty);
-        console.log('onDutyStaffList length:', onDutyStaffList.length);
-        console.log('onDutyStaffIds:', onDutyStaffIds);
-        console.log('staffNameFilter:', staffNameFilter);
-
         // Apply staff name filter if provided
         if (staffNameFilter && staffNameFilter !== 'All') {
             // Filter by name from the staff this user can approve on-duty for
@@ -697,18 +675,13 @@ exports.getManageableRequests = async (req, res) => {
                 .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
                 .map(s => s.staffid);
             onDutyWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
-            console.log('Applying name filter, filtered IDs:', filteredIds);
         } else {
             // No name filter - apply permission-based filtering
             if (!canApproveAllOnDuty) {
                 onDutyWhere.staff_id = { [Op.in]: onDutyStaffIds };
-                console.log('Applying subordinates filter, IDs:', onDutyStaffIds);
-            } else {
-                console.log('User has "all" permission - no staff_id filter applied');
             }
             // If canApproveAllOnDuty is true, no staff_id filter needed (show all)
         }
-        console.log('Final onDutyWhere:', JSON.stringify(onDutyWhere));
 
         // Apply leave type filter - if a specific leave type is selected, on-duty logs won't match
         if (leaveTypeFilter && leaveTypeFilter !== 'All') {
