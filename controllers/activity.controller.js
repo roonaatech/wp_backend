@@ -21,10 +21,10 @@ const getSubordinateIds = async (userId) => {
 exports.getAllActivities = async (req, res) => {
     try {
         const { action, entity, admin_id, affected_user_id, startDate, endDate, page = 1, limit = 20 } = req.query;
-        
+
         // Build filter
         let where = {};
-        
+
         // Apply hierarchical filtering based on permission level
         if (req.activityPermission === 'subordinates') {
             // Get subordinate user IDs
@@ -38,12 +38,12 @@ exports.getAllActivities = async (req, res) => {
             ];
         }
         // 'all' permission has no restriction
-        
+
         if (action) where.action = action;
         if (entity) where.entity = entity;
         if (admin_id) where.admin_id = parseInt(admin_id);
         if (affected_user_id) where.affected_user_id = parseInt(affected_user_id);
-        
+
         // Handle date filtering - convert to UTC ISO format for reliable comparison
         if (startDate || endDate) {
             where.createdAt = {};
@@ -62,7 +62,7 @@ exports.getAllActivities = async (req, res) => {
         }
 
         const offset = (parseInt(page) - 1) * parseInt(limit);
-        
+
         const { count, rows } = await ActivityLog.findAndCountAll({
             where,
             include: [
@@ -111,9 +111,9 @@ exports.getAllActivities = async (req, res) => {
 exports.getActivitySummary = async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
-        
+
         let where = {};
-        
+
         // Apply hierarchical filtering based on permission level
         if (req.activityPermission === 'subordinates') {
             const subordinateIds = await getSubordinateIds(req.userId);
@@ -123,7 +123,7 @@ exports.getActivitySummary = async (req, res) => {
                 { affected_user_id: { [Op.in]: subordinateIds } }
             ];
         }
-        
+
         if (startDate || endDate) {
             where.createdAt = {};
             if (startDate) {
@@ -200,7 +200,7 @@ exports.getUserActivityHistory = async (req, res) => {
     try {
         const { userId } = req.params;
         const { page = 1, limit = 20 } = req.query;
-        
+
         // Check if user has permission to view this user's activities
         if (req.activityPermission === 'subordinates') {
             const subordinateIds = await getSubordinateIds(req.userId);
@@ -212,9 +212,9 @@ exports.getUserActivityHistory = async (req, res) => {
                 });
             }
         }
-        
+
         const offset = (parseInt(page) - 1) * parseInt(limit);
-        
+
         const { count, rows } = await ActivityLog.findAndCountAll({
             where: {
                 [db.Sequelize.Op.or]: [
@@ -261,9 +261,9 @@ exports.getUserActivityHistory = async (req, res) => {
 exports.exportActivities = async (req, res) => {
     try {
         const { action, entity, admin_id, affected_user_id, startDate, endDate } = req.query;
-        
+
         let where = {};
-        
+
         // Apply hierarchical filtering based on permission level
         if (req.activityPermission === 'subordinates') {
             const subordinateIds = await getSubordinateIds(req.userId);
@@ -273,12 +273,12 @@ exports.exportActivities = async (req, res) => {
                 { affected_user_id: { [Op.in]: subordinateIds } }
             ];
         }
-        
+
         if (action) where.action = action;
         if (entity) where.entity = entity;
         if (admin_id) where.admin_id = parseInt(admin_id);
         if (affected_user_id) where.affected_user_id = parseInt(affected_user_id);
-        
+
         if (startDate || endDate) {
             where.createdAt = {};
             if (startDate) {
@@ -310,12 +310,13 @@ exports.exportActivities = async (req, res) => {
 
         // Generate CSV
         let csv = 'Timestamp,Action,Entity,Admin,Affected User,Description\n';
-        
+
         activities.forEach(activity => {
             const admin = activity.admin ? `${activity.admin.firstname} ${activity.admin.lastname}` : 'Unknown';
-            const timestamp = new Date(activity.createdAt).toLocaleString();
+            const d = new Date(activity.createdAt);
+            const timestamp = `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()} ${d.getHours() % 12 || 12}:${d.getMinutes().toString().padStart(2, '0')} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
             const description = (activity.description || '').replace(/"/g, '""');
-            
+
             csv += `"${timestamp}","${activity.action}","${activity.entity}","${admin}","","${description}"\n`;
         });
 
@@ -349,11 +350,11 @@ exports.logActivityFromMobile = async (req, res) => {
         }
 
         // Get IP address (handle proxies)
-        const ipAddress = req.headers['x-forwarded-for'] || 
-                         req.connection.remoteAddress || 
-                         req.socket.remoteAddress ||
-                         'unknown';
-        
+        const ipAddress = req.headers['x-forwarded-for'] ||
+            req.connection.remoteAddress ||
+            req.socket.remoteAddress ||
+            'unknown';
+
         const userAgent = req.headers['user-agent'] || 'unknown';
 
         // Decode token to get user info if needed

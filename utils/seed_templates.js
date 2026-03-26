@@ -183,8 +183,9 @@ async function seedTemplates() {
         });
 
         if (!created) {
-            await template.update(t);
-            console.log(`Updated template: ${t.slug}`);
+            console.log(`Template already exists, skipping update: ${t.slug}`);
+            // Note: Existing templates are preserved to maintain production customizations
+            // To force update templates, use the admin panel or manually update the database
         } else {
             console.log(`Created template: ${t.slug}`);
         }

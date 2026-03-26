@@ -197,7 +197,7 @@ exports.signin = async (req, res) => {
         if (user.role && req.body.is_mobile_app !== true) {
             const Role = db.roles;
             const userRole = await Role.findByPk(user.role);
-            if (userRole && userRole.can_access_webapp !== true) {
+            if (userRole && userRole.can_access_webapp != true) {
                 return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
             }
         }

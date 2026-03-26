@@ -12,6 +12,7 @@ async function seedRoles() {
       can_approve_leave: "all",
       can_approve_onduty: "all",
       can_manage_users: "all",
+      can_view_users: "all",
       can_manage_leave_types: true,
       can_view_reports: "all",
       can_access_webapp: true,
@@ -114,14 +115,9 @@ async function seedRoles() {
     });
 
     if (!created) {
-      // Update Super Admin and Admin roles to ensure they always have full permissions
-      // For other roles, we don't want to reset user-customized permissions in the UI
-      if (r.id === 1 || r.id === 3) {
-        await role.update(r);
-        console.log(`Updated core role: ${r.name}`);
-      } else {
-        console.log(`Role already exists, skipping update: ${r.name}`);
-      }
+      console.log(`Role already exists, skipping update: ${r.name}`);
+      // Note: Existing roles are preserved to maintain production customizations
+      // To force update roles, use the admin panel or manually update the database
     } else {
       console.log(`Created role: ${r.name}`);
     }

@@ -7,12 +7,57 @@ const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+const Setting = db.settings;
+
+// Helper to get application timezone
+const getAppTimezone = async () => {
+    try {
+        const tzSetting = await Setting.findOne({ where: { key: 'application_timezone' } });
+        return tzSetting ? tzSetting.value : 'Asia/Kolkata';
+    } catch (e) {
+        return 'Asia/Kolkata';
+    }
+};
+
+// Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+const formatDateInTimezone = (dateObj, tz) => {
+    if (!dateObj) return null;
+    try {
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            hourCycle: 'h23'
+        });
+        const parts = formatter.formatToParts(new Date(dateObj));
+        const p = {};
+        parts.forEach(part => { p[part.type] = part.value; });
+        return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+    } catch (e) {
+        return String(dateObj);
+    }
+};
 
 
 // Helper to calculate days excluding Sundays
 const calculateLeaveDays = (startDate, endDate) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    // Parse YYYY-MM-DD manually to avoid UTC timezone shift issues
+    const parseDate = (dateStr) => {
+        if (typeof dateStr !== 'string') return new Date(dateStr);
+        const parts = String(dateStr).split('T')[0].split('-');
+        if (parts.length === 3) {
+            return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        }
+        return new Date(dateStr);
+    };
+
+    const start = parseDate(startDate);
+    const end = parseDate(endDate);
     let count = 0;
     const current = new Date(start);
 
@@ -38,6 +83,17 @@ exports.applyLeave = async (req, res) => {
 
         if (!leave_type || !start_date || !end_date) {
             return res.status(400).send({ message: "Leave type, start date, and end date are required!" });
+        }
+
+        // Validate that start/end dates do not fall on a Sunday
+        const parseDateParts = (d) => { const p = String(d).split('T')[0].split('-'); return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2])); };
+        const startDay = parseDateParts(start_date);
+        const endDay = parseDateParts(end_date);
+        if (startDay.getDay() === 0) {
+            return res.status(400).send({ message: "Start date cannot be a Sunday." });
+        }
+        if (endDay.getDay() === 0) {
+            return res.status(400).send({ message: "End date cannot be a Sunday." });
         }
 
         // --- Validate Leave Balance ---
@@ -437,6 +493,9 @@ exports.getPendingLeaves = async (req, res) => {
             createdAt: l.createdAt
         }));
 
+        // Get timezone for formatting on-duty times
+        const tz1 = await getAppTimezone();
+
         const normalizedOnDuty = onDutyLogs.map(l => ({
             type: 'on_duty',
             id: l.id,
@@ -444,14 +503,14 @@ exports.getPendingLeaves = async (req, res) => {
             tblstaff: l.user,
             title: `On-Duty: ${l.client_name}`,
             reason: `${l.purpose} (${l.location})`,
-            start_date: l.start_time,
-            end_date: l.end_time,
+            start_date: formatDateInTimezone(l.start_time, tz1),
+            end_date: formatDateInTimezone(l.end_time, tz1),
             createdAt: l.start_time,
             client_name: l.client_name,
             location: l.location,
             purpose: l.purpose,
-            start_time: l.start_time,
-            end_time: l.end_time,
+            start_time: formatDateInTimezone(l.start_time, tz1),
+            end_time: formatDateInTimezone(l.end_time, tz1),
             start_lat: l.start_lat,
             start_long: l.start_long,
             end_lat: l.end_lat,
@@ -511,6 +570,8 @@ exports.getManageableRequests = async (req, res) => {
 
         // Get status from query, default to 'Pending'
         const status = req.query.status || 'Pending';
+        const staffNameFilter = req.query.staff_name;
+        const leaveTypeFilter = req.query.leave_type;
 
         // Get pagination parameters
         const page = parseInt(req.query.page) || 1;
@@ -522,40 +583,61 @@ exports.getManageableRequests = async (req, res) => {
         const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
         const canApproveAllLeave = userRole && userRole.can_approve_leave === 'all';
         const canApproveAllOnDuty = userRole && userRole.can_approve_onduty === 'all';
+        const canApproveAllTimeOff = userRole && userRole.can_approve_timeoff === 'all';
 
-        // If user can only approve subordinates, get their reportees
-        let reporteeIds = [];
-        if (!canApproveAllLeave || !canApproveAllOnDuty) {
-            const reportees = await Staff.findAll({
-                attributes: ['staffid'],
-                where: {
-                    approving_manager_id: req.userId
-                },
+        // Get subordinates (direct reportees) for filtering
+        const subordinates = await Staff.findAll({
+            attributes: ['staffid', 'firstname', 'lastname', 'email'],
+            where: { approving_manager_id: req.userId, active: 1 },
+            raw: true
+        });
+        const subordinateIds = subordinates.map(s => s.staffid);
+
+        // Get all active staff for 'all' permissions
+        let allStaff = [];
+        if (canApproveAllLeave || canApproveAllOnDuty || canApproveAllTimeOff) {
+            allStaff = await Staff.findAll({
+                attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                where: { active: 1 },
                 raw: true
             });
-            reporteeIds = reportees.map(r => r.staffid);
-            console.log(`User ${req.userId} - filtering by reportees:`, reporteeIds);
         }
+
+        // Determine manageable staff for name filter dropdown
+        // Use the broadest permission available
+        let manageableStaff = [];
+        if (canApproveAllLeave || canApproveAllOnDuty || canApproveAllTimeOff) {
+            manageableStaff = allStaff;
+        } else {
+            manageableStaff = subordinates;
+        }
+
 
         // Build where clause for leaves
         let leaveWhere = { status: status };
-        if (!canApproveAllLeave && reporteeIds.length > 0) {
-            leaveWhere.staff_id = { [Op.in]: reporteeIds };
-        } else if (!canApproveAllLeave && reporteeIds.length === 0) {
-            // User has no reportees, return empty
-            return res.status(200).send({
-                items: [],
-                pagination: {
-                    currentPage: page,
-                    pageSize: limit,
-                    totalCount: 0,
-                    totalPages: 0,
-                    leaveCount: 0,
-                    onDutyCount: 0,
-                    hasNextPage: false,
-                    hasPrevPage: false
-                }
-            });
+
+        // Determine which staff to use for leave requests based on permission
+        const leaveStaffList = canApproveAllLeave ? allStaff : subordinates;
+        const leaveStaffIds = leaveStaffList.map(s => s.staffid);
+
+        // Apply staff name filter if provided
+        if (staffNameFilter && staffNameFilter !== 'All') {
+            // Filter by name from the staff this user can approve leave for
+            const filteredIds = leaveStaffList
+                .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
+                .map(s => s.staffid);
+            leaveWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
+        } else {
+            // No name filter - apply permission-based filtering
+            if (!canApproveAllLeave) {
+                leaveWhere.staff_id = { [Op.in]: leaveStaffIds };
+            }
+            // If canApproveAllLeave is true, no staff_id filter needed (show all)
+        }
+
+        // Apply leave type filter
+        if (leaveTypeFilter && leaveTypeFilter !== 'All') {
+            leaveWhere.leave_type = leaveTypeFilter;
         }
 
         // Fetch Leaves with pagination
@@ -582,16 +664,28 @@ exports.getManageableRequests = async (req, res) => {
             onDutyWhere.end_time = { [Op.ne]: null };
         }
 
-        // Check if user has permission to view on-duty requests
-        const hasOnDutyPermission = userRole && userRole.can_approve_onduty !== 'none';
-        if (!hasOnDutyPermission) {
-            // User has no on-duty approval permission, skip on-duty logs
-            onDutyWhere.staff_id = { [Op.in]: [] }; // Empty result
-        } else if (!canApproveAllOnDuty && reporteeIds.length > 0) {
-            onDutyWhere.staff_id = { [Op.in]: reporteeIds };
-        } else if (!canApproveAllOnDuty && reporteeIds.length === 0) {
-            // User has subordinates permission but no reportees, skip on-duty logs
-            onDutyWhere.staff_id = { [Op.in]: [] }; // Empty result
+        // Determine which staff to use for on-duty requests based on permission
+        const onDutyStaffList = canApproveAllOnDuty ? allStaff : subordinates;
+        const onDutyStaffIds = onDutyStaffList.map(s => s.staffid);
+
+        // Apply staff name filter if provided
+        if (staffNameFilter && staffNameFilter !== 'All') {
+            // Filter by name from the staff this user can approve on-duty for
+            const filteredIds = onDutyStaffList
+                .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
+                .map(s => s.staffid);
+            onDutyWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
+        } else {
+            // No name filter - apply permission-based filtering
+            if (!canApproveAllOnDuty) {
+                onDutyWhere.staff_id = { [Op.in]: onDutyStaffIds };
+            }
+            // If canApproveAllOnDuty is true, no staff_id filter needed (show all)
+        }
+
+        // Apply leave type filter - if a specific leave type is selected, on-duty logs won't match
+        if (leaveTypeFilter && leaveTypeFilter !== 'All') {
+            onDutyWhere.id = { [Op.in]: [] }; // Force empty for on-duty when filtering by leave type
         }
 
         const onDutyLogs = await OnDutyLog.findAll({
@@ -630,7 +724,8 @@ exports.getManageableRequests = async (req, res) => {
             };
         });
 
-        // Normalize on-duty logs
+        // Normalize on-duty logs with timezone-aware formatting
+        const tz = await getAppTimezone();
         const normalizedOnDuty = onDutyLogs.map(l => {
             return {
                 type: 'on_duty',
@@ -639,8 +734,8 @@ exports.getManageableRequests = async (req, res) => {
                 tblstaff: l.user,
                 title: `On-Duty: ${l.client_name}`,
                 reason: `${l.purpose} (${l.location})`,
-                start_date: l.start_time,
-                end_date: l.end_time,
+                start_date: formatDateInTimezone(l.start_time, tz),
+                end_date: formatDateInTimezone(l.end_time, tz),
                 status: l.status,
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
@@ -649,8 +744,8 @@ exports.getManageableRequests = async (req, res) => {
                 client_name: l.client_name,
                 location: l.location,
                 purpose: l.purpose,
-                start_time: l.start_time,
-                end_time: l.end_time,
+                start_time: formatDateInTimezone(l.start_time, tz),
+                end_time: formatDateInTimezone(l.end_time, tz),
                 start_lat: l.start_lat,
                 start_long: l.start_long,
                 end_lat: l.end_lat,
@@ -662,13 +757,29 @@ exports.getManageableRequests = async (req, res) => {
 
         // Build where clause for Time-Off
         const timeOffWhere = { status: status };
-        // Apply same filters as leaves (assuming same permission logic)
-        if (!canApproveAllLeave) {
-            if (reporteeIds.length > 0) {
-                timeOffWhere.staff_id = { [Op.in]: reporteeIds };
-            } else {
-                timeOffWhere.staff_id = { [Op.in]: [] }; // Force empty
+
+        // Determine which staff to use for time-off requests based on permission
+        const timeOffStaffList = canApproveAllTimeOff ? allStaff : subordinates;
+        const timeOffStaffIds = timeOffStaffList.map(s => s.staffid);
+
+        // Apply staff name filter if provided
+        if (staffNameFilter && staffNameFilter !== 'All') {
+            // Filter by name from the staff this user can approve time-off for
+            const filteredIds = timeOffStaffList
+                .filter(s => `${s.firstname} ${s.lastname}` === staffNameFilter)
+                .map(s => s.staffid);
+            timeOffWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
+        } else {
+            // No name filter - apply permission-based filtering
+            if (!canApproveAllTimeOff) {
+                timeOffWhere.staff_id = { [Op.in]: timeOffStaffIds };
             }
+            // If canApproveAllTimeOff is true, no staff_id filter needed (show all)
+        }
+
+        // Apply leave type filter - Time-Off is not a leave type, so skip if specific leave type selected
+        if (leaveTypeFilter && leaveTypeFilter !== 'All') {
+            timeOffWhere.id = { [Op.in]: [] };
         }
 
 
@@ -724,6 +835,7 @@ exports.getManageableRequests = async (req, res) => {
 
         res.status(200).send({
             items: paginatedItems,
+            manageableStaff: manageableStaff, // For frontend filtering
             pagination: {
                 currentPage: page,
                 pageSize: limit,
@@ -750,6 +862,23 @@ exports.updateLeaveStatus = async (req, res) => {
         const leave = await LeaveRequest.findByPk(id);
         if (!leave) {
             return res.status(404).send({ message: "Leave request not found." });
+        }
+
+        // Validate user has permission to approve leave requests
+        const currentUser = await Staff.findByPk(req.userId);
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        if (!userRole || !userRole.can_approve_leave || userRole.can_approve_leave === 'none') {
+            return res.status(403).send({ message: "You don't have permission to approve leave requests." });
+        }
+
+        // If permission is 'subordinates', validate the request is from a subordinate
+        if (userRole.can_approve_leave === 'subordinates') {
+            const requestingUser = await Staff.findByPk(leave.staff_id);
+            if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
+                return res.status(403).send({ message: "You can only approve leave requests from your direct subordinates." });
+            }
         }
 
         const oldStatus = leave.status;
@@ -891,7 +1020,16 @@ exports.updateLeaveDetails = async (req, res) => {
             return res.status(403).send({ message: "Unauthorized to edit this request." });
         }
 
-        // Check for overlapping leaves (excluding current leave being edited)
+        // Validate that updated dates do not fall on a Sunday
+        if (start_date || end_date) {
+            const parseDateParts = (d) => { const p = String(d).split('T')[0].split('-'); return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2])); };
+            if (start_date && parseDateParts(start_date).getDay() === 0) {
+                return res.status(400).send({ message: "Start date cannot be a Sunday." });
+            }
+            if (end_date && parseDateParts(end_date).getDay() === 0) {
+                return res.status(400).send({ message: "End date cannot be a Sunday." });
+            }
+        }
         if (start_date || end_date) {
             const checkStartDate = start_date || leave.start_date;
             const checkEndDate = end_date || leave.end_date;

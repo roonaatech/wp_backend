@@ -13,12 +13,7 @@ exports.findAll = async (req, res) => {
 
         // If user has can_manage_roles permission, return all fields
         // Otherwise, return only safe fields needed for display name lookups
-        const attributes = isRoleManager
-            ? undefined  // return all fields for role managers
-            : ['id', 'name', 'display_name', 'hierarchy_level', 'active'];  // safe subset
-
         const roles = await Role.findAll({
-            attributes,
             order: [['hierarchy_level', 'ASC'], ['id', 'ASC']]
         });
         res.json(roles);
@@ -72,6 +67,7 @@ exports.create = async (req, res) => {
             can_access_webapp,
             can_manage_roles,
             can_manage_email_settings,
+            can_manage_system_settings,
             active
         } = req.body;
 
@@ -110,6 +106,7 @@ exports.create = async (req, res) => {
             can_access_webapp: can_access_webapp || false,
             can_manage_roles: can_manage_roles || false,
             can_manage_email_settings: can_manage_email_settings || false,
+            can_manage_system_settings: can_manage_system_settings || 'none',
             active: active !== undefined ? active : true
         });
 
@@ -148,6 +145,7 @@ exports.update = async (req, res) => {
             can_access_webapp,
             can_manage_roles,
             can_manage_email_settings,
+            can_manage_system_settings,
             active
         } = req.body;
 
@@ -213,6 +211,7 @@ exports.update = async (req, res) => {
             can_access_webapp: can_access_webapp !== undefined ? can_access_webapp : role.can_access_webapp,
             can_manage_roles: can_manage_roles !== undefined ? can_manage_roles : role.can_manage_roles,
             can_manage_email_settings: can_manage_email_settings !== undefined ? can_manage_email_settings : role.can_manage_email_settings,
+            can_manage_system_settings: can_manage_system_settings !== undefined ? can_manage_system_settings : role.can_manage_system_settings,
             active: active !== undefined ? active : role.active
         });
 

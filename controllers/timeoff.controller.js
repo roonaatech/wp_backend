@@ -28,7 +28,7 @@ const validateTimeOffHours = async (staff_id, date, start_time, end_time, exclud
     if (durationHours > maxHours) {
         return {
             valid: false,
-            message: `Time-off request exceeds the maximum allowance of ${maxHours} hours per day.`
+            message: `Time-off request of ${parseFloat(durationHours.toFixed(2))} hours exceeds the maximum allowance of ${maxHours} hours per day.`
         };
     }
 
@@ -54,7 +54,7 @@ const validateTimeOffHours = async (staff_id, date, start_time, end_time, exclud
     if (totalHoursWithThisRequest > maxHours) {
         return {
             valid: false,
-            message: `This request would exceed the daily limit of ${maxHours} hours. You have already requested ${totalExistingHours} hours for ${date}. This request of ${durationHours} hours would total ${totalHoursWithThisRequest} hours.`
+            message: `This request would exceed the daily limit of ${maxHours} hours. You have already requested ${parseFloat(totalExistingHours.toFixed(2))} hours for ${date}. This request of ${parseFloat(durationHours.toFixed(2))} hours would total ${parseFloat(totalHoursWithThisRequest.toFixed(2))} hours.`
         };
     }
 
@@ -68,6 +68,13 @@ exports.applyTimeOff = async (req, res) => {
 
         if (!date || !start_time || !end_time || !reason) {
             return res.status(400).send({ message: "Date, start time, end time, and reason are required!" });
+        }
+
+        // Validate that date is not a Sunday
+        const dateParts = String(date).split('T')[0].split('-');
+        const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+        if (dateObj.getDay() === 0) {
+            return res.status(400).send({ message: "Time-off requests cannot be submitted for Sundays." });
         }
 
         // Validate time format (HH:MM or HH:MM:SS)
@@ -184,6 +191,15 @@ exports.updateTimeOffDetails = async (req, res) => {
             return res.status(400).send({ message: "Cannot update a request that has already been processed." });
         }
 
+        // Validate that updated date is not a Sunday
+        if (date) {
+            const dateParts = String(date).split('T')[0].split('-');
+            const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+            if (dateObj.getDay() === 0) {
+                return res.status(400).send({ message: "Time-off requests cannot be submitted for Sundays." });
+            }
+        }
+
         // Validate time format (HH:MM)
         if (start_time || end_time) {
             const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -271,6 +287,24 @@ exports.updateTimeOffStatus = async (req, res) => {
         const timeOff = await TimeOffRequest.findByPk(id);
         if (!timeOff) {
             return res.status(404).send({ message: "Time-Off request not found." });
+        }
+
+        // Validate user has permission to approve time-off requests
+        const User = db.user;
+        const currentUser = await User.findByPk(req.userId);
+        const Role = db.roles;
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        if (!userRole || !userRole.can_approve_timeoff || userRole.can_approve_timeoff === 'none') {
+            return res.status(403).send({ message: "You don't have permission to approve time-off requests." });
+        }
+
+        // If permission is 'subordinates', validate the request is from a subordinate
+        if (userRole.can_approve_timeoff === 'subordinates') {
+            const requestingUser = await User.findByPk(timeOff.staff_id);
+            if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
+                return res.status(403).send({ message: "You can only approve time-off requests from your direct subordinates." });
+            }
         }
 
         const oldStatus = timeOff.status;

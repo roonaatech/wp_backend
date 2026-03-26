@@ -1,6 +1,8 @@
 const db = require("../models");
 const UserLeaveType = db.user_leave_types;
 const LeaveType = db.leave_types;
+const LeaveRequest = db.leave_requests;
+const { Op } = require("sequelize");
 
 // Get all leave types for a user
 exports.getUserLeaveTypes = async (req, res) => {
@@ -12,6 +14,56 @@ exports.getUserLeaveTypes = async (req, res) => {
         const userLeaveTypes = await UserLeaveType.findAll({
             where: { user_id: userId }
         });
+
+        // Get approved/pending leaves for this user in the current year to calculate days used
+        const currentYear = new Date().getFullYear();
+        const yearStart = new Date(`${currentYear}-01-01`);
+        const yearEnd = new Date(`${currentYear}-12-31`);
+
+        const usedLeaves = await LeaveRequest.findAll({
+            where: {
+                staff_id: userId,
+                status: { [Op.in]: ['Pending', 'Approved', 'Active'] },
+                start_date: {
+                    [Op.gte]: yearStart,
+                    [Op.lte]: yearEnd
+                }
+            }
+        });
+
+        const daysUsedByType = {};
+        usedLeaves.forEach(leave => {
+            // Parse YYYY-MM-DD manually to avoid UTC timezone shift issues
+            const parseDate = (dateStr) => {
+                if (typeof dateStr !== 'string') return new Date(dateStr);
+                const parts = String(dateStr).split('T')[0].split('-');
+                if (parts.length === 3) {
+                    return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                }
+                return new Date(dateStr);
+            };
+
+            const start = parseDate(leave.start_date);
+            const end = parseDate(leave.end_date);
+            let count = 0;
+            const current = new Date(start);
+
+            // Validate dates
+            if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+                while (current <= end) {
+                    // Exclude Sunday (0)
+                    if (current.getDay() !== 0) {
+                        count++;
+                    }
+                    current.setDate(current.getDate() + 1);
+                }
+            }
+            if (!daysUsedByType[leave.leave_type]) {
+                daysUsedByType[leave.leave_type] = 0;
+            }
+            daysUsedByType[leave.leave_type] += count;
+        });
+
         // Map assigned leave types by leave_type_id
         const assignedMap = {};
         userLeaveTypes.forEach(ult => {
@@ -20,13 +72,14 @@ exports.getUserLeaveTypes = async (req, res) => {
         // Build response: all leave types, with assignment info (no default days)
         const result = allLeaveTypes.map(lt => {
             const assigned = assignedMap[lt.id];
+            const calculatedDaysUsed = daysUsedByType[lt.name] || 0;
             return {
                 leave_type_id: lt.id,
                 name: lt.name,
                 description: lt.description,
                 assigned: !!assigned,
                 days_allowed: assigned ? assigned.days_allowed : '',
-                days_used: assigned ? assigned.days_used : 0
+                days_used: assigned ? calculatedDaysUsed : 0
             };
         });
         res.json(result);
