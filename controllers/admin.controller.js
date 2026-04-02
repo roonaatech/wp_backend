@@ -1307,7 +1307,8 @@ exports.getMonthlySummary = async (req, res) => {
                     email: userData?.email || '',
                     leave_days: 0,
                     timeoff_minutes: 0,
-                    onduty_minutes: 0
+                    onduty_minutes: 0,
+                    records: []
                 };
             }
         };
@@ -1342,6 +1343,14 @@ exports.getMonthlySummary = async (req, res) => {
                     current.setDate(current.getDate() + 1);
                 }
                 staffMap[sid].leave_days += actualDays;
+                if (actualDays > 0) {
+                    staffMap[sid].records.push({
+                        type: 'Leave',
+                        date: leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} to ${leave.end_date}`,
+                        duration: `${actualDays} day(s)`,
+                        detail: leave.leave_type || 'N/A'
+                    });
+                }
             } else {
                 unapprovedRecords.push({
                     type: 'Leave',
@@ -1362,7 +1371,21 @@ exports.getMonthlySummary = async (req, res) => {
                     const [sh, sm] = to.start_time.split(':').map(Number);
                     const [eh, em] = to.end_time.split(':').map(Number);
                     const mins = (eh * 60 + em) - (sh * 60 + sm);
-                    if (mins > 0) staffMap[sid].timeoff_minutes += mins;
+                    if (mins > 0) {
+                        staffMap[sid].timeoff_minutes += mins;
+                        const formatMins = (m) => {
+                            const h = Math.floor(m / 60); const min = m % 60;
+                            if (h > 0 && min > 0) return `${h}h ${min}m`;
+                            if (h > 0) return `${h}h`;
+                            return `${min}m`;
+                        };
+                        staffMap[sid].records.push({
+                            type: 'Time-Off',
+                            date: to.date,
+                            duration: `${to.start_time.substring(0,5)} to ${to.end_time.substring(0,5)} (${formatMins(mins)})`,
+                            detail: to.reason || 'N/A'
+                        });
+                    }
                 }
             } else {
                 unapprovedRecords.push({
@@ -1383,7 +1406,30 @@ exports.getMonthlySummary = async (req, res) => {
                 if (od.start_time && od.end_time) {
                     const diffMs = new Date(od.end_time).getTime() - new Date(od.start_time).getTime();
                     const mins = Math.floor(diffMs / 60000);
-                    if (mins > 0) staffMap[sid].onduty_minutes += mins;
+                    if (mins > 0) {
+                        staffMap[sid].onduty_minutes += mins;
+                        const formatMins = (m) => {
+                            const h = Math.floor(m / 60); const min = m % 60;
+                            if (h > 0 && min > 0) return `${h}h ${min}m`;
+                            if (h > 0) return `${h}h`;
+                            return `${min}m`;
+                        };
+                        const dStr = getDateInTimezone(od.start_time, reportTz);
+                        let timeStr = "";
+                        try {
+                           const d1 = new Date(od.start_time);
+                           const d2 = new Date(od.end_time);
+                           const t1 = `${String(d1.getHours()).padStart(2, '0')}:${String(d1.getMinutes()).padStart(2, '0')}`;
+                           const t2 = `${String(d2.getHours()).padStart(2, '0')}:${String(d2.getMinutes()).padStart(2, '0')}`;
+                           timeStr = `${t1} to ${t2} `;
+                        } catch(e) {}
+                        staffMap[sid].records.push({
+                            type: 'On-Duty',
+                            date: dStr,
+                            duration: `${timeStr}(${formatMins(mins)})`,
+                            detail: `${od.client_name || 'N/A'} - ${od.location || 'N/A'}`
+                        });
+                    }
                 }
             } else {
                 unapprovedRecords.push({
@@ -1405,7 +1451,8 @@ exports.getMonthlySummary = async (req, res) => {
             timeoff_hours: parseFloat((s.timeoff_minutes / 60).toFixed(1)),
             timeoff_minutes: s.timeoff_minutes,
             onduty_hours: parseFloat((s.onduty_minutes / 60).toFixed(1)),
-            onduty_minutes: s.onduty_minutes
+            onduty_minutes: s.onduty_minutes,
+            records: s.records || []
         }));
 
         // Sort by name
