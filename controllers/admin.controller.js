@@ -938,7 +938,10 @@ exports.getAttendanceReports = async (req, res) => {
             const [, eUTC] = getUTCBounds(endDate, reportTz);
 
             // Leave requests use DATEONLY, so we can use strings if we want, but between works too
-            dateWhereLeave.start_date = { [Op.between]: [startDate, endDate] };
+            dateWhereLeave[Op.and] = [
+                { start_date: { [Op.lte]: endDate } },
+                { end_date: { [Op.gte]: startDate } }
+            ];
             dateWhereOnDuty.start_time = { [Op.between]: [sUTC, eUTC] };
             dateWhereTimeOff.date = { [Op.between]: [startDate, endDate] };
         } else if (dateFilter && dateFilter !== 'all') {
@@ -986,7 +989,10 @@ exports.getAttendanceReports = async (req, res) => {
                 dateWhereOnDuty.start_time = { [Op.between]: [fromUTC, toUTC] };
             }
             if (fromStr && toStr) {
-                dateWhereLeave.start_date = { [Op.between]: [fromStr, toStr] };
+                dateWhereLeave[Op.and] = [
+                    { start_date: { [Op.lte]: toStr } },
+                    { end_date: { [Op.gte]: fromStr } }
+                ];
                 dateWhereTimeOff.date = { [Op.between]: [fromStr, toStr] };
             }
         }
@@ -1211,6 +1217,211 @@ exports.getAttendanceReports = async (req, res) => {
         console.error('Error in getAttendanceReports:', err);
         res.status(500).send({
             message: err.message || "Some error occurred while retrieving reports."
+        });
+    }
+};
+
+exports.getMonthlySummary = async (req, res) => {
+    console.log('API Hit: getMonthlySummary', req.query);
+    try {
+        const { Op } = require("sequelize");
+        const LeaveRequest = db.leave_requests;
+        const OnDutyLog = db.on_duty_logs;
+        const TimeOffRequest = db.time_off_requests;
+        const Staff = db.user;
+        const Role = db.roles;
+        const reportTz = await getAppTimezone();
+
+        const { month, year } = req.query;
+        if (!month || !year) {
+            return res.status(400).send({ message: "month and year are required query parameters." });
+        }
+
+        const m = parseInt(month);
+        const y = parseInt(year);
+        const startDate = `${y}-${String(m).padStart(2, '0')}-01`;
+        const lastDay = new Date(y, m, 0).getDate();
+        const endDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+        // UTC bounds for on-duty timestamp columns
+        const [sUTC] = getUTCBounds(startDate, reportTz);
+        const [, eUTC] = getUTCBounds(endDate, reportTz);
+
+        // --- Permissions ---
+        const currentUser = await Staff.findByPk(req.userId);
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+        const canViewAll = userRole && userRole.can_view_reports === 'all';
+        const canViewSubs = userRole && (userRole.can_view_reports === 'subordinates' || userRole.can_view_reports === 'all');
+
+        let staffFilter = {};
+        if (!canViewAll && canViewSubs) {
+            const reportees = await Staff.findAll({
+                attributes: ['staffid'],
+                where: { approving_manager_id: req.userId },
+                raw: true
+            });
+            const reporteeIds = reportees.map(r => r.staffid);
+            staffFilter = { staff_id: { [Op.in]: reporteeIds } };
+        } else if (!canViewAll && !canViewSubs) {
+            return res.send({ summary: [] });
+        }
+
+        // --- Fetch Leave Requests in date range ---
+        const leaves = await LeaveRequest.findAll({
+            where: {
+                ...staffFilter,
+                start_date: { [Op.lte]: endDate },
+                end_date: { [Op.gte]: startDate }
+            },
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }]
+        });
+
+        // --- Fetch Time-Off Requests in date range ---
+        const timeOffs = await TimeOffRequest.findAll({
+            where: {
+                ...staffFilter,
+                date: { [Op.between]: [startDate, endDate] }
+            },
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }]
+        });
+
+        // --- Fetch On-Duty Logs in date range ---
+        const onDuties = await OnDutyLog.findAll({
+            where: {
+                ...staffFilter,
+                start_time: { [Op.between]: [sUTC, eUTC] }
+            },
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }]
+        });
+
+        // --- Aggregate per employee ---
+        const staffMap = {};
+        const unapprovedRecords = [];
+
+        const ensureStaff = (staffId, userData) => {
+            if (!staffMap[staffId]) {
+                staffMap[staffId] = {
+                    staff_id: staffId,
+                    firstname: userData?.firstname || 'Unknown',
+                    lastname: userData?.lastname || '',
+                    email: userData?.email || '',
+                    leave_days: 0,
+                    timeoff_minutes: 0,
+                    onduty_minutes: 0
+                };
+            }
+        };
+
+        // Calculate leave days (clamped to month boundaries) - Only Approved
+        leaves.forEach(leave => {
+            if (leave.status === 'Approved') {
+                const sid = leave.staff_id;
+                ensureStaff(sid, leave.user);
+
+                // Calculate leave days (clamped to month boundaries) - Only Approved
+                // Exclude Sundays to match calculateLeaveDays frontend utility
+                const parseDateOnly = (dStr) => {
+                    const parts = String(dStr).split('-');
+                    return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                };
+
+                const leaveStart = parseDateOnly(leave.start_date);
+                const leaveEnd = parseDateOnly(leave.end_date);
+                const monthStart = parseDateOnly(startDate);
+                const monthEnd = parseDateOnly(endDate);
+
+                // Find intersection
+                const current = new Date(Math.max(leaveStart, monthStart));
+                const endLimit = new Date(Math.min(leaveEnd, monthEnd));
+
+                let actualDays = 0;
+                while (current <= endLimit) {
+                    if (current.getDay() !== 0) { // Not Sunday
+                        actualDays++;
+                    }
+                    current.setDate(current.getDate() + 1);
+                }
+                staffMap[sid].leave_days += actualDays;
+            } else {
+                unapprovedRecords.push({
+                    type: 'Leave',
+                    status: leave.status,
+                    staff_name: `${leave.user?.firstname} ${leave.user?.lastname}`,
+                    date: leave.start_date
+                });
+            }
+        });
+
+        // Calculate time-off minutes - Only Approved
+        timeOffs.forEach(to => {
+            if (to.status === 'Approved') {
+                const sid = to.staff_id;
+                ensureStaff(sid, to.user);
+
+                if (to.start_time && to.end_time) {
+                    const [sh, sm] = to.start_time.split(':').map(Number);
+                    const [eh, em] = to.end_time.split(':').map(Number);
+                    const mins = (eh * 60 + em) - (sh * 60 + sm);
+                    if (mins > 0) staffMap[sid].timeoff_minutes += mins;
+                }
+            } else {
+                unapprovedRecords.push({
+                    type: 'Time-Off',
+                    status: to.status,
+                    staff_name: `${to.user?.firstname} ${to.user?.lastname}`,
+                    date: to.date
+                });
+            }
+        });
+
+        // Calculate on-duty minutes - Only Approved
+        onDuties.forEach(od => {
+            if (od.status === 'Approved') {
+                const sid = od.staff_id;
+                ensureStaff(sid, od.user);
+
+                if (od.start_time && od.end_time) {
+                    const diffMs = new Date(od.end_time).getTime() - new Date(od.start_time).getTime();
+                    const mins = Math.floor(diffMs / 60000);
+                    if (mins > 0) staffMap[sid].onduty_minutes += mins;
+                }
+            } else {
+                unapprovedRecords.push({
+                    type: 'On-Duty',
+                    status: od.status,
+                    staff_name: `${od.user?.firstname} ${od.user?.lastname}`,
+                    date: getDateInTimezone(od.start_time, reportTz)
+                });
+            }
+        });
+
+        // Convert to array and format hours
+        const summary = Object.values(staffMap).map(s => ({
+            staff_id: s.staff_id,
+            firstname: s.firstname,
+            lastname: s.lastname,
+            email: s.email,
+            leave_days: s.leave_days,
+            timeoff_hours: parseFloat((s.timeoff_minutes / 60).toFixed(1)),
+            timeoff_minutes: s.timeoff_minutes,
+            onduty_hours: parseFloat((s.onduty_minutes / 60).toFixed(1)),
+            onduty_minutes: s.onduty_minutes
+        }));
+
+        // Sort by name
+        summary.sort((a, b) => `${a.firstname} ${a.lastname}`.localeCompare(`${b.firstname} ${b.lastname}`));
+
+        res.send({
+            month: m,
+            year: y,
+            period: `${startDate} to ${endDate}`,
+            summary
+        });
+
+    } catch (err) {
+        console.error('Error in getMonthlySummary:', err);
+        res.status(500).send({
+            message: err.message || "Some error occurred while generating the monthly summary."
         });
     }
 };

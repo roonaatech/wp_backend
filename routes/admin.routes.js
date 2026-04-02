@@ -442,4 +442,38 @@ module.exports = function (app) {
      *         description: Unauthorized
      */
     app.get("/api/admin/reports", [verifyToken, authJwt.canViewReports], controller.getAttendanceReports);
+
+    /**
+     * @swagger
+     * /api/admin/reports/monthly-summary:
+     *   get:
+     *     summary: Get monthly summary report
+     *     description: Retrieve aggregated monthly totals of leave days, time-off hours, and on-duty hours per employee
+     *     tags: [Reports]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - in: query
+     *         name: month
+     *         required: true
+     *         schema:
+     *           type: integer
+     *           minimum: 1
+     *           maximum: 12
+     *         description: Month number (1-12)
+     *       - in: query
+     *         name: year
+     *         required: true
+     *         schema:
+     *           type: integer
+     *         description: Year (e.g., 2026)
+     *     responses:
+     *       200:
+     *         description: Monthly summary retrieved successfully
+     *       400:
+     *         description: Missing month or year parameters
+     *       401:
+     *         description: Unauthorized
+     */
+    app.get("/api/admin/reports/monthly-summary", [verifyToken, authJwt.canViewReports], controller.getMonthlySummary);
 };
