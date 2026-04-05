@@ -1347,6 +1347,8 @@ exports.getMonthlySummary = async (req, res) => {
                     staffMap[sid].records.push({
                         type: 'Leave',
                         date: leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} to ${leave.end_date}`,
+                        start_date: leave.start_date,
+                        end_date: leave.end_date,
                         duration: `${actualDays} day(s)`,
                         detail: leave.leave_type || 'N/A'
                     });
@@ -1382,6 +1384,8 @@ exports.getMonthlySummary = async (req, res) => {
                         staffMap[sid].records.push({
                             type: 'Time-Off',
                             date: to.date,
+                            start_time: to.start_time,
+                            end_time: to.end_time,
                             duration: `${to.start_time.substring(0,5)} to ${to.end_time.substring(0,5)} (${formatMins(mins)})`,
                             detail: to.reason || 'N/A'
                         });
@@ -1426,6 +1430,8 @@ exports.getMonthlySummary = async (req, res) => {
                         staffMap[sid].records.push({
                             type: 'On-Duty',
                             date: dStr,
+                            start_time: od.start_time,
+                            end_time: od.end_time,
                             duration: `${timeStr}(${formatMins(mins)})`,
                             detail: `${od.client_name || 'N/A'} - ${od.location || 'N/A'}`
                         });
