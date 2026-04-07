@@ -873,6 +873,20 @@ exports.updateLeaveStatus = async (req, res) => {
             return res.status(403).send({ message: "You don't have permission to approve leave requests." });
         }
 
+        // Prevent self-approval (Send 400 to show toast without logging out)
+        if (Number(leave.staff_id) === Number(req.userId)) {
+            let managerInfo = '';
+            if (currentUser.approving_manager_id) {
+                const manager = await Staff.findByPk(currentUser.approving_manager_id, {
+                    attributes: ['firstname', 'lastname']
+                });
+                if (manager) {
+                    managerInfo = ` Please contact ${manager.firstname} ${manager.lastname} for approval.`;
+                }
+            }
+            return res.status(400).send({ message: `You cannot approve or reject your own requests.${managerInfo}` });
+        }
+
         // If permission is 'subordinates', validate the request is from a subordinate
         if (userRole.can_approve_leave === 'subordinates') {
             const requestingUser = await Staff.findByPk(leave.staff_id);
