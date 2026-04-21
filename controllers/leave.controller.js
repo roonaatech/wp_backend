@@ -79,7 +79,7 @@ const calculateLeaveDays = (startDate, endDate) => {
 // Apply for a Leave
 exports.applyLeave = async (req, res) => {
     try {
-        const { leave_type, start_date, end_date, reason } = req.body;
+        const { leave_type, start_date, end_date, reason, is_half_day } = req.body;
 
         if (!leave_type || !start_date || !end_date) {
             return res.status(400).send({ message: "Leave type, start date, and end date are required!" });
@@ -112,7 +112,10 @@ exports.applyLeave = async (req, res) => {
                 return res.status(400).send({ message: `Leave type '${leave_type}' is not assigned to you. Please contact admin.` });
             }
             const allowedDays = userLeaveType.days_allowed || 0;
-            const requestedDays = calculateLeaveDays(start_date, end_date);
+            let requestedDays = calculateLeaveDays(start_date, end_date);
+            if (is_half_day && requestedDays > 0) {
+                requestedDays -= 0.5;
+            }
 
             // 2. Get already used/pending days for this year
             const year = new Date(start_date).getFullYear();
@@ -130,7 +133,11 @@ exports.applyLeave = async (req, res) => {
 
             let usedDaysCount = 0;
             usedLeaves.forEach(leave => {
-                usedDaysCount += calculateLeaveDays(leave.start_date, leave.end_date);
+                let days = calculateLeaveDays(leave.start_date, leave.end_date);
+                if (leave.is_half_day && days > 0) {
+                    days -= 0.5;
+                }
+                usedDaysCount += days;
             });
 
             const totalProjectedDays = usedDaysCount + requestedDays;
@@ -201,7 +208,8 @@ exports.applyLeave = async (req, res) => {
             leave_type,
             start_date,
             end_date,
-            reason
+            reason,
+            is_half_day: is_half_day || false
         });
 
         // Log activity
@@ -272,7 +280,7 @@ exports.getMyLeaves = async (req, res) => {
         // Fetch Leaves
         const leaves = await LeaveRequest.findAll({
             where: { staff_id: req.userId },
-            attributes: ['id', 'leave_type', 'start_date', 'end_date', 'reason', 'status', 'rejection_reason', 'manager_id', 'createdAt'],
+            attributes: ['id', 'leave_type', 'start_date', 'end_date', 'reason', 'status', 'rejection_reason', 'manager_id', 'createdAt', 'is_half_day'],
             raw: true
         });
 
@@ -306,6 +314,7 @@ exports.getMyLeaves = async (req, res) => {
                 end: l.end_date,
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
+                is_half_day: l.is_half_day,
                 date: l.createdAt
             }, ['id', 'manager_id'])
         );
@@ -490,6 +499,7 @@ exports.getPendingLeaves = async (req, res) => {
             reason: l.reason,
             start_date: l.start_date,
             end_date: l.end_date,
+            is_half_day: l.is_half_day,
             createdAt: l.createdAt
         }));
 
@@ -716,6 +726,7 @@ exports.getManageableRequests = async (req, res) => {
                 reason: l.reason,
                 start_date: l.start_date,
                 end_date: l.end_date,
+                is_half_day: l.is_half_day,
                 status: l.status,
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
@@ -1017,7 +1028,7 @@ exports.updateLeaveStatus = async (req, res) => {
 exports.updateLeaveDetails = async (req, res) => {
     try {
         const { id } = req.params;
-        const { leave_type, start_date, end_date, reason } = req.body;
+        const { leave_type, start_date, end_date, reason, is_half_day } = req.body;
 
         const leave = await LeaveRequest.findByPk(id);
         if (!leave) {
@@ -1090,6 +1101,7 @@ exports.updateLeaveDetails = async (req, res) => {
         if (start_date) leave.start_date = start_date;
         if (end_date) leave.end_date = end_date;
         if (reason) leave.reason = reason;
+        if (is_half_day !== undefined) leave.is_half_day = is_half_day;
 
         await leave.save();
 

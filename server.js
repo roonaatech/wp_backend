@@ -62,7 +62,7 @@ require('./routes/setting.routes')(app);
 require('./routes/timeoff.routes')(app);
 
 // Sync database
-db.sequelize.sync()
+db.sequelize.sync({ alter: true })
     .then(() => {
         console.log('Synced db.');
         // Only run background services if not in test mode

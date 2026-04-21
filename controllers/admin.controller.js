@@ -1131,6 +1131,7 @@ exports.getAttendanceReports = async (req, res) => {
                 date: leave.start_date,
                 start_date: leave.start_date,
                 end_date: leave.end_date,
+                is_half_day: leave.is_half_day || false,
                 leave_type: leave.leave_type,
                 reason: leave.reason,
                 status: leave.status,
@@ -1342,6 +1343,11 @@ exports.getMonthlySummary = async (req, res) => {
                     }
                     current.setDate(current.getDate() + 1);
                 }
+                
+                if (leave.is_half_day && actualDays > 0) {
+                    actualDays = actualDays - 0.5;
+                }
+                
                 staffMap[sid].leave_days += actualDays;
                 if (actualDays > 0) {
                     staffMap[sid].records.push({

@@ -21,6 +21,10 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.DATEONLY,
             allowNull: false
         },
+        is_half_day: {
+            type: Sequelize.BOOLEAN,
+            defaultValue: false
+        },
         reason: {
             type: Sequelize.TEXT
         },
