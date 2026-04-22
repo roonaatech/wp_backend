@@ -352,3 +352,51 @@ exports.changePassword = async (req, res) => {
         res.status(500).send({ message: err.message });
     }
 };
+
+/**
+ * Generate a short-lived token for QR code sharing.
+ * This token expires in 5 minutes, making QR code screenshots useless.
+ * The user must be authenticated to generate a QR token.
+ */
+exports.generateQRToken = async (req, res) => {
+    try {
+        const userId = req.userId; // Set by verifyToken middleware
+
+        // Find the user to include their info in the response
+        const user = await TblStaff.findOne({
+            where: { staffid: userId },
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active']
+        });
+
+        if (!user) {
+            return res.status(404).send({ message: "User not found." });
+        }
+
+        if (!user.active) {
+            return res.status(403).send({ message: "User account is inactive." });
+        }
+
+        // Generate a short-lived token (1 minute = 60 seconds)
+        const qrToken = jwt.sign(
+            { id: user.staffid, purpose: 'qr' },
+            config.JWT_SECRET,
+            { expiresIn: 60 }
+        );
+
+        res.status(200).send({
+            success: true,
+            qrToken: qrToken,
+            expiresIn: 60, // seconds
+            user: {
+                staffid: user.staffid,
+                firstname: user.firstname,
+                lastname: user.lastname,
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (err) {
+        console.error('Error generating QR token:', err);
+        res.status(500).send({ message: err.message });
+    }
+};

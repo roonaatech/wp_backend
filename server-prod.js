@@ -3,7 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const dotenv = require('dotenv');
 const envFile = fs.existsSync(path.resolve(__dirname, '.env.prod')) ? '.env.prod' : '.env';
-dotenv.config({ path: path.resolve(__dirname, envFile) });
+dotenv.config({ path: path.resolve(__dirname, envFile), override: true });
 console.log(`[PROD] Loaded environment from ${envFile}`);
 
 process.on('uncaughtException', (err) => {

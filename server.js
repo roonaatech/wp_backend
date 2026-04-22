@@ -1,6 +1,6 @@
 const path = require('path');
 const dotenv = require('dotenv');
-dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env'), override: true });
 
 process.on('uncaughtException', (err) => {
     console.error('Global Uncaught Exception:', err);
@@ -62,7 +62,7 @@ require('./routes/setting.routes')(app);
 require('./routes/timeoff.routes')(app);
 
 // Sync database
-db.sequelize.sync()
+db.sequelize.sync({ alter: true })
     .then(() => {
         console.log('Synced db.');
         // Only run background services if not in test mode
