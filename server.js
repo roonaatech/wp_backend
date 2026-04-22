@@ -1,6 +1,6 @@
 const path = require('path');
 const dotenv = require('dotenv');
-dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env'), override: true });
 
 process.on('uncaughtException', (err) => {
     console.error('Global Uncaught Exception:', err);
