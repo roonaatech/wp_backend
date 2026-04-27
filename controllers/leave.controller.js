@@ -100,8 +100,11 @@ exports.applyLeave = async (req, res) => {
         const pastDaysSetting = await Setting.findOne({ where: { key: 'leave_past_days_allowed' } });
         const pastDaysAllowed = pastDaysSetting ? parseInt(pastDaysSetting.value) || 0 : 0;
         const tz = await getAppTimezone();
-        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
-        const [ty, tm, td] = todayStr.split('-').map(Number);
+        // Use formatToParts to reliably extract date parts regardless of Node.js locale/ICU build
+        const todayParts = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+        }).formatToParts(new Date()).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+        const ty = parseInt(todayParts.year), tm = parseInt(todayParts.month), td = parseInt(todayParts.day);
         // Walk back N working days (Sundays not counted)
         const cursor = new Date(ty, tm - 1, td);
         let workingDaysBack = 0;
@@ -111,9 +114,8 @@ exports.applyLeave = async (req, res) => {
         }
         const minDateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
         const startDateStr = String(start_date).split('T')[0];
-        console.log(`[LeaveValidation] pastDaysAllowed=${pastDaysAllowed} tz=${tz} todayStr=${todayStr} startDateStr=${startDateStr} minDateStr=${minDateStr} passes=${startDateStr >= minDateStr}`);
         if (startDateStr < minDateStr) {
-            return res.status(400).send({ message: `Leave cannot be applied for dates more than ${pastDaysAllowed} working day(s) in the past. [debug: today=${todayStr}, minDate=${minDateStr}, start=${startDateStr}, tz=${tz}]` });
+            return res.status(400).send({ message: `Leave cannot be applied for dates more than ${pastDaysAllowed} working day(s) in the past.` });
         }
 
         // --- Validate Leave Balance ---
