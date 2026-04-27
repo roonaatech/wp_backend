@@ -400,3 +400,44 @@ exports.generateQRToken = async (req, res) => {
         res.status(500).send({ message: err.message });
     }
 };
+
+/**
+ * Exchange a short-lived QR token for a full 24h session token.
+ * Called by the webapp after scanning a QR code, so the user can
+ * stay logged in for a full session instead of expiring in 60 seconds.
+ */
+exports.exchangeQRToken = async (req, res) => {
+    try {
+        const userId = req.userId; // Set by verifyToken middleware
+
+        const user = await TblStaff.findOne({
+            where: { staffid: userId },
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active']
+        });
+
+        if (!user) {
+            return res.status(404).send({ message: "User not found." });
+        }
+
+        if (!user.active) {
+            return res.status(403).send({ message: "User account is inactive." });
+        }
+
+        // Issue a full 24h session token
+        const sessionToken = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
+            expiresIn: 86400
+        });
+
+        res.status(200).send({
+            accessToken: sessionToken,
+            id: user.staffid,
+            firstname: user.firstname,
+            lastname: user.lastname,
+            email: user.email,
+            role: user.role
+        });
+    } catch (err) {
+        console.error('Error exchanging QR token:', err);
+        res.status(500).send({ message: err.message });
+    }
+};

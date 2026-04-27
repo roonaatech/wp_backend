@@ -42,6 +42,16 @@ async function seedSettings() {
             validation_rules: null,
             is_public: true,
             display_order: 12
+        },
+        {
+            key: 'leave_past_days_allowed',
+            value: '0',
+            description: 'Number of past days users can select when applying for leave (0 = only today and future)',
+            category: 'leave',
+            data_type: 'number',
+            validation_rules: '{"min": 0, "max": 365, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 20
         }
     ];
 

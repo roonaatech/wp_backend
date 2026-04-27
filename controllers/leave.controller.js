@@ -96,6 +96,25 @@ exports.applyLeave = async (req, res) => {
             return res.status(400).send({ message: "End date cannot be a Sunday." });
         }
 
+        // Validate past date restriction for leave applications
+        const pastDaysSetting = await Setting.findOne({ where: { key: 'leave_past_days_allowed' } });
+        const pastDaysAllowed = pastDaysSetting ? parseInt(pastDaysSetting.value) || 0 : 0;
+        const tz = await getAppTimezone();
+        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+        const [ty, tm, td] = todayStr.split('-').map(Number);
+        // Walk back N working days (Sundays not counted)
+        const cursor = new Date(ty, tm - 1, td);
+        let workingDaysBack = 0;
+        while (workingDaysBack < pastDaysAllowed) {
+            cursor.setDate(cursor.getDate() - 1);
+            if (cursor.getDay() !== 0) workingDaysBack++;
+        }
+        const minDateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+        const startDateStr = String(start_date).split('T')[0];
+        if (startDateStr < minDateStr) {
+            return res.status(400).send({ message: `Leave cannot be applied for dates more than ${pastDaysAllowed} working day(s) in the past.` });
+        }
+
         // --- Validate Leave Balance ---
         // 1. Check if leave type is assigned to user in user_leave_types
         const UserLeaveType = db.user_leave_types;

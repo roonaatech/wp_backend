@@ -22,21 +22,28 @@ exports.findByUserGender = async (req, res) => {
             include: [{
                 model: LeaveType,
                 as: 'leave_type',
-                where: { status: true }
+                where: { status: true },
+                required: true
             }]
         });
 
-        // Filter by gender restriction and map to leave type objects
+        // Filter by gender restriction and map to leave type objects,
+        // using the user-specific days_allowed from user_leave_types (not the global default)
         const filteredLeaveTypes = assignedLeaveTypes
-            .map(ult => ult.leave_type)
-            .filter(leaveType => {
+            .filter(ult => !!ult.leave_type)
+            .filter(ult => {
+                const leaveType = ult.leave_type;
                 // If no gender restriction is set, leave type is available for all
                 if (!leaveType.gender_restriction || leaveType.gender_restriction.length === 0) {
                     return true;
                 }
                 // If gender restriction exists, check if user's gender is in the list
                 return leaveType.gender_restriction.includes(user.gender);
-            });
+            })
+            .map(ult => ({
+                ...ult.leave_type.toJSON(),
+                days_allowed: ult.days_allowed  // user-specific allocation overrides global default
+            }));
 
         res.send(filteredLeaveTypes);
     } catch (err) {
