@@ -111,8 +111,9 @@ exports.applyLeave = async (req, res) => {
         }
         const minDateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
         const startDateStr = String(start_date).split('T')[0];
+        console.log(`[LeaveValidation] pastDaysAllowed=${pastDaysAllowed} tz=${tz} todayStr=${todayStr} startDateStr=${startDateStr} minDateStr=${minDateStr} passes=${startDateStr >= minDateStr}`);
         if (startDateStr < minDateStr) {
-            return res.status(400).send({ message: `Leave cannot be applied for dates more than ${pastDaysAllowed} working day(s) in the past.` });
+            return res.status(400).send({ message: `Leave cannot be applied for dates more than ${pastDaysAllowed} working day(s) in the past. [debug: today=${todayStr}, minDate=${minDateStr}, start=${startDateStr}, tz=${tz}]` });
         }
 
         // --- Validate Leave Balance ---
