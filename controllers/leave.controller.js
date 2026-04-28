@@ -1540,12 +1540,20 @@ exports.getOnLeaveStatus = async (req, res) => {
                 start_date: { [Op.lte]: dateStr },
                 end_date: { [Op.gte]: dateStr }
             },
-            include: [{
-                model: Staff,
-                as: 'user',
-                attributes: ['staffid', 'firstname', 'lastname', 'email'],
-                where: userWhere
-            }],
+            include: [
+                {
+                    model: Staff,
+                    as: 'user',
+                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                    where: userWhere
+                },
+                {
+                    model: Staff,
+                    as: 'approver',
+                    attributes: ['staffid', 'firstname', 'lastname'],
+                    required: false
+                }
+            ],
             order: [['start_date', 'ASC']]
         });
 
@@ -1562,7 +1570,9 @@ exports.getOnLeaveStatus = async (req, res) => {
             leave_type: leave.leave_type,
             start_date: leave.start_date,
             end_date: leave.end_date,
-            is_half_day: leave.is_half_day
+            is_half_day: leave.is_half_day,
+            reason: leave.reason,
+            approved_by: leave.approver ? `${leave.approver.firstname} ${leave.approver.lastname}` : null
         });
 
         res.status(200).send({
