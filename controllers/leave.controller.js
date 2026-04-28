@@ -1491,6 +1491,91 @@ exports.getUserLeaveBalance = async (req, res) => {
     }
 };
 
+// Get who is on leave today and tomorrow
+exports.getOnLeaveStatus = async (req, res) => {
+    try {
+        const Role = db.roles;
+
+        const currentUser = await Staff.findByPk(req.userId);
+        const userRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        if (!userRole || userRole.can_approve_leave === 'none') {
+            return res.status(403).send({ message: "You don't have permission to view leave status." });
+        }
+
+        const canViewAll = userRole.can_approve_leave === 'all';
+
+        // Build user filter based on permission
+        let userWhere = { active: 1 };
+        if (!canViewAll) {
+            const subordinates = await Staff.findAll({
+                attributes: ['staffid'],
+                where: { approving_manager_id: req.userId, active: 1 },
+                raw: true
+            });
+            const subordinateIds = subordinates.map(s => s.staffid);
+            if (subordinateIds.length === 0) {
+                return res.status(200).send({ today: [], tomorrow: [] });
+            }
+            userWhere.staffid = { [Op.in]: subordinateIds };
+        }
+
+        // Compute today and tomorrow as YYYY-MM-DD in app timezone
+        const tz = await getAppTimezone();
+        const toDateStr = (d) => new Intl.DateTimeFormat('en-US', {
+            timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+        }).formatToParts(d).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+
+        const todayParts = toDateStr(new Date());
+        const todayStr = `${todayParts.year}-${todayParts.month}-${todayParts.day}`;
+
+        const tomorrowDate = new Date();
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrowParts = toDateStr(tomorrowDate);
+        const tomorrowStr = `${tomorrowParts.year}-${tomorrowParts.month}-${tomorrowParts.day}`;
+
+        const buildLeaveQuery = (dateStr) => LeaveRequest.findAll({
+            where: {
+                status: 'Approved',
+                start_date: { [Op.lte]: dateStr },
+                end_date: { [Op.gte]: dateStr }
+            },
+            include: [{
+                model: Staff,
+                as: 'user',
+                attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                where: userWhere
+            }],
+            order: [['start_date', 'ASC']]
+        });
+
+        const [todayLeaves, tomorrowLeaves] = await Promise.all([
+            buildLeaveQuery(todayStr),
+            buildLeaveQuery(tomorrowStr)
+        ]);
+
+        const formatLeave = (leave) => ({
+            id: leave.id,
+            staff_id: leave.staff_id,
+            name: leave.user ? `${leave.user.firstname} ${leave.user.lastname}` : 'Unknown',
+            email: leave.user?.email,
+            leave_type: leave.leave_type,
+            start_date: leave.start_date,
+            end_date: leave.end_date,
+            is_half_day: leave.is_half_day
+        });
+
+        res.status(200).send({
+            today: todayLeaves.map(formatLeave),
+            tomorrow: tomorrowLeaves.map(formatLeave),
+            today_date: todayStr,
+            tomorrow_date: tomorrowStr
+        });
+    } catch (err) {
+        res.status(500).send({ message: err.message });
+    }
+};
+
 // Get current user's leave balance (for mobile app)
 exports.getMyLeaveBalance = async (req, res) => {
     try {
