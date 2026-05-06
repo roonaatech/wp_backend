@@ -406,4 +406,10 @@ module.exports = function (app) {
         [authJwt.verifyToken],
         controller.getMyLeaveBalance
     );
+
+    app.get(
+        "/api/leave/on-leave",
+        [authJwt.verifyToken, authJwt.isManagerOrAdmin],
+        controller.getOnLeaveStatus
+    );
 };
