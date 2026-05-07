@@ -19,6 +19,16 @@ const getAppTimezone = async () => {
     }
 };
 
+// Helper to get application time format
+const getAppTimeFormat = async () => {
+    try {
+        const tfSetting = await Setting.findOne({ where: { key: 'application_time_format' } });
+        return tfSetting ? tfSetting.value : '12h';
+    } catch (e) {
+        return '12h';
+    }
+};
+
 // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
 const formatDateInTimezone = (dateObj, tz) => {
     if (!dateObj) return null;
@@ -1522,6 +1532,7 @@ exports.getOnLeaveStatus = async (req, res) => {
 
         // Compute today and tomorrow as YYYY-MM-DD in app timezone
         const tz = await getAppTimezone();
+        const timeFormatSetting = await getAppTimeFormat();
         const toDateStr = (d) => new Intl.DateTimeFormat('en-US', {
             timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
         }).formatToParts(d).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
@@ -1557,9 +1568,33 @@ exports.getOnLeaveStatus = async (req, res) => {
             order: [['start_date', 'ASC']]
         });
 
-        const [todayLeaves, tomorrowLeaves] = await Promise.all([
+        const buildTimeOffQuery = (dateStr) => TimeOffRequest.findAll({
+            where: {
+                status: 'Approved',
+                date: dateStr
+            },
+            include: [
+                {
+                    model: Staff,
+                    as: 'user',
+                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                    where: userWhere
+                },
+                {
+                    model: Staff,
+                    as: 'approver',
+                    attributes: ['staffid', 'firstname', 'lastname'],
+                    required: false
+                }
+            ],
+            order: [['start_time', 'ASC']]
+        });
+
+        const [todayLeaves, tomorrowLeaves, todayTimeOffs, tomorrowTimeOffs] = await Promise.all([
             buildLeaveQuery(todayStr),
-            buildLeaveQuery(tomorrowStr)
+            buildLeaveQuery(tomorrowStr),
+            buildTimeOffQuery(todayStr),
+            buildTimeOffQuery(tomorrowStr)
         ]);
 
         const formatLeave = (leave) => ({
@@ -1571,13 +1606,51 @@ exports.getOnLeaveStatus = async (req, res) => {
             start_date: leave.start_date,
             end_date: leave.end_date,
             is_half_day: leave.is_half_day,
+            is_time_off: false,
             reason: leave.reason,
             approved_by: leave.approver ? `${leave.approver.firstname} ${leave.approver.lastname}` : null
         });
 
+        const formatTimeOff = (timeOff) => {
+            const formatTime = (timeStr) => {
+                if (!timeStr) return '';
+                const parts = timeStr.split(':');
+                if (parts.length < 2) return timeStr;
+                
+                let hours = parseInt(parts[0], 10);
+                const minutes = parts[1];
+                
+                if (timeFormatSetting === '12h') {
+                    const ampm = hours >= 12 ? 'PM' : 'AM';
+                    hours = hours % 12;
+                    hours = hours ? hours : 12; // the hour '0' should be '12'
+                    return `${hours}:${minutes} ${ampm}`;
+                }
+                
+                // 24h format
+                return `${parts[0]}:${parts[1]}`;
+            };
+            return {
+                id: `to-${timeOff.id}`,
+                staff_id: timeOff.staff_id,
+                name: timeOff.user ? `${timeOff.user.firstname} ${timeOff.user.lastname}` : 'Unknown',
+                email: timeOff.user?.email,
+                leave_type: `Time Off (${formatTime(timeOff.start_time)} - ${formatTime(timeOff.end_time)})`,
+                start_date: timeOff.date,
+                end_date: timeOff.date,
+                is_half_day: false,
+                is_time_off: true,
+                reason: timeOff.reason,
+                approved_by: timeOff.approver ? `${timeOff.approver.firstname} ${timeOff.approver.lastname}` : null
+            };
+        };
+
+        const combinedToday = [...todayLeaves.map(formatLeave), ...todayTimeOffs.map(formatTimeOff)];
+        const combinedTomorrow = [...tomorrowLeaves.map(formatLeave), ...tomorrowTimeOffs.map(formatTimeOff)];
+
         res.status(200).send({
-            today: todayLeaves.map(formatLeave),
-            tomorrow: tomorrowLeaves.map(formatLeave),
+            today: combinedToday,
+            tomorrow: combinedTomorrow,
             today_date: todayStr,
             tomorrow_date: tomorrowStr
         });
