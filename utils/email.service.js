@@ -86,8 +86,29 @@ class EmailService {
                 body = body.replace(regex, variables[key]);
             }
 
+            // Find user by primary email to check for secondary_email
+            let userSecondaryEmail = null;
+            try {
+                const User = db.user;
+                const userObj = await User.findOne({ where: { email: to } });
+                if (userObj && userObj.secondary_email) {
+                    userSecondaryEmail = userObj.secondary_email;
+                }
+            } catch (e) {
+                console.error("Error looking up user for secondary email:", e);
+            }
+
             // Use CC if template has cc_manager enabled and CC is provided
-            const ccToUse = (template.cc_manager && cc) ? cc : null;
+            let ccToUse = (template.cc_manager && cc) ? cc : null;
+
+            // Add secondary email to CC if it exists
+            if (userSecondaryEmail) {
+                if (ccToUse) {
+                    ccToUse = `${ccToUse},${userSecondaryEmail}`;
+                } else {
+                    ccToUse = userSecondaryEmail;
+                }
+            }
 
             return await this.sendEmail(to, subject, body, ccToUse);
 
