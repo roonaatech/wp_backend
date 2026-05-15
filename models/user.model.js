@@ -22,6 +22,11 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.STRING(100),
             allowNull: false
         },
+        secondary_email: {
+            type: Sequelize.STRING(100),
+            allowNull: true,
+            comment: 'Secondary/personal email for receiving notifications'
+        },
         password: {
             type: Sequelize.STRING(250),
             allowNull: false

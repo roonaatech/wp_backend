@@ -643,9 +643,18 @@ exports.updateOnDutyStatus = async (req, res) => {
             return res.status(400).send({ message: `You cannot approve or reject your own requests.${managerInfo}` });
         }
 
+        const requestingUser = await User.findByPk(log.staff_id);
+
+        // Prevent lower member from approving requests of higher role member
+        if (requestingUser && requestingUser.role) {
+            const requestingUserRole = await Role.findByPk(requestingUser.role);
+            if (requestingUserRole && userRole.hierarchy_level > requestingUserRole.hierarchy_level) {
+                return res.status(403).send({ message: "You cannot approve or reject requests from a higher role member." });
+            }
+        }
+
         // If permission is 'subordinates', validate the request is from a subordinate
         if (userRole.can_approve_onduty === 'subordinates') {
-            const requestingUser = await User.findByPk(log.staff_id);
             if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
                 return res.status(403).send({ message: "You can only approve on-duty requests from your direct subordinates." });
             }
