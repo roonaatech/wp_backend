@@ -109,7 +109,7 @@ exports.getIncompleteProfiles = async (req, res) => {
 };
 
 exports.createUser = async (req, res) => {
-    const { firstname, lastname, email, password, role, approving_manager_id, gender } = req.body;
+    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
 
     // Validate input
     if (!firstname || !lastname || !email || !password || !role || !gender) {
@@ -188,6 +188,7 @@ exports.createUser = async (req, res) => {
             firstname: firstname,
             lastname: lastname,
             email: email,
+            secondary_email: secondary_email || null,
             password: hashedPassword,
             role: roleInt,
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
@@ -226,6 +227,7 @@ exports.createUser = async (req, res) => {
                 firstname: newUser.firstname,
                 lastname: newUser.lastname,
                 email: newUser.email,
+                secondary_email: newUser.secondary_email,
                 role: newUser.role,
                 userid: newUser.userid,
                 approving_manager_id: newUser.approving_manager_id,
@@ -242,7 +244,7 @@ exports.createUser = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
     const { id } = req.params;
-    const { firstname, lastname, email, password, role, approving_manager_id, gender } = req.body;
+    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
 
     // Validate input
     if (!firstname || !lastname || !email || !role) {
@@ -337,6 +339,7 @@ exports.updateUser = async (req, res) => {
             firstname: firstname,
             lastname: lastname,
             email: email,
+            secondary_email: secondary_email !== undefined ? secondary_email : targetUser.secondary_email,
             role: roleInt,
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
             gender: gender,
@@ -370,6 +373,7 @@ exports.updateUser = async (req, res) => {
                 firstname: updatedUser.firstname,
                 lastname: updatedUser.lastname,
                 email: updatedUser.email,
+                secondary_email: updatedUser.secondary_email,
                 role: updatedUser.role,
                 userid: updatedUser.userid,
                 approving_manager_id: updatedUser.approving_manager_id,
@@ -514,6 +518,7 @@ exports.getAllUsers = async (req, res) => {
         const letter = req.query.letter || '';
         const role = req.query.role || ''; // Comma-separated role ids
         const userType = req.query.userType || ''; // 'workpulse' or 'external'
+        const manager = req.query.manager || ''; // Selected manager id
 
         // Build where clause using AND conditions
         const andConditions = [];
@@ -570,6 +575,16 @@ exports.getAllUsers = async (req, res) => {
             });
         }
 
+        // Manager constraint
+        if (manager) {
+            const managerIds = manager.split(',').map(m => parseInt(m.trim())).filter(m => !isNaN(m));
+            if (managerIds.length > 0) {
+                andConditions.push({
+                    approving_manager_id: { [Op.in]: managerIds }
+                });
+            }
+        }
+
         // Status constraint
         if (status) {
             const statuses = status.split(',').map(s => s.trim());
@@ -609,7 +624,7 @@ exports.getAllUsers = async (req, res) => {
 
         const queryOptions = {
             where: whereClause,
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'active', 'approving_manager_id', 'admin', 'gender'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender'],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
@@ -651,14 +666,34 @@ exports.getManagersAndAdmins = async (req, res) => {
 
         const approverRoleIds = approverRoles.map(r => r.id);
 
-        const users = await TblStaff.findAll({
+        let users = await TblStaff.findAll({
             where: {
                 role: { [Op.in]: approverRoleIds },
                 active: 1
             },
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
-            order: [['firstname', 'ASC'], ['lastname', 'ASC']]
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']],
+            raw: true
         });
+
+        const reporteesCount = await TblStaff.findAll({
+            attributes: ['approving_manager_id', [db.sequelize.fn('COUNT', db.sequelize.col('staffid')), 'count']],
+            where: {
+                approving_manager_id: { [Op.not]: null }
+            },
+            group: ['approving_manager_id'],
+            raw: true
+        });
+
+        const reporteesMap = {};
+        reporteesCount.forEach(r => {
+            reporteesMap[r.approving_manager_id] = parseInt(r.count);
+        });
+
+        users = users.map(u => ({
+            ...u,
+            has_reportees: !!reporteesMap[u.staffid || u.id]
+        }));
 
         res.send(users);
     } catch (err) {
