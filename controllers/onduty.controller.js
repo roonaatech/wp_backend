@@ -4,6 +4,7 @@ const User = db.user;
 const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+const hierarchyUtil = require("../utils/hierarchy.util");
 const timezoneUtil = require("../utils/timezone.util");
 const Setting = db.settings;
 
@@ -176,6 +177,15 @@ exports.endOnDuty = (req, res) => {
                                 start_date: formatDate(updatedOnDuty.start_time),
                                 end_date: formatDate(updatedOnDuty.end_time),
                                 reason: `${updatedOnDuty.purpose} at ${updatedOnDuty.client_name}`
+                            });
+                            
+                            // Check if manager is on leave, notify next level
+                            await hierarchyUtil.notifyNextLevelIfManagerOnLeave(manager, staff, 'onduty', {
+                                client_name: updatedOnDuty.client_name,
+                                location: updatedOnDuty.location,
+                                purpose: updatedOnDuty.purpose,
+                                start_time: formatDate(updatedOnDuty.start_time),
+                                end_time: formatDate(updatedOnDuty.end_time)
                             });
                         }
                     } catch (emailErr) {

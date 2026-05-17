@@ -263,6 +263,37 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/admin/users/{id}/yearly-history:
+     *   get:
+     *     summary: Get yearly history for a user
+     *     description: Fetch yearly leave, time-off, and on-duty events for a specific user
+     *     tags: [Users]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: id
+     *         required: true
+     *         schema:
+     *           type: integer
+     *         description: Staff ID
+     *       - in: query
+     *         name: year
+     *         schema:
+     *           type: integer
+     *         description: Year to fetch data for
+     *     responses:
+     *       200:
+     *         description: Yearly history retrieved successfully
+     *       401:
+     *         description: Unauthorized
+     *       403:
+     *         description: Access denied
+     */
+    app.get("/api/admin/users/:id/yearly-history", [verifyToken, authJwt.canViewUsers], controller.getUserYearlyHistory);
+
+    /**
+     * @swagger
      * /api/admin/users/{id}:
      *   put:
      *     summary: Update user details

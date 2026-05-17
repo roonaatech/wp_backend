@@ -52,6 +52,36 @@ async function seedSettings() {
             validation_rules: '{"min": 0, "max": 365, "step": 1, "required": true}',
             is_public: false,
             display_order: 20
+        },
+        {
+            key: 'enable_pending_request_reminders',
+            value: 'true',
+            description: 'Enable or disable daily automated email reminders for pending requests.',
+            category: 'notifications',
+            data_type: 'boolean',
+            validation_rules: null,
+            is_public: false,
+            display_order: 30
+        },
+        {
+            key: 'pending_request_reminder_days',
+            value: '3',
+            description: 'Number of days a request must be pending before a reminder is sent to the manager.',
+            category: 'notifications',
+            data_type: 'number',
+            validation_rules: '{"min": 1, "max": 30, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 31
+        },
+        {
+            key: 'pending_request_reminder_schedule',
+            value: '0 8 * * *',
+            description: 'Cron schedule expression for when the reminder job should run (default: 0 8 * * * means 8:00 AM daily).',
+            category: 'notifications',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 32
         }
     ];
 

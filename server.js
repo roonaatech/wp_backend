@@ -70,6 +70,9 @@ db.sequelize.sync({ alter: true })
             // Seed Email Templates
             require('./utils/seed_templates')();
 
+            // Start Cron Jobs
+            require('./utils/cron').startCronJobs();
+
             app.listen(PORT, () => {
                 console.log(`Server is running on port ${PORT}.`);
                 console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);
