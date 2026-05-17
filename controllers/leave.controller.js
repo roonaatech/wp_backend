@@ -7,6 +7,7 @@ const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+const hierarchyUtil = require("../utils/hierarchy.util");
 const Setting = db.settings;
 
 // Helper to get application timezone
@@ -271,6 +272,14 @@ exports.applyLeave = async (req, res) => {
                     console.log(`Sending leave_applied email to ${manager.email}`);
                     await emailService.sendTemplateEmail(manager.email, "leave_applied", {
                         user_name: `${user.firstname} ${user.lastname}`,
+                        leave_type: leave_type,
+                        start_date: start_date,
+                        end_date: end_date,
+                        reason: reason
+                    });
+                    
+                    // Check if manager is on leave, notify next level
+                    await hierarchyUtil.notifyNextLevelIfManagerOnLeave(manager, user, 'leave', {
                         leave_type: leave_type,
                         start_date: start_date,
                         end_date: end_date,

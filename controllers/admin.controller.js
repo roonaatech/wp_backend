@@ -2242,3 +2242,123 @@ exports.debugCalendarData = async (req, res) => {
     }
 };
 
+exports.getUserYearlyHistory = async (req, res) => {
+    console.log("=== getUserYearlyHistory hit ===", req.params.id, req.userId);
+    const { Op } = require("sequelize");
+    const LeaveRequest = db.leave_requests;
+    const OnDutyLog = db.on_duty_logs;
+    const TimeOffRequest = db.time_off_requests;
+    const Staff = db.user;
+    const Role = db.roles;
+
+    try {
+        const calTz = await getAppTimezone();
+        const year = parseInt(req.query.year) || new Date().getFullYear();
+        const targetUserId = parseInt(req.params.id);
+        const requestorId = req.userId;
+
+        // Verify requestor permission
+        const requestor = await Staff.findByPk(requestorId);
+        const userRole = requestor?.role ? await Role.findByPk(requestor.role) : null;
+        const isAdmin = userRole && userRole.can_manage_users === 'all';
+        const canViewAll = userRole && (userRole.can_view_reports === 'all' || userRole.can_manage_schedule === 'all' || isAdmin);
+
+        console.log(`canViewAll: ${canViewAll}, isAdmin: ${isAdmin}, role:`, userRole ? userRole.toJSON() : null);
+
+        if (!canViewAll) {
+            console.log("canViewAll is false, checking target user...");
+            const targetUser = await Staff.findByPk(targetUserId);
+            if (targetUser && targetUser.approving_manager_id !== requestorId && requestorId !== targetUserId) {
+                console.log("Access denied for requestorId:", requestorId, "targetUserId:", targetUserId);
+                return res.status(403).send({ message: "Access denied. You can only view history for your reportees." });
+            }
+        }
+
+        const firstDayStr = `${year}-01-01`;
+        const lastDayStr = `${year}-12-31`;
+
+        // Leaves
+        const leaveWhere = {
+            status: 'Approved',
+            staff_id: targetUserId,
+            [Op.or]: [
+                { start_date: { [Op.between]: [firstDayStr, lastDayStr] } },
+                { end_date: { [Op.between]: [firstDayStr, lastDayStr] } },
+                {
+                    [Op.and]: [
+                        { start_date: { [Op.lte]: firstDayStr } },
+                        { end_date: { [Op.gte]: lastDayStr } }
+                    ]
+                }
+            ]
+        };
+
+        const leaves = await LeaveRequest.findAll({ where: leaveWhere });
+
+        // On-Duty
+        const [sUTC] = getUTCBounds(firstDayStr, calTz);
+        const [, eUTC] = getUTCBounds(lastDayStr, calTz);
+        
+        const onDutyWhere = {
+            status: 'Approved',
+            staff_id: targetUserId,
+            start_time: { [Op.between]: [sUTC, eUTC] }
+        };
+        const onDuties = await OnDutyLog.findAll({ where: onDutyWhere });
+
+        // Time-Off
+        const timeOffWhere = {
+            status: 'Approved',
+            staff_id: targetUserId,
+            date: { [Op.between]: [firstDayStr, lastDayStr] }
+        };
+        const timeOffs = await TimeOffRequest.findAll({ where: timeOffWhere });
+
+        const events = [];
+
+        leaves.forEach(leave => {
+            const startDate = new Date(leave.start_date);
+            const endDate = new Date(leave.end_date);
+            for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                if (d.getFullYear() === year) {
+                    const dateStr = d.toISOString().split('T')[0];
+                    events.push({
+                        date: dateStr,
+                        type: 'leave',
+                        title: leave.leave_type,
+                        reason: leave.reason
+                    });
+                }
+            }
+        });
+
+        onDuties.forEach(onDuty => {
+            const dateStr = getDateInTimezone(onDuty.start_time, calTz);
+            if (dateStr.startsWith(year.toString())) {
+                events.push({
+                    date: dateStr,
+                    type: 'on_duty',
+                    title: onDuty.purpose || 'On-Duty',
+                    reason: onDuty.location
+                });
+            }
+        });
+
+        timeOffs.forEach(timeOff => {
+            let dateStr = typeof timeOff.date === 'string' ? timeOff.date : new Date(timeOff.date).toISOString().split('T')[0];
+            if (dateStr.startsWith(year.toString())) {
+                events.push({
+                    date: dateStr,
+                    type: 'time_off',
+                    title: 'Time-Off',
+                    reason: timeOff.reason
+                });
+            }
+        });
+
+        res.send(events);
+    } catch (error) {
+        console.error('Error fetching yearly history:', error);
+        res.status(500).send({ message: "Error fetching yearly history." });
+    }
+};

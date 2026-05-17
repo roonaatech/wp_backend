@@ -5,6 +5,7 @@ const Setting = db.settings;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
+const hierarchyUtil = require("../utils/hierarchy.util");
 
 // Helper to calculate hours difference
 const calculateHours = (start, end) => {
@@ -156,6 +157,14 @@ exports.applyTimeOff = async (req, res) => {
                         leave_type: "Time Off",
                         start_date: `${date} ${start_time}`,
                         end_date: `${date} ${end_time}`,
+                        reason: reason
+                    });
+                    
+                    // Check if manager is on leave, notify next level
+                    await hierarchyUtil.notifyNextLevelIfManagerOnLeave(manager, user, 'time_off', {
+                        date: date,
+                        start_time: start_time,
+                        end_time: end_time,
                         reason: reason
                     });
                 }
