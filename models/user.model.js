@@ -56,6 +56,12 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.DATE,
             allowNull: false,
             defaultValue: Sequelize.NOW
+        },
+        last_login: {
+            type: Sequelize.DATE,
+            allowNull: true,
+            defaultValue: null,
+            comment: 'Timestamp of the user\'s most recent successful login'
         }
     }, {
         tableName: 'users',

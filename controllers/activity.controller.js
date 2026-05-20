@@ -393,3 +393,45 @@ exports.logActivityFromMobile = async (req, res) => {
         });
     }
 };
+/**
+ * Get list of users who have activity logs (for filter dropdown)
+ * Scoped by the same activity permission as the other endpoints
+ */
+exports.getActivityUsers = async (req, res) => {
+    try {
+        let where = {};
+
+        // Apply hierarchical filtering — same as getAllActivities
+        if (req.activityPermission === 'subordinates') {
+            const subordinateIds = await getSubordinateIds(req.userId);
+            subordinateIds.push(req.userId);
+            where[Op.or] = [
+                { admin_id: { [Op.in]: subordinateIds } },
+                { affected_user_id: { [Op.in]: subordinateIds } }
+            ];
+        }
+
+        // Get distinct admin_ids that appear in activity_logs
+        const rows = await ActivityLog.findAll({
+            where,
+            attributes: ['admin_id'],
+            group: ['admin_id'],
+            raw: true
+        });
+
+        const adminIds = rows.map(r => r.admin_id).filter(Boolean);
+
+        // Fetch full user details for those IDs
+        const users = await User.findAll({
+            where: { staffid: { [Op.in]: adminIds } },
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role'],
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']],
+            raw: true
+        });
+
+        return res.status(200).json({ success: true, users });
+    } catch (error) {
+        console.error('Error fetching activity users:', error);
+        return res.status(500).json({ success: false, message: 'Error fetching users', error: error.message });
+    }
+};
