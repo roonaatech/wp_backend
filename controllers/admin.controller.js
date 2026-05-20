@@ -624,7 +624,7 @@ exports.getAllUsers = async (req, res) => {
 
         const queryOptions = {
             where: whereClause,
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login'],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
