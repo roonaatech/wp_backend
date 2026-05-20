@@ -217,6 +217,9 @@ exports.signin = async (req, res) => {
             }
         }
 
+        // Update last_login timestamp
+        await user.update({ last_login: new Date() });
+
         var token = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
             expiresIn: 86400 // 24 hours
         });
