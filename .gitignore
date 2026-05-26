@@ -19,6 +19,7 @@ lerna-debug.log*
 # Build outputs
 dist/
 build/
+uploads/**/*.png
 .env.uat
 # OS metadata
 .DS_Store

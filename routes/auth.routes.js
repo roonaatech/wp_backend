@@ -175,4 +175,5 @@ module.exports = function (app) {
     app.post("/api/auth/change-password", [verifyToken], controller.changePassword);
     app.post("/api/auth/generate-qr-token", [verifyToken], controller.generateQRToken);
     app.post("/api/auth/exchange-qr-token", [verifyToken], controller.exchangeQRToken);
+    app.post("/api/auth/validate-credentials", controller.validateCredentials);
 };

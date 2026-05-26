@@ -62,6 +62,12 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: true,
             defaultValue: null,
             comment: 'Timestamp of the user\'s most recent successful login'
+        },
+        abis_access: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Whether this user has access to ABIS PHP application'
         }
     }, {
         tableName: 'users',
