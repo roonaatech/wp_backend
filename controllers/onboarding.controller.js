@@ -136,9 +136,18 @@ exports.onboardEmployee = async (req, res) => {
             calculatedAge = ageVal;
         }
 
+        let imagePath = null;
+        if (req.files && req.files.length > 0) {
+            const profileImageFile = req.files.find(f => f.fieldname === 'profile_image');
+            if (profileImageFile) {
+                imagePath = profileImageFile.path;
+            }
+        }
+
         // Create Extended Employee Profile
         await EmployeeProfile.create({
             staff_id: user.staffid,
+            image_path: imagePath,
             birthplace,
             height_weight,
             blood_group,
@@ -221,17 +230,20 @@ exports.onboardEmployee = async (req, res) => {
 
         // 4. File attachments uploads
         if (req.files && req.files.length > 0) {
-            const docsToCreate = req.files.map(file => {
-                const docType = file.fieldname.replace(/^doc_/, "");
-                return {
-                    staff_id: user.staffid,
-                    document_type: docType,
-                    file_name: file.originalname,
-                    file_path: file.path,
-                    file_size: file.size
-                };
-            });
-            await EmployeeDocument.bulkCreate(docsToCreate, { transaction });
+            const nonImageFiles = req.files.filter(file => file.fieldname !== 'profile_image');
+            if (nonImageFiles.length > 0) {
+                const docsToCreate = nonImageFiles.map(file => {
+                    const docType = file.fieldname.replace(/^doc_/, "");
+                    return {
+                        staff_id: user.staffid,
+                        document_type: docType,
+                        file_name: file.originalname,
+                        file_path: file.path,
+                        file_size: file.size
+                    };
+                });
+                await EmployeeDocument.bulkCreate(docsToCreate, { transaction });
+            }
         }
 
         // Commit transaction
@@ -365,7 +377,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
         
         // Personal Details
         birthplace, height_weight, blood_group, date_of_birth, age, has_disability, disability_details,
-        marital_status, no_of_children, hobbies, nationality, religion,
+        marital_status, no_of_children, hobbies, nationality, religion, image_path,
         
         // Addresses
         present_address, present_contact_no, permanent_address, permanent_contact_no,
@@ -436,6 +448,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
 
         if (password) {
             updateUserData.password = bcrypt.hashSync(password, 8);
+            updateUserData.last_login = null; // Force password change on next login
         }
 
         await user.update(updateUserData, { transaction });
@@ -466,12 +479,43 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
             calculatedAge = ageVal;
         }
 
+        let profileImagePath = profile ? profile.image_path : null;
+        if (image_path === '') {
+            if (profile && profile.image_path) {
+                try {
+                    if (fs.existsSync(profile.image_path)) {
+                        fs.unlinkSync(profile.image_path);
+                    }
+                } catch (e) {
+                    console.error("Failed to delete old profile image:", e);
+                }
+            }
+            profileImagePath = null;
+        }
+
+        if (req.files && req.files.length > 0) {
+            const profileImageFile = req.files.find(f => f.fieldname === 'profile_image');
+            if (profileImageFile) {
+                if (profile && profile.image_path) {
+                    try {
+                        if (fs.existsSync(profile.image_path)) {
+                            fs.unlinkSync(profile.image_path);
+                        }
+                    } catch (e) {
+                        console.error("Failed to delete old profile image:", e);
+                    }
+                }
+                profileImagePath = profileImageFile.path;
+            }
+        }
+
         const profileData = {
             birthplace,
             height_weight,
             blood_group,
             date_of_birth: date_of_birth !== undefined ? date_of_birth : (profile ? profile.date_of_birth : null),
             age: calculatedAge,
+            image_path: profileImagePath,
             has_disability: has_disability === 'true' || has_disability === true,
             disability_details: disability_details || null,
             marital_status,
@@ -564,36 +608,39 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
 
         // 4. File attachments uploads
         if (req.files && req.files.length > 0) {
-            // Delete previous physical file and DB record of same type to prevent duplicates
-            for (const file of req.files) {
-                const docType = file.fieldname.replace(/^doc_/, "");
-                const existingDoc = await EmployeeDocument.findOne({
-                    where: { staff_id: id, document_type: docType },
-                    transaction
-                });
-                if (existingDoc) {
-                    try {
-                        if (fs.existsSync(existingDoc.file_path)) {
-                            fs.unlinkSync(existingDoc.file_path);
+            const nonImageFiles = req.files.filter(file => file.fieldname !== 'profile_image');
+            if (nonImageFiles.length > 0) {
+                // Delete previous physical file and DB record of same type to prevent duplicates
+                for (const file of nonImageFiles) {
+                    const docType = file.fieldname.replace(/^doc_/, "");
+                    const existingDoc = await EmployeeDocument.findOne({
+                        where: { staff_id: id, document_type: docType },
+                        transaction
+                    });
+                    if (existingDoc) {
+                        try {
+                            if (fs.existsSync(existingDoc.file_path)) {
+                                fs.unlinkSync(existingDoc.file_path);
+                            }
+                        } catch (err) {
+                            console.error(`Failed to delete previous physical document file at ${existingDoc.file_path}:`, err);
                         }
-                    } catch (err) {
-                        console.error(`Failed to delete previous physical document file at ${existingDoc.file_path}:`, err);
+                        await existingDoc.destroy({ transaction });
                     }
-                    await existingDoc.destroy({ transaction });
                 }
-            }
 
-            const docsToCreate = req.files.map(file => {
-                const docType = file.fieldname.replace(/^doc_/, "");
-                return {
-                    staff_id: id,
-                    document_type: docType,
-                    file_name: file.originalname,
-                    file_path: file.path,
-                    file_size: file.size
-                };
-            });
-            await EmployeeDocument.bulkCreate(docsToCreate, { transaction });
+                const docsToCreate = nonImageFiles.map(file => {
+                    const docType = file.fieldname.replace(/^doc_/, "");
+                    return {
+                        staff_id: id,
+                        document_type: docType,
+                        file_name: file.originalname,
+                        file_path: file.path,
+                        file_size: file.size
+                    };
+                });
+                await EmployeeDocument.bulkCreate(docsToCreate, { transaction });
+            }
         }
 
         await transaction.commit();
@@ -808,6 +855,421 @@ exports.completeEmployeeDeclaration = async (req, res) => {
 
     } catch (err) {
         console.error("Error completing profile declaration:", err);
+        await transaction.rollback();
+        res.status(500).send({ message: getErrorMessage(err) });
+    }
+};
+
+/**
+ * Invite candidate for self-service onboarding
+ * POST /api/onboarding/invite-candidate
+ */
+exports.inviteCandidate = async (req, res) => {
+    const { firstname, lastname, gender, personal_email } = req.body;
+
+    if (!firstname || !lastname || !gender || !personal_email) {
+        return res.status(400).send({ message: "Firstname, lastname, gender, and personal email are required." });
+    }
+
+    const transaction = await db.sequelize.transaction();
+    try {
+        const existingUser = await User.findOne({
+            where: {
+                [Op.or]: [
+                    { email: personal_email },
+                    { secondary_email: personal_email }
+                ]
+            },
+            include: [{
+                model: Role,
+                as: 'role_info',
+                attributes: ['display_name']
+            }]
+        });
+        if (existingUser) {
+            await transaction.rollback();
+            return res.status(409).send({
+                message: "A user with this personal email already exists.",
+                existingUser: {
+                    firstname: existingUser.firstname,
+                    lastname: existingUser.lastname,
+                    email: existingUser.email,
+                    secondary_email: existingUser.secondary_email,
+                    role: existingUser.role_info ? existingUser.role_info.display_name : 'No Role Assigned',
+                    active: existingUser.active === 1
+                }
+            });
+        }
+
+        // Generate temporary placeholder password
+        const tempPassword = require('crypto').randomBytes(16).toString('hex');
+        const hashedPassword = bcrypt.hashSync(tempPassword, 8);
+
+        const user = await User.create({
+            firstname,
+            lastname,
+            email: personal_email,
+            secondary_email: personal_email,
+            password: hashedPassword,
+            role: null,
+            approving_manager_id: null,
+            gender,
+            active: 1
+        }, { transaction });
+
+        const onboardingToken = require('crypto').randomBytes(32).toString('hex');
+
+        await EmployeeProfile.create({
+            staff_id: user.staffid,
+            onboarding_status: 'Pending_Candidate',
+            onboarding_token: onboardingToken
+        }, { transaction });
+
+        await transaction.commit();
+
+        // Send email to candidate
+        const targetEmail = personal_email;
+        const appUrl = req.headers.origin || "http://localhost:5173";
+        const inviteLink = `${appUrl}/candidate-onboarding?token=${onboardingToken}`;
+        const emailSubject = "WorkPulse - Complete Your Onboarding Profile";
+        const emailBody = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2>Welcome to the Team, ${firstname}!</h2>
+                <p>We are excited to have you onboard. Please complete your extended joining form and sign the employment declaration by clicking the link below:</p>
+                <div style="margin: 30px 0;">
+                    <a href="${inviteLink}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Complete Onboarding Profile</a>
+                </div>
+                <p>If the button doesn't work, copy and paste this link into your browser:</p>
+                <p style="word-break: break-all; color: #666; font-size: 14px;">${inviteLink}</p>
+                <p>Thank you,<br/>Human Resources</p>
+            </div>
+        `;
+        
+        try {
+            await emailService.sendEmail(targetEmail, emailSubject, emailBody);
+        } catch (emailErr) {
+            console.error("Failed to send candidate invite email:", emailErr);
+        }
+
+        res.status(200).send({ message: "Invitation sent to candidate successfully." });
+    } catch (err) {
+        console.error("Error inviting candidate:", err);
+        try {
+            await transaction.rollback();
+        } catch (rollbackErr) {
+            // Already committed or finished
+        }
+        res.status(500).send({ message: getErrorMessage(err) });
+    }
+};
+
+/**
+ * Get candidate profile by secure token
+ * GET /api/onboarding/candidate/:token
+ */
+exports.getCandidateByToken = async (req, res) => {
+    const { token } = req.params;
+    try {
+        const profile = await EmployeeProfile.findOne({
+            where: { onboarding_token: token, onboarding_status: 'Pending_Candidate' },
+            include: [{ model: User }]
+        });
+
+        if (!profile || !profile.user) {
+            return res.status(404).send({ message: "Invalid or expired onboarding token." });
+        }
+
+        res.status(200).send({
+            firstname: profile.user.firstname,
+            lastname: profile.user.lastname,
+            email: profile.user.email,
+            secondary_email: profile.user.secondary_email,
+            gender: profile.user.gender
+        });
+    } catch (err) {
+        console.error("Error fetching candidate by token:", err);
+        res.status(500).send({ message: getErrorMessage(err) });
+    }
+};
+
+/**
+ * Submit candidate self-service form
+ * POST /api/onboarding/candidate/:token/submit
+ */
+exports.submitCandidateForm = async (req, res) => {
+    const { token } = req.params;
+    const {
+        firstname, lastname, gender,
+        birthplace, height_weight, blood_group, date_of_birth, age, has_disability, disability_details,
+        marital_status, no_of_children, hobbies, nationality, religion,
+        present_address, present_contact_no, permanent_address, permanent_contact_no,
+        father_name, father_age, father_occupation, father_work_status,
+        mother_name, mother_age, mother_occupation,
+        bank_account_number, bank_ifsc_code, bank_name_address,
+        consent_given, signature_name, onboarding_place, signature_data,
+        educations, experiences, family_members
+    } = req.body;
+
+    const transaction = await db.sequelize.transaction();
+    try {
+        const profile = await EmployeeProfile.findOne({
+            where: { onboarding_token: token, onboarding_status: 'Pending_Candidate' },
+            transaction
+        });
+
+        if (!profile) {
+            await transaction.rollback();
+            return res.status(404).send({ message: "Invalid or expired onboarding token." });
+        }
+
+        if (firstname !== undefined && !firstname?.trim()) {
+            await transaction.rollback();
+            return res.status(400).send({ message: "First name is required." });
+        }
+        if (lastname !== undefined && !lastname?.trim()) {
+            await transaction.rollback();
+            return res.status(400).send({ message: "Last name is required." });
+        }
+        if (gender !== undefined && !gender) {
+            await transaction.rollback();
+            return res.status(400).send({ message: "Gender selection is required." });
+        }
+
+        if (!consent_given || consent_given === 'false' || !signature_name || !onboarding_place || !signature_data) {
+            await transaction.rollback();
+            return res.status(400).send({ message: "Declaration signature and consent are required." });
+        }
+
+        const id = profile.staff_id;
+
+        // Update the User record with potentially modified name/gender
+        const user = await User.findByPk(id, { transaction });
+        if (user) {
+            await user.update({
+                firstname: firstname ? firstname.trim() : user.firstname,
+                lastname: lastname ? lastname.trim() : user.lastname,
+                gender: gender || user.gender
+            }, { transaction });
+        }
+
+        // Decode and save signature
+        let signaturePath = null;
+        if (signature_data && signature_data.startsWith("data:image/png;base64,")) {
+            const dir = "uploads/signatures";
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const base64Data = signature_data.replace(/^data:image\/png;base64,/, "");
+            signaturePath = `${dir}/sig-${id}-${Date.now()}.png`;
+            fs.writeFileSync(signaturePath, base64Data, "base64");
+        }
+
+        // Calculate age
+        let calculatedAge = age ? parseInt(age) : null;
+        if (date_of_birth) {
+            const birthDate = new Date(date_of_birth);
+            const today = new Date();
+            let ageVal = today.getFullYear() - birthDate.getFullYear();
+            const monthDiff = today.getMonth() - birthDate.getMonth();
+            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) ageVal--;
+            calculatedAge = ageVal;
+        }
+
+        await profile.update({
+            birthplace, height_weight, blood_group, date_of_birth: date_of_birth || null, age: calculatedAge,
+            has_disability: has_disability === 'true' || has_disability === true, disability_details,
+            marital_status, no_of_children: no_of_children ? parseInt(no_of_children) : 0, hobbies, nationality, religion,
+            present_address, present_contact_no, permanent_address, permanent_contact_no,
+            father_name, father_age: father_age ? parseInt(father_age) : null, father_occupation, father_work_status,
+            mother_name, mother_age: mother_age ? parseInt(mother_age) : null, mother_occupation,
+            bank_account_number, bank_ifsc_code, bank_name_address,
+            consent_given: true, signature_name, signature_path: signaturePath, signature_date: new Date(), onboarding_place,
+            onboarding_status: 'Pending_HR_Approval',
+            onboarding_token: null // invalidate token
+        }, { transaction });
+
+        // Update arrays (educations, experiences, family_members)
+        if (educations) {
+            const eduList = typeof educations === "string" ? JSON.parse(educations) : educations;
+            if (eduList && eduList.length > 0) {
+                const eduData = eduList.map(edu => ({
+                    staff_id: id, qualification: edu.qualification, specialization: edu.specialization || null,
+                    grade: edu.grade || null, university_city: edu.university_city || null,
+                    year_of_completion: edu.year_of_completion ? parseInt(edu.year_of_completion) : null
+                }));
+                await EmployeeEducation.bulkCreate(eduData, { transaction });
+            }
+        }
+        if (experiences) {
+            const expList = typeof experiences === "string" ? JSON.parse(experiences) : experiences;
+            if (expList && expList.length > 0) {
+                const expData = expList.map(exp => ({
+                    staff_id: id, post_held: exp.post_held, department_function: exp.department_function || null,
+                    company_name: exp.company_name, city: exp.city || null, tenure: exp.tenure || null
+                }));
+                await EmployeeExperience.bulkCreate(expData, { transaction });
+            }
+        }
+        if (family_members) {
+            const famList = typeof family_members === "string" ? JSON.parse(family_members) : family_members;
+            if (famList && famList.length > 0) {
+                const famData = famList.map(fam => ({
+                    staff_id: id, name: fam.name, relationship: fam.relationship || "Brother",
+                    work_status: fam.work_status || null, educational_status: fam.educational_status || null,
+                    marital_status: fam.marital_status || null, residing_in: fam.residing_in || null
+                }));
+                await EmployeeFamilyMember.bulkCreate(famData, { transaction });
+            }
+        }
+
+        // Upload documents
+        if (req.files && req.files.length > 0) {
+            const docsToCreate = req.files.map(file => {
+                const docType = file.fieldname.replace(/^doc_/, "");
+                return {
+                    staff_id: id, document_type: docType, file_name: file.originalname,
+                    file_path: file.path, file_size: file.size
+                };
+            });
+            await EmployeeDocument.bulkCreate(docsToCreate, { transaction });
+        }
+
+        await transaction.commit();
+        res.status(200).send({ message: "Profile submitted successfully for HR approval." });
+    } catch (err) {
+        console.error("Error submitting candidate form:", err);
+        await transaction.rollback();
+        res.status(500).send({ message: getErrorMessage(err) });
+    }
+};
+
+/**
+ * Approve candidate onboarding
+ * POST /api/onboarding/employee/:id/approve
+ */
+exports.approveCandidateOnboarding = async (req, res) => {
+    const { id } = req.params;
+    const { email, role, approving_manager_id, abis_access } = req.body;
+
+    if (!email || !role) {
+        return res.status(400).send({ message: "Official email and role assignment are required." });
+    }
+
+    const roleInt = parseInt(role);
+    if (isNaN(roleInt) || roleInt === 0) {
+        return res.status(400).send({ message: "Invalid Role value." });
+    }
+
+    const transaction = await db.sequelize.transaction();
+    try {
+        const user = await User.findByPk(id, { transaction });
+        const profile = await EmployeeProfile.findOne({ where: { staff_id: id }, transaction });
+
+        if (!user || !profile) {
+            await transaction.rollback();
+            return res.status(404).send({ message: "Employee profile not found." });
+        }
+
+        if (profile.onboarding_status !== 'Pending_HR_Approval') {
+            await transaction.rollback();
+            return res.status(400).send({ message: "Profile is not pending HR approval." });
+        }
+
+        // Validate unique official email
+        const existingUser = await User.findOne({
+            where: {
+                email: email,
+                staffid: { [Op.ne]: id }
+            }
+        });
+        if (existingUser) {
+            await transaction.rollback();
+            return res.status(409).send({ message: "Official email already exists for another user." });
+        }
+
+        // Validate the role exists
+        const assignedRole = await Role.findByPk(roleInt);
+        if (!assignedRole) {
+            await transaction.rollback();
+            return res.status(400).send({ message: "Invalid role specified." });
+        }
+
+        // Hierarchy check
+        const callerUser = await User.findByPk(req.userId);
+        const callerRole = callerUser ? await Role.findByPk(callerUser.role) : null;
+        if (callerRole && assignedRole.hierarchy_level < callerRole.hierarchy_level) {
+            await transaction.rollback();
+            return res.status(403).send({
+                message: "You do not have permission to assign higher hierarchy roles."
+            });
+        }
+
+        // Generate random temporary password for real login
+        const tempPassword = require('crypto').randomBytes(4).toString('hex'); // 8 characters
+        const hashedPassword = bcrypt.hashSync(tempPassword, 8);
+
+        // Update user to have credentials and new password
+        await user.update({
+            email,
+            role: roleInt,
+            approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
+            abis_access: abis_access === 'true' || abis_access === true,
+            password: hashedPassword,
+            last_login: null
+        }, { transaction });
+
+        // Change status
+        await profile.update({ onboarding_status: 'Completed' }, { transaction });
+
+        await transaction.commit();
+
+        // Send Welcome Email
+        try {
+            const appUrl = req.headers.origin || "http://localhost:5173";
+            const emailSubject = "Welcome to WorkPulse - Complete Your Profile Activation";
+            const emailBody = `
+                <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #f1f5f9; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); background-color: #ffffff;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #4f46e5; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em;">WorkPulse</h1>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 5px;">Your Employee Management & Collaboration Hub</p>
+                    </div>
+                    <div style="background-color: #faf5ff; border: 1px solid #f3e8ff; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                        <h2 style="color: #581c87; margin-top: 0; font-size: 18px; font-weight: 700;">Welcome to the Team, ${user.firstname}!</h2>
+                        <p style="color: #6b21a8; font-size: 14px; line-height: 1.5; margin-bottom: 0;">
+                            Your profile has been approved by Human Resources. To activate your account, please log in and set your new password. (You have already completed the declaration.)
+                        </p>
+                    </div>
+                    <div style="margin-bottom: 25px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px;">
+                        <h3 style="color: #1e293b; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Your Temporary Login Credentials</h3>
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 6px 0; color: #64748b; width: 120px; font-weight: 500;">Primary Email:</td>
+                                <td style="padding: 6px 0; color: #1e293b; font-weight: 600;">${user.email}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px 0; color: #64748b; font-weight: 500;">Temp Password:</td>
+                                <td style="padding: 6px 0; color: #e11d48; font-family: monospace; font-weight: 700; font-size: 15px;">${tempPassword}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div style="text-align: center; margin: 35px 0;">
+                        <a href="${appUrl}/login" style="background-color: #4f46e5; color: #ffffff; padding: 14px 30px; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.25); display: inline-block;">Log In & Activate Profile</a>
+                    </div>
+                    <div style="border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; font-size: 11px; color: #94a3b8;">
+                        <p style="margin: 0;">If you have any questions or require assistance, please contact the HR Department.</p>
+                        <p style="margin: 5px 0 0;">WorkPulse Security Team © 2026</p>
+                    </div>
+                </div>
+            `;
+            await emailService.sendEmail(user.email, emailSubject, emailBody);
+            if (user.secondary_email) {
+                 await emailService.sendEmail(user.secondary_email, emailSubject, emailBody);
+            }
+        } catch (emailErr) {
+            console.error("Failed to send welcome email upon approval:", emailErr);
+        }
+
+        res.status(200).send({ message: "Profile approved successfully. Welcome email sent." });
+    } catch (err) {
+        console.error("Error approving candidate onboarding:", err);
         await transaction.rollback();
         res.status(500).send({ message: getErrorMessage(err) });
     }

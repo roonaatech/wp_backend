@@ -48,8 +48,19 @@ module.exports = (sequelize, Sequelize) => {
         consent_given: { type: Sequelize.BOOLEAN, defaultValue: false },
         signature_name: { type: Sequelize.STRING(100), allowNull: true },
         signature_path: { type: Sequelize.STRING(255), allowNull: true, comment: 'Path to digital signature image' },
+        image_path: { type: Sequelize.STRING(255), allowNull: true, comment: 'Path to employee profile photo' },
         signature_date: { type: Sequelize.DATE, allowNull: true },
-        onboarding_place: { type: Sequelize.STRING(100), allowNull: true }
+        onboarding_place: { type: Sequelize.STRING(100), allowNull: true },
+
+        // Onboarding Status
+        onboarding_status: { 
+            type: Sequelize.ENUM('Completed', 'Pending_Candidate', 'Pending_HR_Approval'), 
+            defaultValue: 'Completed' 
+        },
+        onboarding_token: { 
+            type: Sequelize.STRING(100), 
+            allowNull: true 
+        }
     }, {
         tableName: 'employee_profiles',
         timestamps: true,

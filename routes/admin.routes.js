@@ -1,6 +1,20 @@
 const { authJwt } = require("../middleware");
 const { verifyToken } = authJwt;
 const controller = require("../controllers/admin.controller");
+const multer = require("multer");
+const fs = require("fs");
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const dir = "uploads/temp";
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: function (req, file, cb) {
+        cb(null, `bulk-${Date.now()}-${file.originalname}`);
+    }
+});
+const upload = multer({ storage: storage });
 
 module.exports = function (app) {
     app.use(function (req, res, next) {
@@ -260,6 +274,7 @@ module.exports = function (app) {
     app.get("/api/admin/managers-admins", [verifyToken, authJwt.canViewUsers], controller.getManagersAndAdmins);
 
     app.post("/api/admin/users", [verifyToken, authJwt.canManageUsers], controller.createUser);
+    app.post("/api/admin/users/bulk-upload", [verifyToken, authJwt.canManageUsers, upload.single("file")], controller.bulkUploadUsers);
 
     /**
      * @swagger

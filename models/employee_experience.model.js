@@ -28,6 +28,10 @@ module.exports = (sequelize, Sequelize) => {
         tenure: {
             type: Sequelize.STRING(50),
             allowNull: true
+        },
+        reference_contact: {
+            type: Sequelize.STRING(255),
+            allowNull: true
         }
     }, {
         tableName: 'employee_experiences',

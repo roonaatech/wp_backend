@@ -218,7 +218,7 @@ exports.signin = async (req, res) => {
         }
 
         // Compute first-time login flags BEFORE updating last_login
-        const mustChangePassword = user.last_login === null;
+        const mustChangePassword = !user.last_login;
 
         // Check if declaration is signed
         const EmployeeProfile = db.employee_profiles;
@@ -322,12 +322,7 @@ exports.changePassword = async (req, res) => {
             return res.status(404).send({ message: "User not found." });
         }
 
-        // Check if user is WorkPulse-only (not synced from PHP app)
-        if (user.userid !== null) {
-            return res.status(403).send({
-                message: "Password change is not allowed for users synced from the external system. Please use the main application to change your password."
-            });
-        }
+
 
         // Verify old password
         const passwordIsValid = bcrypt.compareSync(oldPassword, user.password);
@@ -435,7 +430,7 @@ exports.exchangeQRToken = async (req, res) => {
             return res.status(403).send({ message: "User account is inactive." });
         }
 
-        const mustChangePassword = user.last_login === null;
+        const mustChangePassword = !user.last_login;
 
         // Check if declaration is signed
         const EmployeeProfile = db.employee_profiles;

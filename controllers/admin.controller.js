@@ -526,6 +526,7 @@ exports.resetUserPassword = async (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
     try {
+        const EmployeeProfile = db.employee_profiles;
         // Get current user's role to determine filtering
         const currentUser = await TblStaff.findByPk(req.userId);
         const Role = db.roles;
@@ -670,6 +671,7 @@ exports.getAllUsers = async (req, res) => {
         const queryOptions = {
             where: whereClause,
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login'],
+            include: [{ model: EmployeeProfile, as: 'profile_info', attributes: ['image_path'] }],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
@@ -2405,5 +2407,145 @@ exports.getUserYearlyHistory = async (req, res) => {
     } catch (error) {
         console.error('Error fetching yearly history:', error);
         res.status(500).send({ message: "Error fetching yearly history." });
+    }
+};
+
+exports.bulkUploadUsers = async (req, res) => {
+    const fs = require('fs');
+    if (!req.file) {
+        return res.status(400).send({ message: "No CSV file uploaded." });
+    }
+
+    try {
+        const fileContent = fs.readFileSync(req.file.path, 'utf8');
+        const lines = fileContent.split(/\r?\n/).filter(line => line.trim() !== "");
+
+        if (lines.length < 2) {
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(400).send({ message: "The CSV file must contain a header row and at least one data row." });
+        }
+
+        // Custom RFC 4180-compliant CSV row parser
+        const parseCSVRow = (line) => {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current.trim());
+            return result.map(val => val.replace(/^"|"$/g, '').trim());
+        };
+
+        const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+        // Locate header indices
+        const firstnameIdx = headers.findIndex(h => h === 'firstname' || h === 'first');
+        const lastnameIdx = headers.findIndex(h => h === 'lastname' || h === 'last');
+        const emailIdx = headers.findIndex(h => h === 'email');
+        const activeIdx = headers.findIndex(h => h === 'active' || h === 'status');
+
+        if (emailIdx === -1 || firstnameIdx === -1 || lastnameIdx === -1) {
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(400).send({ message: "Missing required CSV columns. Ensure 'email', 'firstname', and 'lastname' are present in the header row." });
+        }
+
+        const EmployeeProfile = db.employee_profiles;
+        const ignoredEmails = [];
+        const errorLogs = [];
+        let createdCount = 0;
+        let ignoredCount = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            const row = parseCSVRow(line);
+
+            // Handle mismatched columns
+            if (row.length < Math.max(emailIdx, firstnameIdx, lastnameIdx) + 1) {
+                errorLogs.push(`Row ${i + 1}: Mismatched column count.`);
+                continue;
+            }
+
+            const email = row[emailIdx]?.trim();
+            const firstname = row[firstnameIdx]?.trim();
+            const lastname = row[lastnameIdx]?.trim();
+            const activeVal = (activeIdx !== -1 && row[activeIdx]) ? row[activeIdx].trim() : "1";
+
+            if (!email || !firstname || !lastname) {
+                errorLogs.push(`Row ${i + 1}: Missing email, firstname, or lastname values.`);
+                continue;
+            }
+
+            // Email validation check
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                errorLogs.push(`Row ${i + 1}: Invalid email format (${email}).`);
+                continue;
+            }
+
+            // Uniqueness Check
+            const existingUser = await TblStaff.findOne({ where: { email } });
+            if (existingUser) {
+                ignoredEmails.push(email);
+                ignoredCount++;
+                continue;
+            }
+
+            // Parse optional values
+            const activeInt = (activeVal === '0' || activeVal.toLowerCase() === 'inactive' || activeVal.toLowerCase() === 'false') ? 0 : 1;
+
+            // Generate secure random temporary password (will be reset during initial login)
+            const tempPassword = require('crypto').randomBytes(4).toString('hex');
+
+            // Create new User in WorkPulse DB
+            const newUser = await TblStaff.create({
+                firstname,
+                lastname,
+                email,
+                password: bcrypt.hashSync(tempPassword, 8),
+                active: activeInt,
+                abis_access: true, // Default true to allow access to ABIS credentials validation
+                role: 4,           // Default employee role
+                admin: 0,
+                datecreated: new Date()
+            });
+
+            // Create default blank onboarding profile to prevent screen render errors
+            await EmployeeProfile.create({
+                staff_id: newUser.staffid,
+                onboarding_status: 'Completed',
+                active: 1
+            });
+
+            createdCount++;
+        }
+
+        // Clean up temporary uploaded file
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+
+        res.status(200).send({
+            success: true,
+            totalProcessed: lines.length - 1,
+            createdCount,
+            ignoredCount,
+            ignoredEmails,
+            errors: errorLogs
+        });
+
+    } catch (err) {
+        console.error("Error bulk uploading users:", err);
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).send({ message: err.message || "An error occurred during bulk upload." });
     }
 };

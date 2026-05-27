@@ -67,4 +67,31 @@ module.exports = function (app) {
         [authJwt.verifyToken],
         controller.completeEmployeeDeclaration
     );
+
+    // Invite candidate for self-service onboarding (Admin/HR only)
+    app.post(
+        "/api/onboarding/invite-candidate",
+        [authJwt.verifyToken, authJwt.canManageOnboarding],
+        controller.inviteCandidate
+    );
+
+    // Get candidate profile by secure token (Public)
+    app.get(
+        "/api/onboarding/candidate/:token",
+        controller.getCandidateByToken
+    );
+
+    // Submit candidate self-service form (Public)
+    app.post(
+        "/api/onboarding/candidate/:token/submit",
+        [upload.any()],
+        controller.submitCandidateForm
+    );
+
+    // Approve candidate onboarding (Admin/HR only)
+    app.post(
+        "/api/onboarding/employee/:id/approve",
+        [authJwt.verifyToken, authJwt.canManageOnboarding],
+        controller.approveCandidateOnboarding
+    );
 };
