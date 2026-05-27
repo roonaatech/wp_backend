@@ -2452,6 +2452,7 @@ exports.bulkUploadUsers = async (req, res) => {
         const lastnameIdx = headers.findIndex(h => h === 'lastname' || h === 'last');
         const emailIdx = headers.findIndex(h => h === 'email');
         const activeIdx = headers.findIndex(h => h === 'active' || h === 'status');
+        const genderIdx = headers.findIndex(h => h === 'gender' || h === 'sex');
 
         if (emailIdx === -1 || firstnameIdx === -1 || lastnameIdx === -1) {
             if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -2478,6 +2479,7 @@ exports.bulkUploadUsers = async (req, res) => {
             const firstname = row[firstnameIdx]?.trim();
             const lastname = row[lastnameIdx]?.trim();
             const activeVal = (activeIdx !== -1 && row[activeIdx]) ? row[activeIdx].trim() : "1";
+            const genderVal = (genderIdx !== -1 && row[genderIdx]) ? row[genderIdx].trim() : "";
 
             if (!email || !firstname || !lastname) {
                 errorLogs.push(`Row ${i + 1}: Missing email, firstname, or lastname values.`);
@@ -2501,6 +2503,19 @@ exports.bulkUploadUsers = async (req, res) => {
             // Parse optional values
             const activeInt = (activeVal === '0' || activeVal.toLowerCase() === 'inactive' || activeVal.toLowerCase() === 'false') ? 0 : 1;
 
+            // Normalize gender value
+            let gender = "Male";
+            if (genderVal) {
+                const normalized = genderVal.toLowerCase();
+                if (normalized === "female" || normalized === "f") {
+                    gender = "Female";
+                } else if (normalized === "transgender" || normalized === "trans" || normalized === "t") {
+                    gender = "Transgender";
+                } else if (normalized === "male" || normalized === "m") {
+                    gender = "Male";
+                }
+            }
+
             // Generate secure random temporary password (will be reset during initial login)
             const tempPassword = require('crypto').randomBytes(4).toString('hex');
 
@@ -2511,6 +2526,7 @@ exports.bulkUploadUsers = async (req, res) => {
                 email,
                 password: bcrypt.hashSync(tempPassword, 8),
                 active: activeInt,
+                gender,
                 abis_access: true, // Default true to allow access to ABIS credentials validation
                 role: 4,           // Default employee role
                 admin: 0,
