@@ -25,6 +25,9 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Serve static uploads folder (e.g. for employee signatures)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Swagger UI
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
     swaggerOptions: {
@@ -60,6 +63,8 @@ require('./routes/debug.routes')(app);
 require('./routes/email.routes')(app);
 require('./routes/setting.routes')(app);
 require('./routes/timeoff.routes')(app);
+require('./routes/onboarding.routes')(app);
+
 
 // Sync database
 db.sequelize.sync({ alter: true })
@@ -73,8 +78,8 @@ db.sequelize.sync({ alter: true })
             // Start Cron Jobs
             require('./utils/cron').startCronJobs();
 
-            app.listen(PORT, () => {
-                console.log(`Server is running on port ${PORT}.`);
+            app.listen(PORT, '0.0.0.0', () => {
+                console.log(`Server is running on port ${PORT} at 0.0.0.0.`);
                 console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);
                 // Keep process alive check
                 setInterval(() => { }, 1000 * 60);

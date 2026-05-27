@@ -3,7 +3,6 @@ module.exports = (sequelize, Sequelize) => {
         key: {
             type: Sequelize.STRING,
             allowNull: false,
-            unique: true,
             comment: 'Unique identifier for the setting (e.g., max_time_off_hours, smtp_host)'
         },
         value: {
@@ -50,6 +49,14 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: true,
             comment: 'Staff ID of the user who last updated this setting'
         }
+    }, {
+        tableName: 'settings',
+        indexes: [
+            {
+                unique: true,
+                fields: ['key']
+            }
+        ]
     });
 
     return Setting;

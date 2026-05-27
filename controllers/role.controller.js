@@ -67,6 +67,7 @@ exports.create = async (req, res) => {
             can_access_webapp,
             can_manage_roles,
             can_manage_email_settings,
+            can_manage_onboarding,
             can_manage_system_settings,
             active
         } = req.body;
@@ -106,6 +107,7 @@ exports.create = async (req, res) => {
             can_access_webapp: can_access_webapp || false,
             can_manage_roles: can_manage_roles || false,
             can_manage_email_settings: can_manage_email_settings || false,
+            can_manage_onboarding: (name === 'manager' || name === 'employee') ? false : (can_manage_onboarding || false),
             can_manage_system_settings: can_manage_system_settings || 'none',
             active: active !== undefined ? active : true
         });
@@ -145,6 +147,7 @@ exports.update = async (req, res) => {
             can_access_webapp,
             can_manage_roles,
             can_manage_email_settings,
+            can_manage_onboarding,
             can_manage_system_settings,
             active
         } = req.body;
@@ -211,6 +214,7 @@ exports.update = async (req, res) => {
             can_access_webapp: can_access_webapp !== undefined ? can_access_webapp : role.can_access_webapp,
             can_manage_roles: can_manage_roles !== undefined ? can_manage_roles : role.can_manage_roles,
             can_manage_email_settings: can_manage_email_settings !== undefined ? can_manage_email_settings : role.can_manage_email_settings,
+            can_manage_onboarding: (role.name === 'manager' || role.name === 'employee' || name === 'manager' || name === 'employee') ? false : (can_manage_onboarding !== undefined ? can_manage_onboarding : role.can_manage_onboarding),
             can_manage_system_settings: can_manage_system_settings !== undefined ? can_manage_system_settings : role.can_manage_system_settings,
             active: active !== undefined ? active : role.active
         });

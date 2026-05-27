@@ -217,6 +217,14 @@ exports.signin = async (req, res) => {
             }
         }
 
+        // Compute first-time login flags BEFORE updating last_login
+        const mustChangePassword = !user.last_login;
+
+        // Check if declaration is signed
+        const EmployeeProfile = db.employee_profiles;
+        const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+        const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+
         // Update last_login timestamp
         await user.update({ last_login: new Date() });
 
@@ -246,6 +254,8 @@ exports.signin = async (req, res) => {
             role: user.role,
             gender: user.gender, // Include gender for frontend checks
             isFirstLogin: isNewUser, // Return flag to frontend
+            mustChangePassword,
+            mustCompleteDeclaration,
             accessToken: token
         });
     } catch (err) {
@@ -312,12 +322,7 @@ exports.changePassword = async (req, res) => {
             return res.status(404).send({ message: "User not found." });
         }
 
-        // Check if user is WorkPulse-only (not synced from PHP app)
-        if (user.userid !== null) {
-            return res.status(403).send({
-                message: "Password change is not allowed for users synced from the external system. Please use the main application to change your password."
-            });
-        }
+
 
         // Verify old password
         const passwordIsValid = bcrypt.compareSync(oldPassword, user.password);
@@ -411,11 +416,10 @@ exports.generateQRToken = async (req, res) => {
  */
 exports.exchangeQRToken = async (req, res) => {
     try {
-        const userId = req.userId; // Set by verifyToken middleware
-
+        const userId = req.userId;
         const user = await TblStaff.findOne({
             where: { staffid: userId },
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active']
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'last_login']
         });
 
         if (!user) {
@@ -425,6 +429,13 @@ exports.exchangeQRToken = async (req, res) => {
         if (!user.active) {
             return res.status(403).send({ message: "User account is inactive." });
         }
+
+        const mustChangePassword = !user.last_login;
+
+        // Check if declaration is signed
+        const EmployeeProfile = db.employee_profiles;
+        const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+        const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
 
         // Issue a full 24h session token
         const sessionToken = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
@@ -437,10 +448,72 @@ exports.exchangeQRToken = async (req, res) => {
             firstname: user.firstname,
             lastname: user.lastname,
             email: user.email,
-            role: user.role
+            role: user.role,
+            mustChangePassword,
+            mustCompleteDeclaration
         });
     } catch (err) {
         console.error('Error exchanging QR token:', err);
         res.status(500).send({ message: err.message });
+    }
+};
+
+/**
+ * Expose credential verification endpoint for external applications (ABIS PHP app).
+ * Secured with a shared API key passed in the headers.
+ * POST /api/auth/validate-credentials
+ */
+exports.validateCredentials = async (req, res) => {
+    const { email, password } = req.body;
+    const apiKey = req.headers['x-api-key'];
+
+    const expectedApiKey = process.env.EXTERNAL_API_KEY || "abis_auth_secret_key_2026";
+    if (!apiKey || apiKey !== expectedApiKey) {
+        return res.status(403).send({ success: false, message: "Forbidden: Invalid or missing API key." });
+    }
+
+    if (!email || !password) {
+        return res.status(400).send({ success: false, message: "Email and password are required." });
+    }
+
+    try {
+        const user = await TblStaff.findOne({
+            where: { email: email }
+        });
+
+        if (!user) {
+            return res.status(404).send({ success: false, message: "User not found." });
+        }
+
+        if (user.active == 0 || user.active === false || user.active === '0') {
+            return res.status(403).send({ success: false, message: "User account is inactive." });
+        }
+
+        if (!user.abis_access) {
+            return res.status(403).send({ success: false, message: "Access denied: You do not have permission to access the ABIS application." });
+        }
+
+        const passwordIsValid = bcrypt.compareSync(password, user.password);
+        if (!passwordIsValid) {
+            return res.status(401).send({ success: false, message: "Invalid Password!" });
+        }
+
+        res.status(200).send({
+            success: true,
+            user: {
+                staffid: user.staffid,
+                userid: user.userid,
+                firstname: user.firstname,
+                lastname: user.lastname,
+                email: user.email,
+                role: user.role,
+                gender: user.gender,
+                active: user.active
+            }
+        });
+
+    } catch (err) {
+        console.error("Error validating credentials for external system:", err);
+        res.status(500).send({ success: false, message: err.message });
     }
 };
