@@ -3,7 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const dotenv = require('dotenv');
 const envFile = fs.existsSync(path.resolve(__dirname, '.env.uat')) ? '.env.uat' : '.env';
-dotenv.config({ path: path.resolve(__dirname, envFile), override: true });
+dotenv.config({ path: path.resolve(__dirname, envFile) });
 console.log(`Loaded environment from ${envFile}`);
 
 process.on('uncaughtException', (err) => {
@@ -37,6 +37,9 @@ const sslOptions = {
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Serve static uploads folder (e.g. for employee signatures)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Swagger UI
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -73,6 +76,7 @@ require('./routes/debug.routes')(app);
 require('./routes/email.routes')(app);
 require('./routes/setting.routes')(app);
 require('./routes/timeoff.routes')(app);
+require('./routes/onboarding.routes')(app);
 
 // Sync database and start HTTPS server
 db.sequelize.sync()
@@ -80,6 +84,9 @@ db.sequelize.sync()
         console.log('Synced db.');
         // Seed Email Templates
         require('./utils/seed_templates')();
+
+        // Start Cron Jobs
+        require('./utils/cron').startCronJobs();
 
         https.createServer(sslOptions, app).listen(PORT, () => {
             console.log(`HTTPS Server is running on port ${PORT}.`);
