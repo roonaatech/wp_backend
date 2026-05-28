@@ -1278,8 +1278,6 @@ exports.approveCandidateOnboarding = async (req, res) => {
 exports.resendWelcomeEmail = async (req, res) => {
     try {
         const { id } = req.params;
-        const User = db.users;
-        const EmployeeProfile = db.employee_profiles;
 
         const user = await User.findByPk(id);
         if (!user) {
