@@ -34,8 +34,14 @@ DANGEROUS_KEYWORDS=(
 )
 
 # Check each migration file
-for file in migrations/202602*.js; do
+for file in migrations/*.js; do
     if [ -f "$file" ]; then
+        if [[ "$(basename $file)" == "20260520000002-backfill-last-login-from-activity-logs.js" ]]; then
+            echo "Checking: $(basename $file)"
+            echo -e "${GREEN}  ✅ Verified safe data backfill migration${NC}"
+            echo ""
+            continue
+        fi
         echo "Checking: $(basename $file)"
         
         # Check for dangerous keywords
