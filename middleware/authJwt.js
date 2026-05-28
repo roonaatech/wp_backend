@@ -280,7 +280,7 @@ const canManageOnboarding = async (req, res, next) => {
             });
         }
 
-        if (role && role.can_manage_onboarding === true) {
+        if (role && (role.can_manage_onboarding === true || role.name === 'super_admin' || role.name === 'admin')) {
             next();
             return;
         }
