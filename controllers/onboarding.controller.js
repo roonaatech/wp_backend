@@ -1274,3 +1274,88 @@ exports.approveCandidateOnboarding = async (req, res) => {
         res.status(500).send({ message: getErrorMessage(err) });
     }
 };
+
+exports.resendWelcomeEmail = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const User = db.users;
+        const EmployeeProfile = db.employee_profiles;
+
+        const user = await User.findByPk(id);
+        if (!user) {
+            return res.status(404).send({ message: "Employee not found." });
+        }
+
+        const profile = await EmployeeProfile.findOne({ where: { staff_id: id } });
+        if (profile && profile.consent_given) {
+            return res.status(400).send({ message: "Declaration is already completed. Welcome email cannot be resent." });
+        }
+
+        // Regenerate a secure random temporary password
+        const tempPassword = require('crypto').randomBytes(4).toString('hex');
+        const hashedPassword = bcrypt.hashSync(tempPassword, 8);
+
+        // Update the password in database and reset last_login to null
+        await user.update({
+            password: hashedPassword,
+            last_login: null
+        });
+
+        // Send Welcome Email
+        const appUrl = req.headers.origin || "http://localhost:5173";
+        const emailSubject = "Welcome to WorkPulse - Complete Your Profile Activation";
+        const emailBody = `
+            <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #f1f5f9; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); background-color: #ffffff;">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <h1 style="color: #4f46e5; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em;">WorkPulse</h1>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 5px;">Your Employee Management & Collaboration Hub</p>
+                </div>
+                <div style="background-color: #faf5ff; border: 1px solid #f3e8ff; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                    <h2 style="color: #581c87; margin-top: 0; font-size: 18px; font-weight: 700;">Welcome to the Team, ${user.firstname}!</h2>
+                    <p style="color: #6b21a8; font-size: 14px; line-height: 1.5; margin-bottom: 0;">
+                        Your employee profile activation details have been re-issued by Human Resources. To activate your account, please log in using the credentials below, sign the employment declaration, and set your permanent password.
+                    </p>
+                </div>
+                <div style="margin-bottom: 25px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px;">
+                    <h3 style="color: #1e293b; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Your Temporary Login Credentials</h3>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr>
+                            <td style="padding: 6px 0; color: #64748b; width: 120px; font-weight: 500;">Primary Email:</td>
+                            <td style="padding: 6px 0; color: #1e293b; font-weight: 600;">${user.email}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 0; color: #64748b; font-weight: 500;">Temp Password:</td>
+                            <td style="padding: 6px 0; color: #e11d48; font-family: monospace; font-weight: 700; font-size: 15px;">${tempPassword}</td>
+                        </tr>
+                    </table>
+                </div>
+                <div style="text-align: center; margin: 35px 0;">
+                    <a href="${appUrl}/login" style="background-color: #4f46e5; color: #ffffff; padding: 14px 30px; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.25); display: inline-block;">Log In & Activate Profile</a>
+                </div>
+                <div style="border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; font-size: 11px; color: #94a3b8;">
+                    <p style="margin: 0;">If you have any questions or require assistance, please contact the HR Department.</p>
+                    <p style="margin: 5px 0 0;">WorkPulse Security Team © 2026</p>
+                </div>
+            </div>
+        `;
+
+        await emailService.sendEmail(user.email, emailSubject, emailBody);
+        if (user.secondary_email) {
+            await emailService.sendEmail(user.secondary_email, emailSubject, emailBody);
+        }
+
+        // Log HR activity log
+        await db.activity_logs.create({
+            admin_id: req.userId || id,
+            action: 'UPDATE',
+            details: `Resent welcome activation email for employee: ${user.firstname} ${user.lastname} (${user.email}).`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.status(200).send({ message: "Welcome email resent successfully with new temporary password." });
+    } catch (err) {
+        console.error("Error resending welcome email:", err);
+        res.status(500).send({ message: err.message || "An error occurred while resending welcome email." });
+    }
+};

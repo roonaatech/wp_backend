@@ -94,4 +94,11 @@ module.exports = function (app) {
         [authJwt.verifyToken, authJwt.canManageOnboarding],
         controller.approveCandidateOnboarding
     );
+
+    // Resend welcome onboarding email (Admin/HR only)
+    app.post(
+        "/api/onboarding/employee/:id/resend-welcome",
+        [authJwt.verifyToken, authJwt.canManageOnboarding],
+        controller.resendWelcomeEmail
+    );
 };
