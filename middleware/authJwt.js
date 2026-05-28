@@ -274,13 +274,7 @@ const canManageOnboarding = async (req, res, next) => {
 
         // Get role from database
         const role = await Role.findByPk(user.role);
-        if (role && (role.name === 'manager' || role.name === 'employee')) {
-            return res.status(403).send({
-                message: "You don't have permission to manage onboarding!"
-            });
-        }
-
-        if (role && (role.can_manage_onboarding === true || role.name === 'super_admin' || role.name === 'admin')) {
+        if (role && role.can_manage_onboarding === true) {
             next();
             return;
         }

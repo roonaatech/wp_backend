@@ -1206,9 +1206,13 @@ exports.approveCandidateOnboarding = async (req, res) => {
         const tempPassword = require('crypto').randomBytes(4).toString('hex'); // 8 characters
         const hashedPassword = bcrypt.hashSync(tempPassword, 8);
 
+        const oldPersonalEmail = user.email;
+        const newSecondaryEmail = oldPersonalEmail !== email ? oldPersonalEmail : user.secondary_email;
+
         // Update user to have credentials and new password
         await user.update({
             email,
+            secondary_email: newSecondaryEmail,
             role: roleInt,
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
             abis_access: abis_access === 'true' || abis_access === true,
