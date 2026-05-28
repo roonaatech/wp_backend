@@ -656,6 +656,25 @@ exports.getAllUsers = async (req, res) => {
                             }
                         ]
                     });
+                } else if (s === 'unapproved') {
+                    statusConditions.push({
+                        '$profile_info.onboarding_status$': 'Pending_HR_Approval'
+                    });
+                } else if (s === 'pending_declaration') {
+                    statusConditions.push({
+                        [Op.or]: [
+                            { '$profile_info.onboarding_status$': 'Pending_Candidate' },
+                            {
+                                [Op.and]: [
+                                    { '$profile_info.onboarding_status$': { [Op.ne]: 'Completed' } },
+                                    { [Op.or]: [
+                                        { '$profile_info.consent_given$': false },
+                                        { '$profile_info.consent_given$': null }
+                                    ]}
+                                ]
+                            }
+                        ]
+                    });
                 }
             });
 
@@ -671,7 +690,7 @@ exports.getAllUsers = async (req, res) => {
         const queryOptions = {
             where: whereClause,
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login'],
-            include: [{ model: EmployeeProfile, as: 'profile_info', attributes: ['image_path'] }],
+            include: [{ model: EmployeeProfile, as: 'profile_info', attributes: ['image_path', 'onboarding_status', 'consent_given'] }],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
