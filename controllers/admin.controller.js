@@ -113,9 +113,9 @@ exports.createUser = async (req, res) => {
     const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
 
     // Validate input
-    if (!firstname || !lastname || !email || !password || !role || !gender) {
+    if (!firstname || !lastname || !email || !password || !role || !gender || !approving_manager_id) {
         return res.status(400).send({
-            message: "All fields (firstname, lastname, email, password, role, gender) are required."
+            message: "All fields (firstname, lastname, email, password, role, gender, reporting manager) are required."
         });
     }
 
@@ -151,26 +151,11 @@ exports.createUser = async (req, res) => {
             }
         }
 
-        // Validate approving manager requirement based on role hierarchy
-        // Roles that need an approver (not super_admin level) should have approving_manager_id
-        if (newRole.hierarchy_level > 0 && !approving_manager_id) {
-            // Check if the role actually needs an approver
-            const potentialApprovers = await Role.findAll({
-                where: {
-                    hierarchy_level: { [Op.lte]: newRole.hierarchy_level },
-                    [Op.or]: [
-                        { can_approve_leave: { [Op.ne]: 'none' } },
-                        { can_approve_onduty: { [Op.ne]: 'none' } }
-                    ],
-                    active: true
-                }
+        // Reporting Manager is mandatory for all users
+        if (!approving_manager_id) {
+            return res.status(400).send({
+                message: "Reporting Manager is required."
             });
-
-            if (potentialApprovers.length > 0) {
-                return res.status(400).send({
-                    message: `${newRole.display_name} role requires an approving manager.`
-                });
-            }
         }
 
         // Check if email already exists
@@ -248,9 +233,9 @@ exports.updateUser = async (req, res) => {
     const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
 
     // Validate input
-    if (!firstname || !lastname || !email || !role) {
+    if (!firstname || !lastname || !email || !role || !approving_manager_id) {
         return res.status(400).send({
-            message: "Firstname, lastname, email, and role are required."
+            message: "Firstname, lastname, email, role, and reporting manager are required."
         });
     }
 
@@ -262,10 +247,10 @@ exports.updateUser = async (req, res) => {
         });
     }
 
-    // Validate role and manager_id requirements
-    if (roleInt === 2 && !approving_manager_id) {
+    // Reporting Manager is mandatory
+    if (!approving_manager_id) {
         return res.status(400).send({
-            message: "Manager role requires an approving admin manager."
+            message: "Reporting Manager is required."
         });
     }
 
@@ -660,19 +645,22 @@ exports.getAllUsers = async (req, res) => {
                     statusConditions.push({
                         '$profile_info.onboarding_status$': 'Pending_HR_Approval'
                     });
-                } else if (s === 'pending_declaration') {
+                } else if (s === 'update_required') {
+                    // Users missing any of: gender, reporting manager, email, date of birth, or declaration
                     statusConditions.push({
                         [Op.or]: [
+                            { gender: null },
+                            { gender: '' },
+                            { approving_manager_id: null },
+                            { email: null },
+                            { email: '' },
+                            { '$profile_info.date_of_birth$': null },
+                            { '$profile_info.consent_given$': null },
+                            { '$profile_info.consent_given$': false },
+                            { '$profile_info.consent_given$': 0 },
                             { '$profile_info.onboarding_status$': 'Pending_Candidate' },
-                            {
-                                [Op.and]: [
-                                    { '$profile_info.onboarding_status$': { [Op.ne]: 'Completed' } },
-                                    { [Op.or]: [
-                                        { '$profile_info.consent_given$': false },
-                                        { '$profile_info.consent_given$': null }
-                                    ]}
-                                ]
-                            }
+                            // Users with no employee_profiles row (date_of_birth/declaration definitely missing)
+                            { '$profile_info.id$': null }
                         ]
                     });
                 }
@@ -690,7 +678,7 @@ exports.getAllUsers = async (req, res) => {
         const queryOptions = {
             where: whereClause,
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login'],
-            include: [{ model: EmployeeProfile, as: 'profile_info', attributes: ['image_path', 'onboarding_status', 'consent_given'] }],
+            include: [{ model: EmployeeProfile, as: 'profile_info', required: false, attributes: ['id', 'image_path', 'onboarding_status', 'consent_given', 'date_of_birth'] }],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
