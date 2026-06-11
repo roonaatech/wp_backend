@@ -82,7 +82,7 @@ exports.startOnDuty = async (req, res) => {
 
 // End on-duty visit
 exports.endOnDuty = (req, res) => {
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, end_location } = req.body;
 
     // Find the active on-duty visit
     OnDutyLog.findOne({
@@ -105,6 +105,7 @@ exports.endOnDuty = (req, res) => {
                 end_time: now,
                 end_lat: latitude,
                 end_long: longitude,
+                end_location: end_location,
                 status: 'Pending'
             });
         })
@@ -424,6 +425,7 @@ exports.getOnDutyByStatus = async (req, res) => {
             staff_id: log.staff_id,
             client_name: log.client_name,
             location: log.location,
+            end_location: log.end_location,
             purpose: log.purpose,
             start_time: formatDateInTimezone(log.start_time),
             end_time: formatDateInTimezone(log.end_time),
@@ -517,6 +519,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
             staff_id: log.staff_id,
             client_name: log.client_name,
             location: log.location,
+            end_location: log.end_location,
             purpose: log.purpose,
             start_time: formatDateInTimezone(log.start_time),
             end_time: formatDateInTimezone(log.end_time),
@@ -544,7 +547,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
 exports.updateOnDutyDetails = async (req, res) => {
     try {
         const { id } = req.params;
-        const { client_name, location, purpose } = req.body;
+        const { client_name, location, end_location, purpose } = req.body;
 
         const log = await OnDutyLog.findByPk(id);
         if (!log) {
@@ -563,6 +566,7 @@ exports.updateOnDutyDetails = async (req, res) => {
 
         if (client_name) log.client_name = client_name;
         if (location) log.location = location;
+        if (end_location) log.end_location = end_location;
         if (purpose) log.purpose = purpose;
 
         await log.save();

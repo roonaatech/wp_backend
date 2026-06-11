@@ -1263,6 +1263,7 @@ exports.getAttendanceReports = async (req, res) => {
                 check_out_time: formatDateInTimezone(log.end_time, reportTz),
                 date: getDateInTimezone(log.start_time, reportTz),
                 location: log.location,
+                end_location: log.end_location,
                 client_name: log.client_name,
                 purpose: log.purpose,
                 status: log.status,
@@ -1541,7 +1542,9 @@ exports.getMonthlySummary = async (req, res) => {
                             start_time: od.start_time,
                             end_time: od.end_time,
                             duration: `${timeStr}(${formatMins(mins)})`,
-                            detail: `${od.client_name || 'N/A'} - ${od.location || 'N/A'}`
+                            detail: od.end_location
+                                ? `${od.client_name || 'N/A'} - ${od.location || 'N/A'} to ${od.end_location}`
+                                : `${od.client_name || 'N/A'} - ${od.location || 'N/A'}`
                         });
                     }
                 }
@@ -2151,7 +2154,7 @@ exports.getCalendarEvents = async (req, res) => {
                 type: 'on_duty',
                 staff_name: staffName,
                 title: purpose || 'On-Duty',
-                reason: location,
+                reason: onDuty.end_location ? `${location} to ${onDuty.end_location}` : location,
                 client_name: onDuty.client_name || null,
                 start_time: formatDateInTimezone(onDuty.start_time, calTz),
                 end_time: formatDateInTimezone(onDuty.end_time, calTz),
@@ -2406,7 +2409,9 @@ exports.getUserYearlyHistory = async (req, res) => {
                     date: dateStr,
                     type: 'on_duty',
                     title: onDuty.purpose || 'On-Duty',
-                    reason: onDuty.location
+                    reason: onDuty.end_location
+                        ? `${onDuty.location || 'N/A'} to ${onDuty.end_location}`
+                        : (onDuty.location || '')
                 });
             }
         });

@@ -328,7 +328,7 @@ exports.getMyLeaves = async (req, res) => {
         // Fetch On-Duty Logs
         const onDutyLogs = await OnDutyLog.findAll({
             where: { staff_id: req.userId },
-            attributes: ['id', 'client_name', 'location', 'purpose', 'start_time', 'end_time', 'status', 'rejection_reason', 'manager_id'],
+            attributes: ['id', 'client_name', 'location', 'end_location', 'purpose', 'start_time', 'end_time', 'status', 'rejection_reason', 'manager_id'],
             raw: true
         });
 
@@ -365,10 +365,14 @@ exports.getMyLeaves = async (req, res) => {
                 type: 'on_duty',
                 id: l.id,
                 title: `On-Duty: ${l.client_name}`,
-                subtitle: `${l.location} - ${l.purpose}`,
+                subtitle: l.end_location ? `${l.location} to ${l.end_location} - ${l.purpose}` : `${l.location} - ${l.purpose}`,
                 status: !l.end_time ? 'Active' : (l.status || 'Pending'),
                 start: l.start_time,
                 end: l.end_time,
+                location: l.location,
+                end_location: l.end_location,
+                client_name: l.client_name,
+                purpose: l.purpose,
                 rejection_reason: l.rejection_reason,
                 manager_id: l.manager_id,
                 date: l.start_time
@@ -553,12 +557,13 @@ exports.getPendingLeaves = async (req, res) => {
             staff_id: l.staff_id,
             tblstaff: l.user,
             title: `On-Duty: ${l.client_name}`,
-            reason: `${l.purpose} (${l.location})`,
+            reason: l.end_location ? `${l.purpose} (${l.location} to ${l.end_location})` : `${l.purpose} (${l.location})`,
             start_date: formatDateInTimezone(l.start_time, tz1),
             end_date: formatDateInTimezone(l.end_time, tz1),
             createdAt: l.start_time,
             client_name: l.client_name,
             location: l.location,
+            end_location: l.end_location,
             purpose: l.purpose,
             start_time: formatDateInTimezone(l.start_time, tz1),
             end_time: formatDateInTimezone(l.end_time, tz1),
@@ -785,7 +790,7 @@ exports.getManageableRequests = async (req, res) => {
                 staff_id: l.staff_id,
                 tblstaff: l.user,
                 title: `On-Duty: ${l.client_name}`,
-                reason: `${l.purpose} (${l.location})`,
+                reason: l.end_location ? `${l.purpose} (${l.location} to ${l.end_location})` : `${l.purpose} (${l.location})`,
                 start_date: formatDateInTimezone(l.start_time, tz),
                 end_date: formatDateInTimezone(l.end_time, tz),
                 status: l.status,
@@ -795,6 +800,7 @@ exports.getManageableRequests = async (req, res) => {
                 updatedAt: l.updatedAt,
                 client_name: l.client_name,
                 location: l.location,
+                end_location: l.end_location,
                 purpose: l.purpose,
                 start_time: formatDateInTimezone(l.start_time, tz),
                 end_time: formatDateInTimezone(l.end_time, tz),
