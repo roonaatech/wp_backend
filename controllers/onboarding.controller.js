@@ -262,7 +262,8 @@ exports.onboardEmployee = async (req, res) => {
         });
 
         // Send Welcome Email if requested
-        if (send_welcome_email === 'true' || send_welcome_email === true) {
+        console.log("[Onboarding] Manual onboarding send_welcome_email value received:", send_welcome_email);
+        if (send_welcome_email === 'true' || send_welcome_email === true || send_welcome_email === 'on' || send_welcome_email === '1') {
             try {
                 const appUrl = req.headers.origin || "http://localhost:5173";
                 const emailSubject = "Welcome to WorkPulse - Complete Your Profile Activation";
@@ -1347,10 +1348,13 @@ exports.resendWelcomeEmail = async (req, res) => {
         }
 
         // Log HR activity log
-        await db.activity_logs.create({
+        await logActivity({
             admin_id: req.userId || id,
             action: 'UPDATE',
-            details: `Resent welcome activation email for employee: ${user.firstname} ${user.lastname} (${user.email}).`,
+            entity: 'UserOnboarding',
+            entity_id: user.staffid,
+            affected_user_id: user.staffid,
+            description: `Resent welcome activation email for employee: ${user.firstname} ${user.lastname} (${user.email}).`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });

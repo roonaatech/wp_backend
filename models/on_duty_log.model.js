@@ -14,6 +14,9 @@ module.exports = (sequelize, Sequelize) => {
         location: {
             type: Sequelize.STRING
         },
+        end_location: {
+            type: Sequelize.STRING
+        },
         purpose: {
             type: Sequelize.STRING
         },
