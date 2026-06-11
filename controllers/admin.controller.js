@@ -232,26 +232,30 @@ exports.updateUser = async (req, res) => {
     const { id } = req.params;
     const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
 
+    const isDeactivating = req.body.active === 0 || req.body.active === false || req.body.active === '0';
+
     // Validate input
-    if (!firstname || !lastname || !email || !role || !approving_manager_id) {
-        return res.status(400).send({
-            message: "Firstname, lastname, email, role, and reporting manager are required."
-        });
-    }
+    if (!isDeactivating) {
+        if (!firstname || !lastname || !email || !role || !approving_manager_id) {
+            return res.status(400).send({
+                message: "Firstname, lastname, email, role, and reporting manager are required."
+            });
+        }
 
-    // Prepare role and validate
-    const roleInt = parseInt(role);
-    if (isNaN(roleInt) || roleInt === 0) {
-        return res.status(400).send({
-            message: "Invalid Role value."
-        });
-    }
+        // Prepare role and validate
+        const roleInt = parseInt(role);
+        if (isNaN(roleInt) || roleInt === 0) {
+            return res.status(400).send({
+                message: "Invalid Role value."
+            });
+        }
 
-    // Reporting Manager is mandatory
-    if (!approving_manager_id) {
-        return res.status(400).send({
-            message: "Reporting Manager is required."
-        });
+        // Reporting Manager is mandatory
+        if (!approving_manager_id) {
+            return res.status(400).send({
+                message: "Reporting Manager is required."
+            });
+        }
     }
 
     try {
@@ -290,16 +294,25 @@ exports.updateUser = async (req, res) => {
             }
         }
 
+        const roleInt = isDeactivating ? (role ? parseInt(role) : targetUser.role) : parseInt(role);
+
         // Check role escalation: prevent assigning a role with equal or higher authority than current user
         // Exception: Super Admin (level 0) can assign any role
-        const newRole = await Role.findByPk(roleInt);
-        if (!newRole) {
+        let newRole = null;
+        if (roleInt && roleInt > 0) {
+            newRole = await Role.findByPk(roleInt);
+            if (!newRole) {
+                return res.status(400).send({
+                    message: "Invalid role specified."
+                });
+            }
+        } else if (!isDeactivating) {
             return res.status(400).send({
                 message: "Invalid role specified."
             });
         }
 
-        if (currentUserRole) {
+        if (currentUserRole && newRole) {
             const currentLevel = currentUserRole.hierarchy_level;
             const newRoleLevel = newRole.hierarchy_level;
 
@@ -311,7 +324,7 @@ exports.updateUser = async (req, res) => {
         }
 
         // Check if new email is already used by another user
-        if (email !== targetUser.email) {
+        if (email && email !== targetUser.email) {
             const existingUser = await TblStaff.findOne({ where: { email: email } });
             if (existingUser) {
                 return res.status(409).send({
@@ -322,13 +335,13 @@ exports.updateUser = async (req, res) => {
 
         // Build update object
         const updateData = {
-            firstname: firstname,
-            lastname: lastname,
-            email: email,
+            firstname: firstname || targetUser.firstname,
+            lastname: lastname || targetUser.lastname,
+            email: email || targetUser.email,
             secondary_email: secondary_email !== undefined ? secondary_email : targetUser.secondary_email,
-            role: roleInt,
-            approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
-            gender: gender,
+            role: roleInt || targetUser.role,
+            approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : targetUser.approving_manager_id,
+            gender: gender || targetUser.gender,
             active: req.body.active !== undefined ? req.body.active : targetUser.active
         };
 
