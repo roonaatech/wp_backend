@@ -54,10 +54,12 @@ exports.onboardEmployee = async (req, res) => {
         educations, experiences, family_members
     } = req.body;
 
+    const isSendWelcomeEmail = send_welcome_email === 'true' || send_welcome_email === true || send_welcome_email === 'on' || send_welcome_email === '1';
+
     // 1. Basic Field Validations
-    if (!firstname || !lastname || !email || !password || !role || !gender || !date_of_birth) {
+    if (!firstname || !lastname || !email || (!password && !isSendWelcomeEmail) || !role || !gender || !date_of_birth) {
         return res.status(400).send({
-            message: "Firstname, lastname, email, password, role, gender, and date of birth are required."
+            message: "Firstname, lastname, email, role, gender, date of birth, and password (unless welcome email option is checked) are required."
         });
     }
 
@@ -95,7 +97,12 @@ exports.onboardEmployee = async (req, res) => {
         }
 
         // Hash password
-        const hashedPassword = bcrypt.hashSync(password, 8);
+        let tempPassword = password;
+        if ((!tempPassword || tempPassword.trim() === '') && isSendWelcomeEmail) {
+            // Generate a random 10-character temporary password
+            tempPassword = Math.random().toString(36).substring(2, 12);
+        }
+        const hashedPassword = bcrypt.hashSync(tempPassword, 8);
 
         // Create basic user
         const user = await User.create({
@@ -287,8 +294,8 @@ exports.onboardEmployee = async (req, res) => {
                                     <td style="padding: 6px 0; color: #1e293b; font-weight: 600;">${email}</td>
                                 </tr>
                                 <tr>
-                                    <td style="padding: 6px 0; color: #64748b; font-weight: 500;">Temp Password:</td>
-                                    <td style="padding: 6px 0; color: #e11d48; font-family: monospace; font-weight: 700; font-size: 15px;">${password}</td>
+                                    <td style="padding: 6px 0; color: #64748b; width: 120px; font-weight: 500;">Temp Password:</td>
+                                    <td style="padding: 6px 0; color: #e11d48; font-family: monospace; font-weight: 700; font-size: 15px;">${tempPassword}</td>
                                 </tr>
                             </table>
                         </div>
