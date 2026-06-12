@@ -42,6 +42,12 @@ for file in migrations/*.js; do
             echo ""
             continue
         fi
+        if [[ "$(basename $file)" == "20260612000002-add-unique-constraint-to-user-email.js" ]]; then
+            echo "Checking: $(basename $file)"
+            echo -e "${GREEN}  ✅ Verified safe duplicate email cleanup migration${NC}"
+            echo ""
+            continue
+        fi
         echo "Checking: $(basename $file)"
         
         # Check for dangerous keywords

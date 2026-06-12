@@ -120,8 +120,7 @@ async function seedRoles() {
     });
 
     if (!created) {
-      await role.update(r);
-      console.log(`Updated role in database: ${r.name}`);
+      console.log(`Role already exists: ${r.name}`);
     } else {
       console.log(`Created role: ${r.name}`);
     }
