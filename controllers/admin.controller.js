@@ -2489,6 +2489,7 @@ exports.bulkUploadUsers = async (req, res) => {
         const errorLogs = [];
         let createdCount = 0;
         let ignoredCount = 0;
+        const processedEmails = new Set();
 
         for (let i = 1; i < lines.length; i++) {
             const line = lines[i];
@@ -2517,6 +2518,12 @@ exports.bulkUploadUsers = async (req, res) => {
                 continue;
             }
 
+            const emailLower = email.toLowerCase();
+            if (processedEmails.has(emailLower)) {
+                errorLogs.push(`Row ${i + 1}: Duplicate email (${email}) in CSV.`);
+                continue;
+            }
+
             // Uniqueness Check
             const existingUser = await TblStaff.findOne({ where: { email } });
             if (existingUser) {
@@ -2524,6 +2531,8 @@ exports.bulkUploadUsers = async (req, res) => {
                 ignoredCount++;
                 continue;
             }
+
+            processedEmails.add(emailLower);
 
             // Parse optional values
             const activeInt = (activeVal === '0' || activeVal.toLowerCase() === 'inactive' || activeVal.toLowerCase() === 'false') ? 0 : 1;

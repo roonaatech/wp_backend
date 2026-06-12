@@ -430,6 +430,20 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
             return res.status(400).send({ message: "Firstname, lastname, email, role, and date of birth are required." });
         }
 
+        // Validate unique email if it's changing
+        if (email && email !== user.email) {
+            const existingUser = await User.findOne({
+                where: {
+                    email: email,
+                    staffid: { [Op.ne]: id }
+                }
+            });
+            if (existingUser) {
+                await transaction.rollback();
+                return res.status(409).send({ message: "Email already exists." });
+            }
+        }
+
         const roleInt = parseInt(role);
 
         // Hierarchy check: prevent assigning a role of higher hierarchy
