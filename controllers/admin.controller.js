@@ -739,8 +739,14 @@ exports.getManagersAndAdmins = async (req, res) => {
                 active: 1
             },
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
-            order: [['firstname', 'ASC'], ['lastname', 'ASC']],
-            raw: true
+            include: [
+                {
+                    model: db.roles,
+                    as: 'role_info',
+                    attributes: ['display_name', 'name']
+                }
+            ],
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         });
 
         const reporteesCount = await TblStaff.findAll({
@@ -757,10 +763,14 @@ exports.getManagersAndAdmins = async (req, res) => {
             reporteesMap[r.approving_manager_id] = parseInt(r.count);
         });
 
-        users = users.map(u => ({
-            ...u,
-            has_reportees: !!reporteesMap[u.staffid || u.id]
-        }));
+        users = users.map(u => {
+            const userJson = u.toJSON ? u.toJSON() : u;
+            return {
+                ...userJson,
+                role_name: userJson.role_info ? (userJson.role_info.display_name || userJson.role_info.name) : 'Manager/Admin',
+                has_reportees: !!reporteesMap[userJson.staffid || userJson.id]
+            };
+        });
 
         res.send(users);
     } catch (err) {
