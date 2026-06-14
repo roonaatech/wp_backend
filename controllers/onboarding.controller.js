@@ -1171,8 +1171,8 @@ exports.approveCandidateOnboarding = async (req, res) => {
     const { id } = req.params;
     const { email, role, approving_manager_id, abis_access } = req.body;
 
-    if (!email || !role) {
-        return res.status(400).send({ message: "Official email and role assignment are required." });
+    if (!email || !role || !approving_manager_id) {
+        return res.status(400).send({ message: "Official email, role, and reporting manager assignment are required." });
     }
 
     const roleInt = parseInt(role);
