@@ -2550,8 +2550,18 @@ exports.bulkUploadUsers = async (req, res) => {
                 }
             }
 
-            // Generate secure random temporary password (will be reset during initial login)
-            const tempPassword = require('crypto').randomBytes(4).toString('hex');
+            // Generate temporary password as: [first 2 letters of firstname] + [first 2 letters of lastname] + [current year] (all lowercase)
+            const cleanPart = (name) => {
+                const letters = (name || '').trim().replace(/[^a-zA-Z]/g, '');
+                if (letters.length > 0) {
+                    return letters.slice(0, 2).toLowerCase();
+                }
+                return (name || '').trim().slice(0, 2).toLowerCase();
+            };
+            const fPart = cleanPart(firstname);
+            const lPart = cleanPart(lastname);
+            const currentYear = new Date().getFullYear();
+            const tempPassword = `${fPart}${lPart}${currentYear}`;
 
             // Create new User in WorkPulse DB
             const newUser = await TblStaff.create({
