@@ -788,7 +788,17 @@ exports.getMyProfile = async (req, res) => {
  * POST /api/onboarding/employee/complete-declaration
  */
 exports.completeEmployeeDeclaration = async (req, res) => {
-    const { password, signature_name, onboarding_place, signature_data, consent_given } = req.body;
+    const { 
+        password, signature_name, onboarding_place, signature_data, consent_given,
+        firstname, lastname, gender,
+        birthplace, height_weight, blood_group, date_of_birth, age, has_disability, disability_details,
+        marital_status, no_of_children, hobbies, nationality, religion,
+        present_address, present_contact_no, permanent_address, permanent_contact_no,
+        father_name, father_age, father_occupation, father_work_status,
+        mother_name, mother_age, mother_occupation,
+        bank_account_number, bank_ifsc_code, bank_name_address,
+        educations, experiences, family_members
+    } = req.body;
     const userId = req.userId; // Decrypted from JWT token
 
     const transaction = await db.sequelize.transaction();
@@ -803,16 +813,16 @@ exports.completeEmployeeDeclaration = async (req, res) => {
         let profile = await EmployeeProfile.findOne({ where: { staff_id: userId }, transaction });
         const hasExistingDeclaration = profile && profile.consent_given && profile.signature_path;
 
-        // If no existing declaration, consent and signature are strictly required!
-        if (!hasExistingDeclaration) {
+        // Validation is only strictly enforced if drawing a signature (finalizing declaration)
+        if (signature_data && !hasExistingDeclaration) {
             if (!consent_given || consent_given === 'false') {
                 await transaction.rollback();
                 return res.status(400).send({ message: "Declaration and consent must be accepted." });
             }
 
-            if (!signature_name || !onboarding_place || !signature_data) {
+            if (!signature_name || !onboarding_place) {
                 await transaction.rollback();
-                return res.status(400).send({ message: "Signature name, onboarding place, and drawing are required." });
+                return res.status(400).send({ message: "Signature name and onboarding place are required." });
             }
         }
 
@@ -828,32 +838,135 @@ exports.completeEmployeeDeclaration = async (req, res) => {
             await user.update({ last_login: new Date() }, { transaction });
         }
 
-        // 2. Decode and save canvas drawing signature (ONLY if provided)
+        // 2. Update core user details if provided
+        if (firstname || lastname || gender) {
+            await user.update({
+                firstname: firstname ? firstname.trim() : user.firstname,
+                lastname: lastname ? lastname.trim() : user.lastname,
+                gender: gender || user.gender
+            }, { transaction });
+        }
+
+        // 3. Decode and save canvas drawing signature (ONLY if provided)
+        let signaturePath = profile ? profile.signature_path : null;
         if (signature_data) {
             const dir = "uploads/signatures";
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true });
             }
             const base64Data = signature_data.replace(/^data:image\/png;base64,/, "");
-            const signaturePath = `${dir}/sig-${userId}-${Date.now()}.png`;
+            signaturePath = `${dir}/sig-${userId}-${Date.now()}.png`;
             fs.writeFileSync(signaturePath, base64Data, "base64");
+        }
 
-            // 3. Create or update profile signature settings
-            const profileData = {
-                consent_given: true,
-                signature_name,
-                signature_path: signaturePath,
-                signature_date: new Date(),
-                onboarding_place
-            };
+        // 4. Calculate age from DOB
+        let calculatedAge = age ? parseInt(age) : (profile ? profile.age : null);
+        if (date_of_birth) {
+            const birthDate = new Date(date_of_birth);
+            const today = new Date();
+            let ageVal = today.getFullYear() - birthDate.getFullYear();
+            const monthDiff = today.getMonth() - birthDate.getMonth();
+            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+                ageVal--;
+            }
+            calculatedAge = ageVal;
+        }
 
-            if (profile) {
-                await profile.update(profileData, { transaction });
-            } else {
-                await EmployeeProfile.create({
+        // 5. Update or Create Employee Profile Details
+        const profileData = {
+            birthplace: birthplace !== undefined ? birthplace : (profile ? profile.birthplace : null),
+            height_weight: height_weight !== undefined ? height_weight : (profile ? profile.height_weight : null),
+            blood_group: blood_group !== undefined ? blood_group : (profile ? profile.blood_group : null),
+            date_of_birth: date_of_birth !== undefined ? (date_of_birth || null) : (profile ? profile.date_of_birth : null),
+            age: calculatedAge,
+            has_disability: has_disability !== undefined ? (has_disability === 'true' || has_disability === true) : (profile ? profile.has_disability : false),
+            disability_details: disability_details !== undefined ? disability_details : (profile ? profile.disability_details : null),
+            marital_status: marital_status !== undefined ? marital_status : (profile ? profile.marital_status : 'Single'),
+            no_of_children: no_of_children !== undefined ? parseInt(no_of_children) : (profile ? profile.no_of_children : 0),
+            hobbies: hobbies !== undefined ? hobbies : (profile ? profile.hobbies : null),
+            nationality: nationality !== undefined ? nationality : (profile ? profile.nationality : 'Indian'),
+            religion: religion !== undefined ? religion : (profile ? profile.religion : null),
+            present_address: present_address !== undefined ? present_address : (profile ? profile.present_address : null),
+            present_contact_no: present_contact_no !== undefined ? present_contact_no : (profile ? profile.present_contact_no : null),
+            permanent_address: permanent_address !== undefined ? permanent_address : (profile ? profile.permanent_address : null),
+            permanent_contact_no: permanent_contact_no !== undefined ? permanent_contact_no : (profile ? profile.permanent_contact_no : null),
+            father_name: father_name !== undefined ? father_name : (profile ? profile.father_name : null),
+            father_age: father_age !== undefined ? (father_age ? parseInt(father_age) : null) : (profile ? profile.father_age : null),
+            father_occupation: father_occupation !== undefined ? father_occupation : (profile ? profile.father_occupation : null),
+            father_work_status: father_work_status !== undefined ? father_work_status : (profile ? profile.father_work_status : 'Working'),
+            mother_name: mother_name !== undefined ? mother_name : (profile ? profile.mother_name : null),
+            mother_age: mother_age !== undefined ? (mother_age ? parseInt(mother_age) : null) : (profile ? profile.mother_age : null),
+            mother_occupation: mother_occupation !== undefined ? mother_occupation : (profile ? profile.mother_occupation : null),
+            bank_account_number: bank_account_number !== undefined ? bank_account_number : (profile ? profile.bank_account_number : null),
+            bank_ifsc_code: bank_ifsc_code !== undefined ? bank_ifsc_code : (profile ? profile.bank_ifsc_code : null),
+            bank_name_address: bank_name_address !== undefined ? bank_name_address : (profile ? profile.bank_name_address : null),
+        };
+
+        if (signature_data) {
+            profileData.consent_given = true;
+            profileData.signature_name = signature_name;
+            profileData.signature_path = signaturePath;
+            profileData.signature_date = new Date();
+            profileData.onboarding_place = onboarding_place;
+        }
+
+        if (profile) {
+            await profile.update(profileData, { transaction });
+        } else {
+            await EmployeeProfile.create({
+                staff_id: userId,
+                ...profileData
+            }, { transaction });
+        }
+
+        // 6. Update lists (Educations, Experiences, Family Members) by replacing them
+        if (educations !== undefined) {
+            await EmployeeEducation.destroy({ where: { staff_id: userId }, transaction });
+            const eduList = typeof educations === "string" ? JSON.parse(educations) : educations;
+            if (eduList && eduList.length > 0) {
+                const eduData = eduList.map(edu => ({
                     staff_id: userId,
-                    ...profileData
-                }, { transaction });
+                    qualification: edu.qualification,
+                    specialization: edu.specialization || null,
+                    grade: edu.grade || null,
+                    university_city: edu.university_city || null,
+                    year_of_completion: edu.year_of_completion ? parseInt(edu.year_of_completion) : null
+                }));
+                await EmployeeEducation.bulkCreate(eduData, { transaction });
+            }
+        }
+
+        if (experiences !== undefined) {
+            await EmployeeExperience.destroy({ where: { staff_id: userId }, transaction });
+            const expList = typeof experiences === "string" ? JSON.parse(experiences) : experiences;
+            if (expList && expList.length > 0) {
+                const expData = expList.map(exp => ({
+                    staff_id: userId,
+                    post_held: exp.post_held,
+                    department_function: exp.department_function || null,
+                    company_name: exp.company_name,
+                    city: exp.city || null,
+                    tenure: exp.tenure || null,
+                    reference_contact: exp.reference_contact || null
+                }));
+                await EmployeeExperience.bulkCreate(expData, { transaction });
+            }
+        }
+
+        if (family_members !== undefined) {
+            await EmployeeFamilyMember.destroy({ where: { staff_id: userId }, transaction });
+            const famList = typeof family_members === "string" ? JSON.parse(family_members) : family_members;
+            if (famList && famList.length > 0) {
+                const famData = famList.map(fam => ({
+                    staff_id: userId,
+                    name: fam.name,
+                    relationship: fam.relationship || "Brother",
+                    work_status: fam.work_status || fam.work_occupation || null,
+                    educational_status: fam.educational_status || fam.education || null,
+                    marital_status: fam.marital_status || null,
+                    residing_in: fam.residing_in || null
+                }));
+                await EmployeeFamilyMember.bulkCreate(famData, { transaction });
             }
         }
 
@@ -866,7 +979,7 @@ exports.completeEmployeeDeclaration = async (req, res) => {
             entity: "UserDeclaration",
             entity_id: userId,
             affected_user_id: userId,
-            description: `${user.firstname} ${user.lastname} completed profile audit and signed onboarding declaration.`,
+            description: `${user.firstname} ${user.lastname} completed profile audit, updated details, and signed onboarding declaration.`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
