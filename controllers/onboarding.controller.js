@@ -824,6 +824,11 @@ exports.completeEmployeeDeclaration = async (req, res) => {
                 await transaction.rollback();
                 return res.status(400).send({ message: "Signature name and onboarding place are required." });
             }
+
+            if (!date_of_birth) {
+                await transaction.rollback();
+                return res.status(400).send({ message: "Date of birth is required to complete the declaration." });
+            }
         }
 
         // 1. Password change handling (optional - e.g. for existing users)
