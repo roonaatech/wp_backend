@@ -15,6 +15,7 @@ module.exports = (sequelize, Sequelize) => {
         height_weight: { type: Sequelize.STRING(50), allowNull: true },
         blood_group: { type: Sequelize.STRING(10), allowNull: true },
         date_of_birth: { type: Sequelize.DATEONLY, allowNull: true },
+        date_of_joining: { type: Sequelize.DATEONLY, allowNull: true },
         age: { type: Sequelize.INTEGER, allowNull: true },
         has_disability: { type: Sequelize.BOOLEAN, defaultValue: false },
         disability_details: { type: Sequelize.TEXT, allowNull: true },

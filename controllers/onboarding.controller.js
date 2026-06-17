@@ -32,6 +32,7 @@ exports.onboardEmployee = async (req, res) => {
     const {
         // User Credentials
         firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, abis_access, send_welcome_email,
+        date_of_joining,
         
         // Personal Details
         birthplace, height_weight, blood_group, date_of_birth, age, has_disability, disability_details,
@@ -57,9 +58,9 @@ exports.onboardEmployee = async (req, res) => {
     const isSendWelcomeEmail = send_welcome_email === 'true' || send_welcome_email === true || send_welcome_email === 'on' || send_welcome_email === '1';
 
     // 1. Basic Field Validations
-    if (!firstname || !lastname || !email || (!password && !isSendWelcomeEmail) || !role || !gender || !date_of_birth) {
+    if (!firstname || !lastname || !email || (!password && !isSendWelcomeEmail) || !role || !gender || !date_of_birth || !date_of_joining) {
         return res.status(400).send({
-            message: "Firstname, lastname, email, role, gender, date of birth, and password (unless welcome email option is checked) are required."
+            message: "Firstname, lastname, email, role, gender, date of birth, date of joining, and password (unless welcome email option is checked) are required."
         });
     }
 
@@ -159,6 +160,7 @@ exports.onboardEmployee = async (req, res) => {
             height_weight,
             blood_group,
             date_of_birth: date_of_birth || null,
+            date_of_joining: date_of_joining || null,
             age: calculatedAge,
             has_disability: has_disability === 'true' || has_disability === true,
             disability_details: disability_details || null,
@@ -382,6 +384,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
     const {
         // User Credentials
         firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, active, abis_access,
+        date_of_joining,
         
         // Personal Details
         birthplace, height_weight, blood_group, date_of_birth, age, has_disability, disability_details,
@@ -425,9 +428,9 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
         }
 
         // Validate basic fields
-        if (!firstname || !lastname || !email || !role || !date_of_birth) {
+        if (!firstname || !lastname || !email || !role || !date_of_birth || !date_of_joining) {
             await transaction.rollback();
-            return res.status(400).send({ message: "Firstname, lastname, email, role, and date of birth are required." });
+            return res.status(400).send({ message: "Firstname, lastname, email, role, date of birth, and date of joining are required." });
         }
 
         // Validate unique email if it's changing
@@ -536,6 +539,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
             height_weight,
             blood_group,
             date_of_birth: date_of_birth !== undefined ? date_of_birth : (profile ? profile.date_of_birth : null),
+            date_of_joining: date_of_joining !== undefined ? (date_of_joining || null) : (profile ? profile.date_of_joining : null),
             age: calculatedAge,
             image_path: profileImagePath,
             has_disability: has_disability === 'true' || has_disability === true,
@@ -1287,10 +1291,10 @@ exports.submitCandidateForm = async (req, res) => {
  */
 exports.approveCandidateOnboarding = async (req, res) => {
     const { id } = req.params;
-    const { email, role, approving_manager_id, abis_access } = req.body;
+    const { email, role, approving_manager_id, abis_access, date_of_joining } = req.body;
 
-    if (!email || !role || !approving_manager_id) {
-        return res.status(400).send({ message: "Official email, role, and reporting manager assignment are required." });
+    if (!email || !role || !approving_manager_id || !date_of_joining) {
+        return res.status(400).send({ message: "Official email, role, reporting manager assignment, and date of joining are required." });
     }
 
     const roleInt = parseInt(role);
@@ -1361,7 +1365,7 @@ exports.approveCandidateOnboarding = async (req, res) => {
         }, { transaction });
 
         // Change status
-        await profile.update({ onboarding_status: 'Completed' }, { transaction });
+        await profile.update({ onboarding_status: 'Completed', date_of_joining }, { transaction });
 
         await transaction.commit();
 
