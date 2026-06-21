@@ -632,35 +632,30 @@ exports.getAllUsers = async (req, res) => {
         // Status constraint
         if (status) {
             const statuses = status.split(',').map(s => s.trim());
-            const statusConditions = [];
+            const accountConditions = [];
+            const profileConditions = [];
 
             statuses.forEach(s => {
                 if (s === 'active') {
-                    statusConditions.push({ active: 1 });
+                    accountConditions.push({ active: 1 });
                 } else if (s === 'inactive') {
-                    statusConditions.push({ active: 0 });
+                    accountConditions.push({ active: 0 });
                 } else if (s === 'incomplete') {
-                    // Incomplete profiles: active users with missing data
-                    statusConditions.push({
-                        [Op.and]: [
-                            { active: 1 },
-                            {
-                                [Op.or]: [
-                                    { role: 0 },
-                                    { role: null },
-                                    { gender: null },
-                                    { gender: '' }
-                                ]
-                            }
+                    profileConditions.push({
+                        [Op.or]: [
+                            { role: 0 },
+                            { role: null },
+                            { gender: null },
+                            { gender: '' }
                         ]
                     });
                 } else if (s === 'unapproved') {
-                    statusConditions.push({
+                    profileConditions.push({
                         '$profile_info.onboarding_status$': 'Pending_HR_Approval'
                     });
                 } else if (s === 'update_required') {
                     // Users missing any of: gender, reporting manager, email, date of birth, or declaration
-                    statusConditions.push({
+                    profileConditions.push({
                         [Op.or]: [
                             { gender: null },
                             { gender: '' },
@@ -679,9 +674,23 @@ exports.getAllUsers = async (req, res) => {
                 }
             });
 
-            if (statusConditions.length > 0) {
+            if (accountConditions.length > 0 && profileConditions.length > 0) {
                 andConditions.push({
-                    [Op.or]: statusConditions
+                    [Op.and]: [
+                        { [Op.or]: accountConditions },
+                        { [Op.or]: profileConditions }
+                    ]
+                });
+            } else if (accountConditions.length > 0) {
+                andConditions.push({
+                    [Op.or]: accountConditions
+                });
+            } else if (profileConditions.length > 0) {
+                andConditions.push({
+                    [Op.and]: [
+                        { active: 1 },
+                        { [Op.or]: profileConditions }
+                    ]
                 });
             }
         }
