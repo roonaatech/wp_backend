@@ -23,6 +23,7 @@ async function seedRoles() {
       can_view_activities: "all",
       can_approve_timeoff: "all",
       can_manage_system_settings: "all",
+      can_manage_onboarding: false,
       active: true
     },
     {
@@ -44,6 +45,7 @@ async function seedRoles() {
       can_view_activities: "none",
       can_approve_timeoff: "all",
       can_manage_system_settings: "all",
+      can_manage_onboarding: false,
       active: true
     },
     {
@@ -64,6 +66,7 @@ async function seedRoles() {
       can_manage_schedule: "all",
       can_view_activities: "all",
       can_approve_timeoff: "all",
+      can_manage_onboarding: true,
       active: true
     },
     {
@@ -84,6 +87,7 @@ async function seedRoles() {
       can_manage_schedule: "subordinates",
       can_view_activities: "all",
       can_approve_timeoff: "subordinates",
+      can_manage_onboarding: false,
       active: true
     },
     {
@@ -104,6 +108,7 @@ async function seedRoles() {
       can_manage_schedule: "none",
       can_view_activities: "none",
       can_approve_timeoff: "none",
+      can_manage_onboarding: false,
       active: true
     }
   ];
@@ -115,9 +120,7 @@ async function seedRoles() {
     });
 
     if (!created) {
-      console.log(`Role already exists, skipping update: ${r.name}`);
-      // Note: Existing roles are preserved to maintain production customizations
-      // To force update roles, use the admin panel or manually update the database
+      console.log(`Role already exists: ${r.name}`);
     } else {
       console.log(`Created role: ${r.name}`);
     }

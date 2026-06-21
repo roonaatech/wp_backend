@@ -7,6 +7,7 @@ const Approval = db.approvals;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const Op = db.Sequelize.Op;
 const Setting = db.settings;
+const emailService = require("../utils/email.service");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -112,9 +113,9 @@ exports.createUser = async (req, res) => {
     const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
 
     // Validate input
-    if (!firstname || !lastname || !email || !password || !role || !gender) {
+    if (!firstname || !lastname || !email || !password || !role || !gender || !approving_manager_id) {
         return res.status(400).send({
-            message: "All fields (firstname, lastname, email, password, role, gender) are required."
+            message: "All fields (firstname, lastname, email, password, role, gender, reporting manager) are required."
         });
     }
 
@@ -150,26 +151,11 @@ exports.createUser = async (req, res) => {
             }
         }
 
-        // Validate approving manager requirement based on role hierarchy
-        // Roles that need an approver (not super_admin level) should have approving_manager_id
-        if (newRole.hierarchy_level > 0 && !approving_manager_id) {
-            // Check if the role actually needs an approver
-            const potentialApprovers = await Role.findAll({
-                where: {
-                    hierarchy_level: { [Op.lte]: newRole.hierarchy_level },
-                    [Op.or]: [
-                        { can_approve_leave: { [Op.ne]: 'none' } },
-                        { can_approve_onduty: { [Op.ne]: 'none' } }
-                    ],
-                    active: true
-                }
+        // Reporting Manager is mandatory for all users
+        if (!approving_manager_id) {
+            return res.status(400).send({
+                message: "Reporting Manager is required."
             });
-
-            if (potentialApprovers.length > 0) {
-                return res.status(400).send({
-                    message: `${newRole.display_name} role requires an approving manager.`
-                });
-            }
         }
 
         // Check if email already exists
@@ -246,26 +232,30 @@ exports.updateUser = async (req, res) => {
     const { id } = req.params;
     const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
 
+    const isDeactivating = req.body.active === 0 || req.body.active === false || req.body.active === '0';
+
     // Validate input
-    if (!firstname || !lastname || !email || !role) {
-        return res.status(400).send({
-            message: "Firstname, lastname, email, and role are required."
-        });
-    }
+    if (!isDeactivating) {
+        if (!firstname || !lastname || !email || !role || !approving_manager_id) {
+            return res.status(400).send({
+                message: "Firstname, lastname, email, role, and reporting manager are required."
+            });
+        }
 
-    // Prepare role and validate
-    const roleInt = parseInt(role);
-    if (isNaN(roleInt) || roleInt === 0) {
-        return res.status(400).send({
-            message: "Invalid Role value."
-        });
-    }
+        // Prepare role and validate
+        const roleInt = parseInt(role);
+        if (isNaN(roleInt) || roleInt === 0) {
+            return res.status(400).send({
+                message: "Invalid Role value."
+            });
+        }
 
-    // Validate role and manager_id requirements
-    if (roleInt === 2 && !approving_manager_id) {
-        return res.status(400).send({
-            message: "Manager role requires an approving admin manager."
-        });
+        // Reporting Manager is mandatory
+        if (!approving_manager_id) {
+            return res.status(400).send({
+                message: "Reporting Manager is required."
+            });
+        }
     }
 
     try {
@@ -304,16 +294,25 @@ exports.updateUser = async (req, res) => {
             }
         }
 
+        const roleInt = isDeactivating ? (role ? parseInt(role) : targetUser.role) : parseInt(role);
+
         // Check role escalation: prevent assigning a role with equal or higher authority than current user
         // Exception: Super Admin (level 0) can assign any role
-        const newRole = await Role.findByPk(roleInt);
-        if (!newRole) {
+        let newRole = null;
+        if (roleInt && roleInt > 0) {
+            newRole = await Role.findByPk(roleInt);
+            if (!newRole) {
+                return res.status(400).send({
+                    message: "Invalid role specified."
+                });
+            }
+        } else if (!isDeactivating) {
             return res.status(400).send({
                 message: "Invalid role specified."
             });
         }
 
-        if (currentUserRole) {
+        if (currentUserRole && newRole) {
             const currentLevel = currentUserRole.hierarchy_level;
             const newRoleLevel = newRole.hierarchy_level;
 
@@ -325,7 +324,7 @@ exports.updateUser = async (req, res) => {
         }
 
         // Check if new email is already used by another user
-        if (email !== targetUser.email) {
+        if (email && email !== targetUser.email) {
             const existingUser = await TblStaff.findOne({ where: { email: email } });
             if (existingUser) {
                 return res.status(409).send({
@@ -336,13 +335,13 @@ exports.updateUser = async (req, res) => {
 
         // Build update object
         const updateData = {
-            firstname: firstname,
-            lastname: lastname,
-            email: email,
+            firstname: firstname || targetUser.firstname,
+            lastname: lastname || targetUser.lastname,
+            email: email || targetUser.email,
             secondary_email: secondary_email !== undefined ? secondary_email : targetUser.secondary_email,
-            role: roleInt,
-            approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
-            gender: gender,
+            role: roleInt || targetUser.role,
+            approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : targetUser.approving_manager_id,
+            gender: gender || targetUser.gender,
             active: req.body.active !== undefined ? req.body.active : targetUser.active
         };
 
@@ -452,10 +451,54 @@ exports.resetUserPassword = async (req, res) => {
         // Hash the new password
         const hashedPassword = bcrypt.hashSync(newPassword, 8);
 
-        // Update the password
+        // Update the password and reset last_login to null to force first-time flow
         await user.update({
-            password: hashedPassword
+            password: hashedPassword,
+            last_login: null
         });
+
+        // Send email with new temporary password
+        try {
+            const appUrl = req.headers.origin || "http://localhost:5173";
+            const emailSubject = "WorkPulse Account Security - Password Reset";
+            const emailBody = `
+                <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #f1f5f9; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); background-color: #ffffff;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #4f46e5; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em;">WorkPulse</h1>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 5px;">Secure Attendance & Identity Services</p>
+                    </div>
+                    <div style="background-color: #faf5ff; border: 1px solid #f3e8ff; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                        <h2 style="color: #581c87; margin-top: 0; font-size: 18px; font-weight: 700;">Password Reset Notification</h2>
+                        <p style="color: #6b21a8; font-size: 14px; line-height: 1.5; margin-bottom: 0;">
+                            Your WorkPulse account password has been reset by an Administrator. You must use the temporary credentials below to log in, verify your security declaration, and set your new permanent password.
+                        </p>
+                    </div>
+                    <div style="margin-bottom: 25px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px;">
+                        <h3 style="color: #1e293b; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Your Temporary Login Credentials</h3>
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 6px 0; color: #64748b; width: 120px; font-weight: 500;">Primary Email:</td>
+                                <td style="padding: 6px 0; color: #1e293b; font-weight: 600;">${user.email}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px 0; color: #64748b; font-weight: 500;">Temp Password:</td>
+                                <td style="padding: 6px 0; color: #e11d48; font-family: monospace; font-weight: 700; font-size: 15px;">${newPassword}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div style="text-align: center; margin: 35px 0;">
+                        <a href="${appUrl}/login" style="background-color: #4f46e5; color: #ffffff; padding: 14px 30px; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.25); display: inline-block;">Log In & Reset Password</a>
+                    </div>
+                    <div style="border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; font-size: 11px; color: #94a3b8;">
+                        <p style="margin: 0;">If you did not request this password reset, please contact the IT Security Department immediately.</p>
+                        <p style="margin: 5px 0 0;">WorkPulse Security Team © 2026</p>
+                    </div>
+                </div>
+            `;
+            await emailService.sendEmail(user.email, emailSubject, emailBody);
+        } catch (emailErr) {
+            console.error("[EmailService] Failed to send password reset notification email:", emailErr);
+        }
 
         // Log the activity
         await logActivity({
@@ -470,7 +513,7 @@ exports.resetUserPassword = async (req, res) => {
         });
 
         res.send({
-            message: "Password reset successfully."
+            message: "Password reset successfully and email notification sent."
         });
     } catch (err) {
         res.status(500).send({
@@ -481,6 +524,7 @@ exports.resetUserPassword = async (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
     try {
+        const EmployeeProfile = db.employee_profiles;
         // Get current user's role to determine filtering
         const currentUser = await TblStaff.findByPk(req.userId);
         const Role = db.roles;
@@ -610,6 +654,28 @@ exports.getAllUsers = async (req, res) => {
                             }
                         ]
                     });
+                } else if (s === 'unapproved') {
+                    statusConditions.push({
+                        '$profile_info.onboarding_status$': 'Pending_HR_Approval'
+                    });
+                } else if (s === 'update_required') {
+                    // Users missing any of: gender, reporting manager, email, date of birth, or declaration
+                    statusConditions.push({
+                        [Op.or]: [
+                            { gender: null },
+                            { gender: '' },
+                            { approving_manager_id: null },
+                            { email: null },
+                            { email: '' },
+                            { '$profile_info.date_of_birth$': null },
+                            { '$profile_info.consent_given$': null },
+                            { '$profile_info.consent_given$': false },
+                            { '$profile_info.consent_given$': 0 },
+                            { '$profile_info.onboarding_status$': 'Pending_Candidate' },
+                            // Users with no employee_profiles row (date_of_birth/declaration definitely missing)
+                            { '$profile_info.id$': null }
+                        ]
+                    });
                 }
             });
 
@@ -625,6 +691,7 @@ exports.getAllUsers = async (req, res) => {
         const queryOptions = {
             where: whereClause,
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login'],
+            include: [{ model: EmployeeProfile, as: 'profile_info', required: false, attributes: ['id', 'image_path', 'onboarding_status', 'consent_given', 'date_of_birth'] }],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
@@ -672,8 +739,14 @@ exports.getManagersAndAdmins = async (req, res) => {
                 active: 1
             },
             attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
-            order: [['firstname', 'ASC'], ['lastname', 'ASC']],
-            raw: true
+            include: [
+                {
+                    model: db.roles,
+                    as: 'role_info',
+                    attributes: ['display_name', 'name']
+                }
+            ],
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         });
 
         const reporteesCount = await TblStaff.findAll({
@@ -690,10 +763,14 @@ exports.getManagersAndAdmins = async (req, res) => {
             reporteesMap[r.approving_manager_id] = parseInt(r.count);
         });
 
-        users = users.map(u => ({
-            ...u,
-            has_reportees: !!reporteesMap[u.staffid || u.id]
-        }));
+        users = users.map(u => {
+            const userJson = u.toJSON ? u.toJSON() : u;
+            return {
+                ...userJson,
+                role_name: userJson.role_info ? (userJson.role_info.display_name || userJson.role_info.name) : 'Manager/Admin',
+                has_reportees: !!reporteesMap[userJson.staffid || userJson.id]
+            };
+        });
 
         res.send(users);
     } catch (err) {
@@ -1196,6 +1273,7 @@ exports.getAttendanceReports = async (req, res) => {
                 check_out_time: formatDateInTimezone(log.end_time, reportTz),
                 date: getDateInTimezone(log.start_time, reportTz),
                 location: log.location,
+                end_location: log.end_location,
                 client_name: log.client_name,
                 purpose: log.purpose,
                 status: log.status,
@@ -1474,7 +1552,9 @@ exports.getMonthlySummary = async (req, res) => {
                             start_time: od.start_time,
                             end_time: od.end_time,
                             duration: `${timeStr}(${formatMins(mins)})`,
-                            detail: `${od.client_name || 'N/A'} - ${od.location || 'N/A'}`
+                            detail: od.end_location
+                                ? `${od.client_name || 'N/A'} - ${od.location || 'N/A'} to ${od.end_location}`
+                                : `${od.client_name || 'N/A'} - ${od.location || 'N/A'}`
                         });
                     }
                 }
@@ -2084,7 +2164,7 @@ exports.getCalendarEvents = async (req, res) => {
                 type: 'on_duty',
                 staff_name: staffName,
                 title: purpose || 'On-Duty',
-                reason: location,
+                reason: onDuty.end_location ? `${location} to ${onDuty.end_location}` : location,
                 client_name: onDuty.client_name || null,
                 start_time: formatDateInTimezone(onDuty.start_time, calTz),
                 end_time: formatDateInTimezone(onDuty.end_time, calTz),
@@ -2339,7 +2419,9 @@ exports.getUserYearlyHistory = async (req, res) => {
                     date: dateStr,
                     type: 'on_duty',
                     title: onDuty.purpose || 'On-Duty',
-                    reason: onDuty.location
+                    reason: onDuty.end_location
+                        ? `${onDuty.location || 'N/A'} to ${onDuty.end_location}`
+                        : (onDuty.location || '')
                 });
             }
         });
@@ -2360,5 +2442,180 @@ exports.getUserYearlyHistory = async (req, res) => {
     } catch (error) {
         console.error('Error fetching yearly history:', error);
         res.status(500).send({ message: "Error fetching yearly history." });
+    }
+};
+
+exports.bulkUploadUsers = async (req, res) => {
+    const fs = require('fs');
+    if (!req.file) {
+        return res.status(400).send({ message: "No CSV file uploaded." });
+    }
+
+    try {
+        const fileContent = fs.readFileSync(req.file.path, 'utf8');
+        const lines = fileContent.split(/\r?\n/).filter(line => line.trim() !== "");
+
+        if (lines.length < 2) {
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(400).send({ message: "The CSV file must contain a header row and at least one data row." });
+        }
+
+        // Custom RFC 4180-compliant CSV row parser
+        const parseCSVRow = (line) => {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current.trim());
+            return result.map(val => val.replace(/^"|"$/g, '').trim());
+        };
+
+        const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+        // Locate header indices
+        const firstnameIdx = headers.findIndex(h => h === 'firstname' || h === 'first');
+        const lastnameIdx = headers.findIndex(h => h === 'lastname' || h === 'last');
+        const emailIdx = headers.findIndex(h => h === 'email');
+        const activeIdx = headers.findIndex(h => h === 'active' || h === 'status');
+        const genderIdx = headers.findIndex(h => h === 'gender' || h === 'sex');
+
+        if (emailIdx === -1 || firstnameIdx === -1 || lastnameIdx === -1) {
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(400).send({ message: "Missing required CSV columns. Ensure 'email', 'firstname', and 'lastname' are present in the header row." });
+        }
+
+        const EmployeeProfile = db.employee_profiles;
+        const ignoredEmails = [];
+        const errorLogs = [];
+        let createdCount = 0;
+        let ignoredCount = 0;
+        const processedEmails = new Set();
+
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            const row = parseCSVRow(line);
+
+            // Handle mismatched columns
+            if (row.length < Math.max(emailIdx, firstnameIdx, lastnameIdx) + 1) {
+                errorLogs.push(`Row ${i + 1}: Mismatched column count.`);
+                continue;
+            }
+
+            const email = row[emailIdx]?.trim();
+            const firstname = row[firstnameIdx]?.trim();
+            const lastname = row[lastnameIdx]?.trim();
+            const activeVal = (activeIdx !== -1 && row[activeIdx]) ? row[activeIdx].trim() : "1";
+            const genderVal = (genderIdx !== -1 && row[genderIdx]) ? row[genderIdx].trim() : "";
+
+            if (!email || !firstname || !lastname) {
+                errorLogs.push(`Row ${i + 1}: Missing email, firstname, or lastname values.`);
+                continue;
+            }
+
+            // Email validation check
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                errorLogs.push(`Row ${i + 1}: Invalid email format (${email}).`);
+                continue;
+            }
+
+            const emailLower = email.toLowerCase();
+            if (processedEmails.has(emailLower)) {
+                errorLogs.push(`Row ${i + 1}: Duplicate email (${email}) in CSV.`);
+                continue;
+            }
+
+            // Uniqueness Check
+            const existingUser = await TblStaff.findOne({ where: { email } });
+            if (existingUser) {
+                ignoredEmails.push(email);
+                ignoredCount++;
+                continue;
+            }
+
+            processedEmails.add(emailLower);
+
+            // Parse optional values
+            const activeInt = (activeVal === '0' || activeVal.toLowerCase() === 'inactive' || activeVal.toLowerCase() === 'false') ? 0 : 1;
+
+            // Normalize gender value
+            let gender = "Male";
+            if (genderVal) {
+                const normalized = genderVal.toLowerCase();
+                if (normalized === "female" || normalized === "f") {
+                    gender = "Female";
+                } else if (normalized === "transgender" || normalized === "trans" || normalized === "t") {
+                    gender = "Transgender";
+                } else if (normalized === "male" || normalized === "m") {
+                    gender = "Male";
+                }
+            }
+
+            // Generate temporary password as: [first 2 letters of firstname] + [first 2 letters of lastname] + [current year] (all lowercase)
+            const cleanPart = (name) => {
+                const letters = (name || '').trim().replace(/[^a-zA-Z]/g, '');
+                if (letters.length > 0) {
+                    return letters.slice(0, 2).toLowerCase();
+                }
+                return (name || '').trim().slice(0, 2).toLowerCase();
+            };
+            const fPart = cleanPart(firstname);
+            const lPart = cleanPart(lastname);
+            const currentYear = new Date().getFullYear();
+            const tempPassword = `${fPart}${lPart}${currentYear}`;
+
+            // Create new User in WorkPulse DB
+            const newUser = await TblStaff.create({
+                firstname,
+                lastname,
+                email,
+                password: bcrypt.hashSync(tempPassword, 8),
+                active: activeInt,
+                gender,
+                abis_access: true, // Default true to allow access to ABIS credentials validation
+                role: 4,           // Default employee role
+                admin: 0,
+                datecreated: new Date()
+            });
+
+            // Create default blank onboarding profile to prevent screen render errors
+            await EmployeeProfile.create({
+                staff_id: newUser.staffid,
+                onboarding_status: 'Completed',
+                active: 1
+            });
+
+            createdCount++;
+        }
+
+        // Clean up temporary uploaded file
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+
+        res.status(200).send({
+            success: true,
+            totalProcessed: lines.length - 1,
+            createdCount,
+            ignoredCount,
+            ignoredEmails,
+            errors: errorLogs
+        });
+
+    } catch (err) {
+        console.error("Error bulk uploading users:", err);
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).send({ message: err.message || "An error occurred during bulk upload." });
     }
 };

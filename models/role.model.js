@@ -7,8 +7,7 @@ module.exports = (sequelize, Sequelize) => {
         },
         name: {
             type: Sequelize.STRING(50),
-            allowNull: false,
-            unique: true
+            allowNull: false
         },
         display_name: {
             type: Sequelize.STRING(100),
@@ -103,6 +102,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage email settings'
         },
+        can_manage_onboarding: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can manage onboarding processes'
+        },
         can_manage_system_settings: {
             type: Sequelize.ENUM('none', 'all'),
             allowNull: false,
@@ -116,7 +121,13 @@ module.exports = (sequelize, Sequelize) => {
         }
     }, {
         tableName: 'roles',
-        timestamps: true
+        timestamps: true,
+        indexes: [
+            {
+                unique: true,
+                fields: ['name']
+            }
+        ]
     });
 
     return Role;

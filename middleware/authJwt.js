@@ -2,7 +2,7 @@ const jwt = require("jsonwebtoken");
 const config = process.env;
 
 const verifyToken = (req, res, next) => {
-    let token = req.headers["x-access-token"];
+    let token = req.headers["x-access-token"] || req.query.token;
 
     if (!token) {
         return res.status(403).send({
@@ -265,6 +265,32 @@ const canManageUsers = async (req, res, next) => {
     }
 };
 
+const canManageOnboarding = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+
+        // Get role from database
+        const role = await Role.findByPk(user.role);
+        if (role && role.can_manage_onboarding === true) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage onboarding!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+
 /**
  * Middleware to check if user can view users (read-only access)
  * Allows access if user has can_view_users OR can_manage_users permission
@@ -409,6 +435,7 @@ const authJwt = {
     canManageRoles: canManageRoles,
     canManageEmailSettings: canManageEmailSettings,
     canManageUsers: canManageUsers,
+    canManageOnboarding: canManageOnboarding,
     canViewUsers: canViewUsers,
     canViewReports: canViewReports,
     canManageActiveOnDuty: canManageActiveOnDuty,

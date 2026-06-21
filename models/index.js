@@ -85,4 +85,28 @@ db.time_off_requests.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approve
 // System Settings
 db.settings = require("./setting.model.js")(sequelize, Sequelize);
 
+// Onboarding / Employee Joining Profile Models
+db.employee_profiles = require("./employee_profile.model.js")(sequelize, Sequelize);
+db.employee_educations = require("./employee_education.model.js")(sequelize, Sequelize);
+db.employee_experiences = require("./employee_experience.model.js")(sequelize, Sequelize);
+db.employee_family_members = require("./employee_family_member.model.js")(sequelize, Sequelize);
+db.employee_documents = require("./employee_document.model.js")(sequelize, Sequelize);
+
+// Associations for Employee Onboarding / Profiles
+db.user.hasOne(db.employee_profiles, { foreignKey: 'staff_id', as: 'profile_info', onDelete: 'CASCADE' });
+db.employee_profiles.belongsTo(db.user, { foreignKey: 'staff_id' });
+
+db.user.hasMany(db.employee_educations, { foreignKey: 'staff_id', as: 'educations', onDelete: 'CASCADE' });
+db.employee_educations.belongsTo(db.user, { foreignKey: 'staff_id' });
+
+db.user.hasMany(db.employee_experiences, { foreignKey: 'staff_id', as: 'experiences', onDelete: 'CASCADE' });
+db.employee_experiences.belongsTo(db.user, { foreignKey: 'staff_id' });
+
+db.user.hasMany(db.employee_family_members, { foreignKey: 'staff_id', as: 'family_members', onDelete: 'CASCADE' });
+db.employee_family_members.belongsTo(db.user, { foreignKey: 'staff_id' });
+
+db.user.hasMany(db.employee_documents, { foreignKey: 'staff_id', as: 'documents', onDelete: 'CASCADE' });
+db.employee_documents.belongsTo(db.user, { foreignKey: 'staff_id' });
+
 module.exports = db;
+

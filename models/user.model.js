@@ -20,7 +20,8 @@ module.exports = (sequelize, Sequelize) => {
         },
         email: {
             type: Sequelize.STRING(100),
-            allowNull: false
+            allowNull: false,
+            unique: true
         },
         secondary_email: {
             type: Sequelize.STRING(100),
@@ -62,6 +63,12 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: true,
             defaultValue: null,
             comment: 'Timestamp of the user\'s most recent successful login'
+        },
+        abis_access: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Whether this user has access to ABIS PHP application'
         }
     }, {
         tableName: 'users',
