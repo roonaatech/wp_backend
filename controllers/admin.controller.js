@@ -2143,6 +2143,7 @@ exports.getCalendarEvents = async (req, res) => {
                     status: leave.status,
                     start_date: leave.start_date,
                     end_date: leave.end_date,
+                    is_half_day: leave.is_half_day,
                     rejection_reason: leave.rejection_reason
                 });
             }
@@ -2415,7 +2416,8 @@ exports.getUserYearlyHistory = async (req, res) => {
                         date: dateStr,
                         type: 'leave',
                         title: leave.leave_type,
-                        reason: leave.reason
+                        reason: leave.reason,
+                        is_half_day: leave.is_half_day
                     });
                 }
             }
