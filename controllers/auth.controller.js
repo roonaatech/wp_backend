@@ -225,6 +225,22 @@ exports.signin = async (req, res) => {
         const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
         const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
 
+        // Block mobile app login if password setup or declaration is not completed
+        if (req.body.is_mobile_app === true) {
+            if (mustChangePassword) {
+                return res.status(403).send({
+                    code: "PASSWORD_SETUP_REQUIRED",
+                    message: "Password setup is incomplete. Please log in using a web browser to set up your password before logging into the mobile app."
+                });
+            }
+            if (mustCompleteDeclaration) {
+                return res.status(403).send({
+                    code: "DECLARATION_REQUIRED",
+                    message: "Security declaration has not been completed. Please log in using a web browser to sign the declaration before logging into the mobile app."
+                });
+            }
+        }
+
         // Update last_login timestamp
         await user.update({ last_login: new Date() });
 
