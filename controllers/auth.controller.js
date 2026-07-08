@@ -10,6 +10,11 @@ const apkController = require("./apk.controller");
 const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
 
+// Session token lifetime in seconds. Configurable via JWT_EXPIRES_IN so long-running
+// devices (e.g. the front-desk attendance kiosk) don't get logged out during a shift.
+// Default: 7 days. Set JWT_EXPIRES_IN to e.g. 2592000 for 30 days.
+const JWT_EXPIRES_IN = parseInt(process.env.JWT_EXPIRES_IN, 10) || 7 * 24 * 60 * 60;
+
 exports.signup = (req, res) => {
     // Save User to Database
     TblStaff.create({
@@ -245,7 +250,7 @@ exports.signin = async (req, res) => {
         await user.update({ last_login: new Date() });
 
         var token = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
-            expiresIn: 86400 // 24 hours
+            expiresIn: JWT_EXPIRES_IN
         });
 
         // Log activity
@@ -453,9 +458,9 @@ exports.exchangeQRToken = async (req, res) => {
         const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
         const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
 
-        // Issue a full 24h session token
+        // Issue a full session token (lifetime configurable via JWT_EXPIRES_IN)
         const sessionToken = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
-            expiresIn: 86400
+            expiresIn: JWT_EXPIRES_IN
         });
 
         res.status(200).send({
@@ -531,5 +536,38 @@ exports.validateCredentials = async (req, res) => {
     } catch (err) {
         console.error("Error validating credentials for external system:", err);
         res.status(500).send({ success: false, message: err.message });
+    }
+};
+
+/**
+ * Verify the currently authenticated user's own password.
+ * Used to authorize sensitive in-session actions such as entering/exiting
+ * the front-desk attendance kiosk (full-screen lock).
+ * POST /api/auth/verify-password  (requires a valid token)
+ */
+exports.verifyPassword = async (req, res) => {
+    const { password } = req.body;
+
+    if (!password) {
+        return res.status(400).send({ success: false, message: "Password is required." });
+    }
+
+    try {
+        const user = await TblStaff.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).send({ success: false, message: "User not found." });
+        }
+
+        const passwordIsValid = bcrypt.compareSync(password, user.password);
+        // Return 200 with success:false (not 401) so a wrong password isn't treated as a
+        // session/token failure by the client's global auth interceptor.
+        if (!passwordIsValid) {
+            return res.status(200).send({ success: false, message: "Incorrect password." });
+        }
+
+        return res.status(200).send({ success: true });
+    } catch (err) {
+        console.error("Error verifying password:", err);
+        return res.status(500).send({ success: false, message: err.message });
     }
 };

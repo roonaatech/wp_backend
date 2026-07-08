@@ -343,7 +343,7 @@ exports.getEmployeeExtendedProfile = async (req, res) => {
 
     try {
         const user = await User.findByPk(id, {
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access', 'face_image_path', 'face_registered_at'],
             include: [
                 { model: EmployeeProfile, as: 'profile_info' },
                 { model: EmployeeEducation, as: 'educations' },
@@ -765,7 +765,7 @@ exports.getMyProfile = async (req, res) => {
 
     try {
         const user = await User.findByPk(id, {
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access', 'face_image_path', 'face_registered_at'],
             include: [
                 { model: EmployeeProfile, as: 'profile_info' },
                 { model: EmployeeEducation, as: 'educations' },

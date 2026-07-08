@@ -42,6 +42,9 @@ db.leave_requests.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' 
 db.user.hasMany(db.on_duty_logs, { foreignKey: 'staff_id' });
 db.on_duty_logs.belongsTo(db.user, { foreignKey: 'staff_id', targetKey: 'staffid', as: 'user' });
 
+db.user.hasMany(db.attendance_logs, { foreignKey: 'staff_id' });
+db.attendance_logs.belongsTo(db.user, { foreignKey: 'staff_id', targetKey: 'staffid', as: 'user' });
+
 // On-duty approver relationship
 db.on_duty_logs.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' });
 
