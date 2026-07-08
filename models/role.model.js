@@ -96,6 +96,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage roles'
         },
+        can_manage_service_accounts: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can manage service accounts'
+        },
         can_manage_email_settings: {
             type: Sequelize.BOOLEAN,
             allowNull: false,

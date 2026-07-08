@@ -28,10 +28,14 @@ db.approvals = require("./approval.model.js")(sequelize, Sequelize);
 db.activity_logs = require("./activity_log.model.js")(sequelize, Sequelize);
 db.apk_versions = require("./apk_version.model.js")(sequelize, Sequelize);
 db.attendance_logs = require("./attendance_log.model.js")(sequelize, Sequelize);
+db.service_accounts = require("./service_account.model.js")(sequelize, Sequelize);
 
 // Associations
 db.user.belongsTo(db.roles, { foreignKey: 'role', as: 'role_info' });
 db.roles.hasMany(db.user, { foreignKey: 'role' });
+
+db.service_accounts.belongsTo(db.roles, { foreignKey: 'role_id', as: 'role_info' });
+db.roles.hasMany(db.service_accounts, { foreignKey: 'role_id' });
 
 db.user.hasMany(db.leave_requests, { foreignKey: 'staff_id' });
 db.leave_requests.belongsTo(db.user, { foreignKey: 'staff_id', as: 'user' });

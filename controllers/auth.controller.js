@@ -146,18 +146,31 @@ exports.signin = async (req, res) => {
         }
 
         // 2. If user not found yet (Local Auth, or First-time Sync where userid is null), find by Email
+        let isServiceAccount = false;
         if (!user) {
             user = await TblStaff.findOne({
                 where: {
                     email: req.body.email
                 }
             });
+
+            if (!user) {
+                // Try to find in Service Accounts
+                user = await db.service_accounts.findOne({
+                    where: {
+                        email: req.body.email
+                    }
+                });
+                if (user) {
+                    isServiceAccount = true;
+                }
+            }
         }
 
         let isNewUser = false; // Flag to track first-time login via sync
 
         // If PHP Auth succeeded, SYNC the user to local DB
-        if (phpAuthSuccess && phpUserData) {
+        if (phpAuthSuccess && phpUserData && !isServiceAccount) {
             const hashedPassword = bcrypt.hashSync(req.body.password, 8);
 
             // Prepare basic user data to sync (excluding role/admin as they are managed locally)
@@ -199,9 +212,10 @@ exports.signin = async (req, res) => {
 
         // Check for Web App Access Permission
         // Only if it is NOT a mobile app login
-        if (user.role && req.body.is_mobile_app !== true) {
+        const userRoleId = isServiceAccount ? user.role_id : user.role;
+        if (userRoleId && req.body.is_mobile_app !== true) {
             const Role = db.roles;
-            const userRole = await Role.findByPk(user.role);
+            const userRole = await Role.findByPk(userRoleId);
             if (userRole && userRole.can_access_webapp != true) {
                 return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
             }
@@ -223,15 +237,21 @@ exports.signin = async (req, res) => {
         }
 
         // Compute first-time login flags BEFORE updating last_login
-        const mustChangePassword = !user.last_login;
+        const mustChangePassword = isServiceAccount ? false : !user.last_login;
 
         // Check if declaration is signed
-        const EmployeeProfile = db.employee_profiles;
-        const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
-        const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+        let mustCompleteDeclaration = false;
+        if (!isServiceAccount) {
+            const EmployeeProfile = db.employee_profiles;
+            const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+            mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+        }
 
         // Block mobile app login if password setup or declaration is not completed
         if (req.body.is_mobile_app === true) {
+            if (isServiceAccount) {
+                return res.status(403).send({ message: "Service accounts are not allowed to log in via the mobile app." });
+            }
             if (mustChangePassword) {
                 return res.status(403).send({
                     code: "PASSWORD_SETUP_REQUIRED",
@@ -249,34 +269,39 @@ exports.signin = async (req, res) => {
         // Update last_login timestamp
         await user.update({ last_login: new Date() });
 
-        var token = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
-            expiresIn: JWT_EXPIRES_IN
-        });
+        var token = jwt.sign(
+            { id: isServiceAccount ? user.id : user.staffid, isServiceAccount },
+            config.JWT_SECRET,
+            { expiresIn: JWT_EXPIRES_IN }
+        );
 
         // Log activity
         await logActivity({
-            admin_id: user.staffid,
+            admin_id: isServiceAccount ? null : user.staffid,
             action: 'LOGIN',
-            entity: 'User',
-            entity_id: user.staffid,
-            affected_user_id: user.staffid,
-            description: `${user.firstname} ${user.lastname} logged in${phpAuthSuccess ? ' (via PHP Auth)' : ''}`,
+            entity: isServiceAccount ? 'ServiceAccount' : 'User',
+            entity_id: isServiceAccount ? user.id : user.staffid,
+            affected_user_id: isServiceAccount ? null : user.staffid,
+            description: isServiceAccount
+                ? `Service account ${user.name} (${user.email}) logged in`
+                : `${user.firstname} ${user.lastname} logged in${phpAuthSuccess ? ' (via PHP Auth)' : ''}`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
 
         res.status(200).send({
-            id: user.staffid,
-            staffid: user.staffid,
-            userid: user.userid, // Include userid to check if WorkPulse-only user (null) or external (not null)
-            firstname: user.firstname,
-            lastname: user.lastname,
+            id: isServiceAccount ? user.id : user.staffid,
+            staffid: isServiceAccount ? null : user.staffid,
+            userid: isServiceAccount ? null : user.userid,
+            firstname: isServiceAccount ? user.name : user.firstname,
+            lastname: isServiceAccount ? '' : user.lastname,
             email: user.email,
-            role: user.role,
-            gender: user.gender, // Include gender for frontend checks
-            isFirstLogin: isNewUser, // Return flag to frontend
+            role: userRoleId,
+            gender: isServiceAccount ? null : user.gender,
+            isFirstLogin: isNewUser,
             mustChangePassword,
             mustCompleteDeclaration,
+            isServiceAccount,
             accessToken: token
         });
     } catch (err) {

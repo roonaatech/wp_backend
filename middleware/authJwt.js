@@ -17,6 +17,7 @@ const verifyToken = (req, res, next) => {
             });
         }
         req.userId = decoded.id;
+        req.isServiceAccount = !!decoded.isServiceAccount;
         next();
     });
 };
@@ -26,26 +27,43 @@ const User = db.user;
 const Role = db.roles;
 
 /**
+ * Helper to fetch Role based on whether it is a Service Account or a standard User.
+ * Ensures the account/user is active before granting role access.
+ */
+const getRoleForRequest = async (req) => {
+    const userId = req.userId;
+    if (!userId) return null;
+
+    if (req.isServiceAccount) {
+        const account = await db.service_accounts.findByPk(userId);
+        if (!account || !account.active) return null;
+        return await Role.findByPk(account.role_id);
+    } else {
+        const user = await User.findByPk(userId);
+        if (!user || user.active == 0 || user.active === false || user.active === '0') return null;
+        return await Role.findByPk(user.role);
+    }
+};
+
+/**
  * Middleware to check if user has approval permissions (can approve leave or onduty)
  * This replaces the old hardcoded isManagerOrAdmin check
  * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
  */
 const isManagerOrAdmin = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database and check permissions
         // For enum permissions, check if they're not 'none'
-        const role = await Role.findByPk(user.role);
-        if (role && (
+        if (
             (role.can_approve_leave && role.can_approve_leave !== 'none') ||
             (role.can_approve_onduty && role.can_approve_onduty !== 'none') ||
             (role.can_approve_timeoff && role.can_approve_timeoff !== 'none') ||
             (role.can_manage_users && role.can_manage_users !== 'none')
-        )) {
+        ) {
             next();
             return;
         }
@@ -68,15 +86,13 @@ const isManagerOrAdmin = async (req, res, next) => {
  */
 const isAdmin = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database and check can_manage_users permission
         // For enum, check if it's 'all' (full admin access)
-        const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_users === 'all') {
+        if (role.can_manage_users === 'all') {
             next();
             return;
         }
@@ -99,14 +115,12 @@ const isAdmin = async (req, res, next) => {
  */
 const canAccessWebApp = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
-        if (role && (
+        if (
             role.can_access_webapp ||
             (role.can_approve_leave && role.can_approve_leave !== 'none') ||
             (role.can_approve_onduty && role.can_approve_onduty !== 'none') ||
@@ -114,7 +128,7 @@ const canAccessWebApp = async (req, res, next) => {
             (role.can_manage_users && role.can_manage_users !== 'none') ||
             role.can_manage_leave_types ||
             (role.can_view_reports && role.can_view_reports !== 'none')
-        )) {
+        ) {
             next();
             return;
         }
@@ -136,14 +150,12 @@ const canAccessWebApp = async (req, res, next) => {
  */
 const canManageLeaveTypes = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database and check can_manage_leave_types permission
-        const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_leave_types == true) {
+        if (role.can_manage_leave_types == true) {
             next();
             return;
         }
@@ -166,14 +178,12 @@ const canManageLeaveTypes = async (req, res, next) => {
  */
 const canViewActivities = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database and check can_view_activities permission
-        const role = await Role.findByPk(user.role);
-        if (role && role.can_view_activities && role.can_view_activities !== 'none') {
+        if (role.can_view_activities && role.can_view_activities !== 'none') {
             req.activityPermission = role.can_view_activities;
             next();
             return;
@@ -192,14 +202,12 @@ const canViewActivities = async (req, res, next) => {
 
 const canManageRoles = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database and check can_manage_roles permission
-        const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_roles == true) {
+        if (role.can_manage_roles == true) {
             next();
             return;
         }
@@ -217,14 +225,12 @@ const canManageRoles = async (req, res, next) => {
 
 const canManageEmailSettings = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database and check can_manage_email_settings permission
-        const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_email_settings == true) {
+        if (role.can_manage_email_settings == true) {
             next();
             return;
         }
@@ -242,14 +248,12 @@ const canManageEmailSettings = async (req, res, next) => {
 
 const canManageUsers = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
-        if (role && (role.can_manage_users === 'all' || role.can_manage_users === 'subordinates')) {
+        if (role.can_manage_users === 'all' || role.can_manage_users === 'subordinates') {
             next();
             return;
         }
@@ -267,14 +271,12 @@ const canManageUsers = async (req, res, next) => {
 
 const canManageOnboarding = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
-        if (role && role.can_manage_onboarding === true) {
+        if (role.can_manage_onboarding === true) {
             next();
             return;
         }
@@ -290,7 +292,6 @@ const canManageOnboarding = async (req, res, next) => {
     }
 };
 
-
 /**
  * Middleware to check if user can view users (read-only access)
  * Allows access if user has can_view_users OR can_manage_users permission
@@ -298,18 +299,16 @@ const canManageOnboarding = async (req, res, next) => {
  */
 const canViewUsers = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
         // Allow if user has view OR manage permission
-        if (role && (
+        if (
             role.can_view_users === 'all' || role.can_view_users === 'subordinates' ||
             role.can_manage_users === 'all' || role.can_manage_users === 'subordinates'
-        )) {
+        ) {
             next();
             return;
         }
@@ -327,14 +326,12 @@ const canViewUsers = async (req, res, next) => {
 
 const canViewReports = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
-        if (role && (role.can_view_reports === 'all' || role.can_view_reports === 'subordinates')) {
+        if (role.can_view_reports === 'all' || role.can_view_reports === 'subordinates') {
             next();
             return;
         }
@@ -352,14 +349,12 @@ const canViewReports = async (req, res, next) => {
 
 const canManageActiveOnDuty = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
-        if (role && (role.can_manage_active_onduty === 'all' || role.can_manage_active_onduty === 'subordinates')) {
+        if (role.can_manage_active_onduty === 'all' || role.can_manage_active_onduty === 'subordinates') {
             next();
             return;
         }
@@ -377,14 +372,12 @@ const canManageActiveOnDuty = async (req, res, next) => {
 
 const canApproveTimeOff = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
-        if (role && (role.can_approve_timeoff === 'all' || role.can_approve_timeoff === 'subordinates')) {
+        if (role.can_approve_timeoff === 'all' || role.can_approve_timeoff === 'subordinates') {
             next();
             return;
         }
@@ -402,14 +395,12 @@ const canApproveTimeOff = async (req, res, next) => {
 
 const canManageSchedule = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        // Get role from database
-        const role = await Role.findByPk(user.role);
-        if (role && (role.can_manage_schedule === 'all' || role.can_manage_schedule === 'subordinates')) {
+        if (role.can_manage_schedule === 'all' || role.can_manage_schedule === 'subordinates') {
             next();
             return;
         }
@@ -427,12 +418,12 @@ const canManageSchedule = async (req, res, next) => {
 
 const canAccessAttendancePortal = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
-        const role = await Role.findByPk(user.role);
-        if (role && role.can_access_attendance_portal == true) {
+
+        if (role.can_access_attendance_portal == true) {
             next();
             return;
         }
@@ -449,12 +440,12 @@ const canAccessAttendancePortal = async (req, res, next) => {
 
 const canViewAttendanceReport = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
-        const role = await Role.findByPk(user.role);
-        if (role && (role.can_view_attendance_report === 'all' || role.can_view_attendance_report === 'subordinates')) {
+
+        if (role.can_view_attendance_report === 'all' || role.can_view_attendance_report === 'subordinates') {
             next();
             return;
         }
@@ -471,17 +462,39 @@ const canViewAttendanceReport = async (req, res, next) => {
 
 const canManageAttendance = async (req, res, next) => {
     try {
-        const user = await User.findByPk(req.userId);
-        if (!user) {
-            return res.status(403).send({ message: "User not found!" });
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
-        const role = await Role.findByPk(user.role);
-        if (role && (role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates')) {
+
+        if (role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
             next();
             return;
         }
         res.status(403).send({
             message: "You don't have permission to manage attendance records!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canManageServiceAccounts = async (req, res, next) => {
+    try {
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
+        }
+
+        if (role.can_manage_service_accounts == true) {
+            next();
+            return;
+        }
+        res.status(403).send({
+            message: "You don't have permission to manage service accounts!"
         });
     } catch (error) {
         console.error('Auth middleware error:', error);
@@ -501,6 +514,7 @@ const authJwt = {
     canManageRoles: canManageRoles,
     canManageEmailSettings: canManageEmailSettings,
     canManageUsers: canManageUsers,
+    canManageServiceAccounts: canManageServiceAccounts,
     canManageOnboarding: canManageOnboarding,
     canViewUsers: canViewUsers,
     canViewReports: canViewReports,
@@ -512,14 +526,12 @@ const authJwt = {
     canManageAttendance: canManageAttendance,
     canManageSystemSettings: async (req, res, next) => {
         try {
-            const user = await User.findByPk(req.userId);
-            if (!user) {
-                return res.status(403).send({ message: "User not found!" });
+            const role = await getRoleForRequest(req);
+            if (!role) {
+                return res.status(403).send({ message: "User or Role not found or account is inactive." });
             }
 
-            // Get role from database
-            const role = await Role.findByPk(user.role);
-            if (role && role.can_manage_system_settings === 'all') {
+            if (role.can_manage_system_settings === 'all') {
                 next();
                 return;
             }

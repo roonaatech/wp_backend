@@ -2456,6 +2456,124 @@ exports.getUserYearlyHistory = async (req, res) => {
     }
 };
 
+// Yearly attendance history for a single user: which days they were present
+// (has a check-in) and which working days they were absent. Rendered in the
+// Users page in the same calendar style as the yearly (leave/OD/time-off) history.
+exports.getUserAttendanceHistory = async (req, res) => {
+    const { Op } = require("sequelize");
+    const AttendanceLog = db.attendance_logs;
+    const LeaveRequest = db.leave_requests;
+    const OnDutyLog = db.on_duty_logs;
+    const TimeOffRequest = db.time_off_requests;
+    const Staff = db.user;
+    const Role = db.roles;
+
+    try {
+        const calTz = await getAppTimezone();
+        const year = parseInt(req.query.year) || new Date().getFullYear();
+        const targetUserId = parseInt(req.params.id);
+        const requestorId = req.userId;
+
+        // Verify requestor permission (mirrors getUserYearlyHistory)
+        const requestor = await Staff.findByPk(requestorId);
+        const userRole = requestor?.role ? await Role.findByPk(requestor.role) : null;
+        const isAdmin = userRole && userRole.can_manage_users === 'all';
+        const canViewAll = userRole && (userRole.can_view_reports === 'all' || userRole.can_manage_schedule === 'all' || isAdmin);
+
+        if (!canViewAll) {
+            const targetUser = await Staff.findByPk(targetUserId);
+            if (targetUser && targetUser.approving_manager_id !== requestorId && requestorId !== targetUserId) {
+                return res.status(403).send({ message: "Access denied. You can only view history for your reportees." });
+            }
+        }
+
+        const firstDayStr = `${year}-01-01`;
+        const lastDayStr = `${year}-12-31`;
+        const [sUTC] = getUTCBounds(firstDayStr, calTz);
+        const [, eUTC] = getUTCBounds(lastDayStr, calTz);
+
+        // --- Present days from attendance logs ---
+        const logs = await AttendanceLog.findAll({
+            where: {
+                staff_id: targetUserId,
+                check_in_time: { [Op.between]: [sUTC, eUTC] }
+            },
+            order: [['check_in_time', 'ASC']]
+        });
+
+        // Aggregate per local date: earliest check-in, latest check-out
+        const presentMap = {};
+        logs.forEach(log => {
+            if (!log.check_in_time) return;
+            const dateStr = getDateInTimezone(log.check_in_time, calTz);
+            if (!dateStr.startsWith(year.toString())) return;
+            if (!presentMap[dateStr]) {
+                presentMap[dateStr] = {
+                    date: dateStr,
+                    check_in_time: log.check_in_time,
+                    check_out_time: log.check_out_time || null
+                };
+            } else {
+                if (log.check_in_time < presentMap[dateStr].check_in_time) {
+                    presentMap[dateStr].check_in_time = log.check_in_time;
+                }
+                if (log.check_out_time && (!presentMap[dateStr].check_out_time || log.check_out_time > presentMap[dateStr].check_out_time)) {
+                    presentMap[dateStr].check_out_time = log.check_out_time;
+                }
+            }
+        });
+        const present = Object.values(presentMap);
+
+        // --- Excused days (approved leave / on-duty / time-off) so they are not flagged absent ---
+        const excusedSet = new Set();
+
+        const leaves = await LeaveRequest.findAll({
+            where: {
+                status: 'Approved',
+                staff_id: targetUserId,
+                [Op.or]: [
+                    { start_date: { [Op.between]: [firstDayStr, lastDayStr] } },
+                    { end_date: { [Op.between]: [firstDayStr, lastDayStr] } },
+                    { [Op.and]: [{ start_date: { [Op.lte]: firstDayStr } }, { end_date: { [Op.gte]: lastDayStr } }] }
+                ]
+            }
+        });
+        leaves.forEach(leave => {
+            const startDate = new Date(leave.start_date);
+            const endDate = new Date(leave.end_date);
+            for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                if (d.getFullYear() === year) {
+                    excusedSet.add(d.toISOString().split('T')[0]);
+                }
+            }
+        });
+
+        const onDuties = await OnDutyLog.findAll({
+            where: { status: 'Approved', staff_id: targetUserId, start_time: { [Op.between]: [sUTC, eUTC] } }
+        });
+        onDuties.forEach(onDuty => {
+            const dateStr = getDateInTimezone(onDuty.start_time, calTz);
+            if (dateStr.startsWith(year.toString())) excusedSet.add(dateStr);
+        });
+
+        const timeOffs = await TimeOffRequest.findAll({
+            where: { status: 'Approved', staff_id: targetUserId, date: { [Op.between]: [firstDayStr, lastDayStr] } }
+        });
+        timeOffs.forEach(timeOff => {
+            const dateStr = typeof timeOff.date === 'string' ? timeOff.date : new Date(timeOff.date).toISOString().split('T')[0];
+            if (dateStr.startsWith(year.toString())) excusedSet.add(dateStr);
+        });
+
+        // Today (in app timezone) so the frontend does not flag future days as absent
+        const todayStr = getDateInTimezone(new Date(), calTz);
+
+        res.send({ present, excused: Array.from(excusedSet), today: todayStr });
+    } catch (error) {
+        console.error('Error fetching attendance history:', error);
+        res.status(500).send({ message: "Error fetching attendance history." });
+    }
+};
+
 exports.bulkUploadUsers = async (req, res) => {
     const fs = require('fs');
     if (!req.file) {
@@ -2628,5 +2746,171 @@ exports.bulkUploadUsers = async (req, res) => {
             fs.unlinkSync(req.file.path);
         }
         res.status(500).send({ message: err.message || "An error occurred during bulk upload." });
+    }
+};
+
+// --- Service Accounts Management ---
+
+exports.getAllServiceAccounts = async (req, res) => {
+    try {
+        const ServiceAccount = db.service_accounts;
+        const Role = db.roles;
+
+        const accounts = await ServiceAccount.findAll({
+            include: [
+                {
+                    model: Role,
+                    as: 'role_info',
+                    attributes: ['id', 'name', 'display_name']
+                }
+            ],
+            order: [['createdAt', 'DESC']]
+        });
+
+        res.json(accounts);
+    } catch (err) {
+        console.error("Error in getAllServiceAccounts:", err);
+        res.status(500).send({ message: err.message });
+    }
+};
+
+exports.createServiceAccount = async (req, res) => {
+    const { name, email, password, role_id } = req.body;
+
+    if (!name || !email || !password || !role_id) {
+        return res.status(400).send({
+            message: "All fields (name, email, password, role_id) are required."
+        });
+    }
+
+    try {
+        // Check if email already exists in users or service accounts to prevent duplication
+        const existingUser = await db.user.findOne({ where: { email: email } });
+        const existingSA = await db.service_accounts.findOne({ where: { email: email } });
+        if (existingUser || existingSA) {
+            return res.status(409).send({
+                message: "Email already exists in the system."
+            });
+        }
+
+        // Validate role exists
+        const role = await db.roles.findByPk(role_id);
+        if (!role) {
+            return res.status(400).send({ message: "Invalid role specified." });
+        }
+
+        const hashed = bcrypt.hashSync(password, 8);
+        const newSA = await db.service_accounts.create({
+            name,
+            email,
+            password: hashed,
+            role_id,
+            active: true
+        });
+
+        // Log activity
+        await logActivity({
+            admin_id: req.userId,
+            action: 'CREATE',
+            entity: 'ServiceAccount',
+            entity_id: newSA.id,
+            description: `Created service account ${newSA.name} (${newSA.email})`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.status(201).send({
+            message: "Service Account was registered successfully!",
+            id: newSA.id
+        });
+    } catch (err) {
+        console.error("Error in createServiceAccount:", err);
+        res.status(500).send({ message: err.message });
+    }
+};
+
+exports.updateServiceAccount = async (req, res) => {
+    const { id } = req.params;
+    const { name, email, password, role_id, active } = req.body;
+
+    try {
+        const sa = await db.service_accounts.findByPk(id);
+        if (!sa) {
+            return res.status(404).send({ message: "Service account not found." });
+        }
+
+        // If email changed, check uniqueness
+        if (email && email !== sa.email) {
+            const existingUser = await db.user.findOne({ where: { email: email } });
+            const existingSA = await db.service_accounts.findOne({ where: { email: email } });
+            if (existingUser || existingSA) {
+                return res.status(409).send({
+                    message: "Email already exists in the system."
+                });
+            }
+            sa.email = email;
+        }
+
+        if (name) sa.name = name;
+        if (role_id) {
+            const role = await db.roles.findByPk(role_id);
+            if (!role) {
+                return res.status(400).send({ message: "Invalid role specified." });
+            }
+            sa.role_id = role_id;
+        }
+        if (password) {
+            sa.password = bcrypt.hashSync(password, 8);
+        }
+        if (active !== undefined) {
+            sa.active = active;
+        }
+
+        await sa.save();
+
+        // Log activity
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'ServiceAccount',
+            entity_id: sa.id,
+            description: `Updated service account ${sa.name} (${sa.email})`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.send({ message: "Service account updated successfully!" });
+    } catch (err) {
+        console.error("Error in updateServiceAccount:", err);
+        res.status(500).send({ message: err.message });
+    }
+};
+
+exports.deleteServiceAccount = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const sa = await db.service_accounts.findByPk(id);
+        if (!sa) {
+            return res.status(404).send({ message: "Service account not found." });
+        }
+
+        await sa.destroy();
+
+        // Log activity
+        await logActivity({
+            admin_id: req.userId,
+            action: 'DELETE',
+            entity: 'ServiceAccount',
+            entity_id: id,
+            description: `Deleted service account ${sa.name} (${sa.email})`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.send({ message: "Service account deleted successfully!" });
+    } catch (err) {
+        console.error("Error in deleteServiceAccount:", err);
+        res.status(500).send({ message: err.message });
     }
 };
