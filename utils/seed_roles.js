@@ -24,6 +24,9 @@ async function seedRoles() {
       can_approve_timeoff: "all",
       can_manage_system_settings: "all",
       can_manage_onboarding: false,
+      can_access_attendance_portal: true,
+      can_view_attendance_report: "all",
+      can_manage_attendance: "all",
       active: true
     },
     {
@@ -46,6 +49,9 @@ async function seedRoles() {
       can_approve_timeoff: "all",
       can_manage_system_settings: "all",
       can_manage_onboarding: false,
+      can_access_attendance_portal: true,
+      can_view_attendance_report: "all",
+      can_manage_attendance: "all",
       active: true
     },
     {
@@ -67,6 +73,9 @@ async function seedRoles() {
       can_view_activities: "all",
       can_approve_timeoff: "all",
       can_manage_onboarding: true,
+      can_access_attendance_portal: true,
+      can_view_attendance_report: "all",
+      can_manage_attendance: "all",
       active: true
     },
     {
@@ -88,6 +97,9 @@ async function seedRoles() {
       can_view_activities: "all",
       can_approve_timeoff: "subordinates",
       can_manage_onboarding: false,
+      can_access_attendance_portal: false,
+      can_view_attendance_report: "subordinates",
+      can_manage_attendance: "none",
       active: true
     },
     {
@@ -109,6 +121,9 @@ async function seedRoles() {
       can_view_activities: "none",
       can_approve_timeoff: "none",
       can_manage_onboarding: false,
+      can_access_attendance_portal: false,
+      can_view_attendance_report: "none",
+      can_manage_attendance: "none",
       active: true
     }
   ];

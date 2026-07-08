@@ -425,6 +425,72 @@ const canManageSchedule = async (req, res, next) => {
     }
 };
 
+const canAccessAttendancePortal = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+        const role = await Role.findByPk(user.role);
+        if (role && role.can_access_attendance_portal == true) {
+            next();
+            return;
+        }
+        res.status(403).send({
+            message: "You don't have permission to access the attendance portal!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canViewAttendanceReport = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+        const role = await Role.findByPk(user.role);
+        if (role && (role.can_view_attendance_report === 'all' || role.can_view_attendance_report === 'subordinates')) {
+            next();
+            return;
+        }
+        res.status(403).send({
+            message: "You don't have permission to view attendance reports!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canManageAttendance = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(403).send({ message: "User not found!" });
+        }
+        const role = await Role.findByPk(user.role);
+        if (role && (role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates')) {
+            next();
+            return;
+        }
+        res.status(403).send({
+            message: "You don't have permission to manage attendance records!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const authJwt = {
     verifyToken: verifyToken,
     isManagerOrAdmin: isManagerOrAdmin,
@@ -441,6 +507,9 @@ const authJwt = {
     canManageActiveOnDuty: canManageActiveOnDuty,
     canManageSchedule: canManageSchedule,
     canApproveTimeOff: canApproveTimeOff,
+    canAccessAttendancePortal: canAccessAttendancePortal,
+    canViewAttendanceReport: canViewAttendanceReport,
+    canManageAttendance: canManageAttendance,
     canManageSystemSettings: async (req, res, next) => {
         try {
             const user = await User.findByPk(req.userId);

@@ -114,6 +114,21 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: 'none',
             comment: 'Manage system settings - none=no access, all=access'
         },
+        can_access_attendance_portal: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false
+        },
+        can_view_attendance_report: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none'
+        },
+        can_manage_attendance: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none'
+        },
         active: {
             type: Sequelize.BOOLEAN,
             allowNull: false,

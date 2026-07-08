@@ -64,6 +64,7 @@ require('./routes/email.routes')(app);
 require('./routes/setting.routes')(app);
 require('./routes/timeoff.routes')(app);
 require('./routes/onboarding.routes')(app);
+require('./routes/facial_attendance.routes')(app);
 
 
 // Sync database

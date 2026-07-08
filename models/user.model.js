@@ -21,7 +21,7 @@ module.exports = (sequelize, Sequelize) => {
         email: {
             type: Sequelize.STRING(100),
             allowNull: false,
-            unique: true
+            unique: 'users_email_unique'
         },
         secondary_email: {
             type: Sequelize.STRING(100),
@@ -69,10 +69,31 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: false,
             defaultValue: false,
             comment: 'Whether this user has access to ABIS PHP application'
+        },
+        face_descriptor: {
+            type: Sequelize.TEXT('long'),
+            allowNull: true,
+            comment: 'Stringified JSON array representing 128-dimensional face embedding'
+        },
+        face_registered_at: {
+            type: Sequelize.DATE,
+            allowNull: true
+        },
+        face_image_path: {
+            type: Sequelize.STRING(255),
+            allowNull: true,
+            comment: 'Path to the face capture used for face registration (kept separate from the profile photo)'
         }
     }, {
         tableName: 'users',
-        timestamps: false
+        timestamps: false,
+        indexes: [
+            {
+                unique: true,
+                fields: ['email'],
+                name: 'users_email_unique'
+            }
+        ]
     });
 
     return User;

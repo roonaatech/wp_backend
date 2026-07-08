@@ -69,6 +69,9 @@ exports.create = async (req, res) => {
             can_manage_email_settings,
             can_manage_onboarding,
             can_manage_system_settings,
+            can_access_attendance_portal,
+            can_view_attendance_report,
+            can_manage_attendance,
             active
         } = req.body;
 
@@ -109,6 +112,9 @@ exports.create = async (req, res) => {
             can_manage_email_settings: can_manage_email_settings || false,
             can_manage_onboarding: (name === 'manager' || name === 'employee') ? false : (can_manage_onboarding || false),
             can_manage_system_settings: can_manage_system_settings || 'none',
+            can_access_attendance_portal: can_access_attendance_portal || false,
+            can_view_attendance_report: can_view_attendance_report || 'none',
+            can_manage_attendance: can_manage_attendance || 'none',
             active: active !== undefined ? active : true
         });
 
@@ -149,6 +155,9 @@ exports.update = async (req, res) => {
             can_manage_email_settings,
             can_manage_onboarding,
             can_manage_system_settings,
+            can_access_attendance_portal,
+            can_view_attendance_report,
+            can_manage_attendance,
             active
         } = req.body;
 
@@ -216,6 +225,9 @@ exports.update = async (req, res) => {
             can_manage_email_settings: can_manage_email_settings !== undefined ? can_manage_email_settings : role.can_manage_email_settings,
             can_manage_onboarding: (role.name === 'manager' || role.name === 'employee' || name === 'manager' || name === 'employee') ? false : (can_manage_onboarding !== undefined ? can_manage_onboarding : role.can_manage_onboarding),
             can_manage_system_settings: can_manage_system_settings !== undefined ? can_manage_system_settings : role.can_manage_system_settings,
+            can_access_attendance_portal: can_access_attendance_portal !== undefined ? can_access_attendance_portal : role.can_access_attendance_portal,
+            can_view_attendance_report: can_view_attendance_report !== undefined ? can_view_attendance_report : role.can_view_attendance_report,
+            can_manage_attendance: can_manage_attendance !== undefined ? can_manage_attendance : role.can_manage_attendance,
             active: active !== undefined ? active : role.active
         });
 
