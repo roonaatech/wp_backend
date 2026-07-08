@@ -27,6 +27,7 @@ async function seedRoles() {
       can_access_attendance_portal: true,
       can_view_attendance_report: "all",
       can_manage_attendance: "all",
+      can_manage_service_accounts: true,
       active: true
     },
     {
@@ -52,6 +53,7 @@ async function seedRoles() {
       can_access_attendance_portal: true,
       can_view_attendance_report: "all",
       can_manage_attendance: "all",
+      can_manage_service_accounts: true,
       active: true
     },
     {
@@ -76,6 +78,7 @@ async function seedRoles() {
       can_access_attendance_portal: true,
       can_view_attendance_report: "all",
       can_manage_attendance: "all",
+      can_manage_service_accounts: false,
       active: true
     },
     {
@@ -100,6 +103,7 @@ async function seedRoles() {
       can_access_attendance_portal: false,
       can_view_attendance_report: "subordinates",
       can_manage_attendance: "none",
+      can_manage_service_accounts: false,
       active: true
     },
     {
@@ -124,6 +128,7 @@ async function seedRoles() {
       can_access_attendance_portal: false,
       can_view_attendance_report: "none",
       can_manage_attendance: "none",
+      can_manage_service_accounts: false,
       active: true
     }
   ];
