@@ -37,7 +37,7 @@ const getEuclideanDistance = (arr1, arr2) => {
  */
 exports.registerFace = async (req, res) => {
     const userId = req.params.id || req.userId;
-    const { faceDescriptor, profileImage } = req.body;
+    const { faceDescriptor, faceDescriptorLeft, faceDescriptorRight, profileImage } = req.body;
 
     if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
         return res.status(400).send({
@@ -81,6 +81,13 @@ exports.registerFace = async (req, res) => {
             face_descriptor: JSON.stringify(faceDescriptor),
             face_registered_at: new Date()
         };
+
+        if (faceDescriptorLeft) {
+            updates.face_descriptor_left = JSON.stringify(faceDescriptorLeft);
+        }
+        if (faceDescriptorRight) {
+            updates.face_descriptor_right = JSON.stringify(faceDescriptorRight);
+        }
 
         // Save the face capture as a separate image, keeping the existing profile photo intact
         if (profileImage && profileImage.startsWith("data:image")) {
@@ -243,11 +250,11 @@ exports.getAttendanceStatus = async (req, res) => {
  * POST /api/attendance/check-in-out-with-face
  */
 exports.checkInOutWithFace = async (req, res) => {
-    const { email, password, faceDescriptor, snapshotImage, latitude, longitude, phone_model, action } = req.body;
+    const { email, password, faceDescriptor, faceDescriptorLeft, faceDescriptorRight, snapshotImage, latitude, longitude, phone_model, action, livenessVerified } = req.body;
 
-    if (!email || !password || !faceDescriptor) {
+    if (!email || (!password && !livenessVerified) || !faceDescriptor) {
         return res.status(400).send({
-            message: "Email, password, and face descriptor are required."
+            message: "Email, password/liveness, and face descriptor are required."
         });
     }
 
@@ -268,9 +275,11 @@ exports.checkInOutWithFace = async (req, res) => {
             return res.status(403).send({ message: "Account is inactive. Please contact administrator." });
         }
 
-        const passwordIsValid = bcrypt.compareSync(password, user.password);
-        if (!passwordIsValid) {
-            return res.status(400).send({ message: "Invalid Password!" });
+        if (!livenessVerified) {
+            const passwordIsValid = bcrypt.compareSync(password, user.password);
+            if (!passwordIsValid) {
+                return res.status(400).send({ message: "Invalid Password!" });
+            }
         }
 
         // 2. Fetch stored descriptor
@@ -292,6 +301,38 @@ exports.checkInOutWithFace = async (req, res) => {
                 distance,
                 message: "Facial verification failed. Face does not match the registered user."
             });
+        }
+
+        // Compare Left Profile if provided and registered
+        if (faceDescriptorLeft && user.face_descriptor_left) {
+            try {
+                const storedLeft = JSON.parse(user.face_descriptor_left);
+                const distanceLeft = getEuclideanDistance(faceDescriptorLeft, storedLeft);
+                if (distanceLeft >= threshold) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Left profile verification failed. Face does not match."
+                    });
+                }
+            } catch (err) {
+                // ignore parsing error
+            }
+        }
+
+        // Compare Right Profile if provided and registered
+        if (faceDescriptorRight && user.face_descriptor_right) {
+            try {
+                const storedRight = JSON.parse(user.face_descriptor_right);
+                const distanceRight = getEuclideanDistance(faceDescriptorRight, storedRight);
+                if (distanceRight >= threshold) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Right profile verification failed. Face does not match."
+                    });
+                }
+            } catch (err) {
+                // ignore parsing error
+            }
         }
 
         // 4. Face matches! Process the requested action
