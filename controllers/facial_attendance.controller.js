@@ -221,7 +221,13 @@ exports.getAttendanceStatus = async (req, res) => {
         });
 
         if (openLog) {
-            return res.status(200).send({ status: 'CHECKED_IN', employeeName: `${user.firstname} ${user.lastname}` });
+            const checkInFormatted = formatDateInTimezone(openLog.check_in_time, tz);
+            return res.status(200).send({ 
+                status: 'CHECKED_IN', 
+                employeeName: `${user.firstname} ${user.lastname}`,
+                checkInTime: checkInFormatted,
+                checkInRaw: openLog.check_in_time
+            });
         }
 
         // Check for a completed session today
