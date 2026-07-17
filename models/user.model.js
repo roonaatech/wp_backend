@@ -75,6 +75,16 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: true,
             comment: 'Stringified JSON array representing 128-dimensional face embedding'
         },
+        face_descriptor_left: {
+            type: Sequelize.TEXT('long'),
+            allowNull: true,
+            comment: 'Stringified JSON array representing left profile face embedding'
+        },
+        face_descriptor_right: {
+            type: Sequelize.TEXT('long'),
+            allowNull: true,
+            comment: 'Stringified JSON array representing right profile face embedding'
+        },
         face_registered_at: {
             type: Sequelize.DATE,
             allowNull: true
