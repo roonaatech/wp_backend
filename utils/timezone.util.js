@@ -137,45 +137,6 @@ const convertFromUTC = (utcDate, timezone = 'Asia/Kolkata') => {
 };
 
 /**
- * Convert a naive "YYYY-MM-DD HH:mm:ss" (or "YYYY-MM-DD HH:mm") string that
- * represents wall-clock time IN THE GIVEN TIMEZONE into the correct absolute
- * UTC Date instant. Unlike `new Date(str)`, this does not depend on the
- * server process's local timezone.
- * @param {string} dateTimeStr - e.g. "2026-07-27 09:30:00"
- * @param {string} timezone - IANA timezone string
- * @returns {Date}
- */
-const parseTimeInTimezone = (dateTimeStr, timezone = 'Asia/Kolkata') => {
-    const cleaned = String(dateTimeStr).replace('T', ' ').replace('Z', '').trim();
-    const [datePart, timePart = '00:00:00'] = cleaned.split(' ');
-    const [year, month, day] = datePart.split('-').map(Number);
-    const [hour = 0, minute = 0, second = 0] = timePart.split(':').map(Number);
-
-    // Treat the given wall-clock numbers as if they were UTC, then check what
-    // that instant actually looks like when rendered in the target timezone.
-    // The difference is the timezone's real offset at that moment (handles DST).
-    const asUTC = Date.UTC(year, month - 1, day, hour, minute, second || 0);
-
-    const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false, hourCycle: 'h23'
-    });
-    const parts = formatter.formatToParts(new Date(asUTC));
-    const p = {};
-    parts.forEach(part => { p[part.type] = part.value; });
-
-    const renderedAsUTC = Date.UTC(
-        parseInt(p.year), parseInt(p.month) - 1, parseInt(p.day),
-        parseInt(p.hour), parseInt(p.minute), parseInt(p.second)
-    );
-
-    const offset = renderedAsUTC - asUTC;
-    return new Date(asUTC - offset);
-};
-
-/**
  * Get timezone offset string (e.g., "GMT-6")
  * @param {string} timezone - IANA timezone string
  * @returns {string} Offset string
@@ -204,6 +165,5 @@ module.exports = {
     getCurrentTimeInTimezone,
     getNowStringInTimezone,
     convertFromUTC,
-    getTimezoneOffset,
-    parseTimeInTimezone
+    getTimezoneOffset
 };
