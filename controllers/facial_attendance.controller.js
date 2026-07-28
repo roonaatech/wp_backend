@@ -621,12 +621,16 @@ exports.getAttendanceLogsReport = async (req, res) => {
 };
 
 /**
- * Update an attendance log (Edit check-in, check-out times, or manually add check-out)
+ * Update an attendance log's check-out time (e.g. to close out a forgotten
+ * checkout, or correct it). Date and check-in time are captured via facial
+ * recognition and are immutable - they are intentionally ignored here even
+ * if present in the request body, so this cannot be used to alter the
+ * biometrically verified check-in record.
  * PUT /api/admin/attendance-logs/:id
  */
 exports.updateAttendanceLog = async (req, res) => {
     try {
-        const { check_in_time, check_out_time, date } = req.body;
+        const { check_out_time } = req.body;
         const logId = req.params.id;
 
         const log = await AttendanceLog.findByPk(logId, {
@@ -638,23 +642,27 @@ exports.updateAttendanceLog = async (req, res) => {
         }
 
         const oldValues = {
-            check_in_time: log.check_in_time,
-            check_out_time: log.check_out_time,
-            date: log.date
+            check_out_time: log.check_out_time
         };
 
+        const tz = await getAppTimezone();
+
         const updateData = {};
-        if (date) updateData.date = date;
-        
-        // Parse date times if provided
-        if (check_in_time) {
-            updateData.check_in_time = new Date(check_in_time);
-        }
-        
+
+        // Parse the checkout string if provided. It represents wall-clock
+        // time in the app's configured timezone, not the server's local
+        // timezone, so it must be converted explicitly rather than passed
+        // through `new Date(str)` (which parses using the server's local tz).
         if (check_out_time) {
-            updateData.check_out_time = new Date(check_out_time);
+            updateData.check_out_time = timezoneUtil.parseTimeInTimezone(check_out_time, tz);
         } else if (check_out_time === null || check_out_time === "") {
             updateData.check_out_time = null;
+        }
+
+        // Reject future check-out times
+        const now = new Date();
+        if (updateData.check_out_time && updateData.check_out_time.getTime() > now.getTime()) {
+            return res.status(400).send({ message: "Check-out time cannot be in the future." });
         }
 
         await log.update(updateData);
