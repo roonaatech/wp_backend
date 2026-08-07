@@ -98,6 +98,103 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/admin/dashboard/birthdays:
+     *   get:
+     *     summary: Get today's staff birthdays
+     *     description: Fetch active staff members whose date of birth falls on today's date in the application timezone. Restricted to Human Resource and higher hierarchy roles.
+     *     tags: [Dashboard]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: Today's birthdays retrieved successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 date:
+     *                   type: string
+     *                   format: date
+     *                 count:
+     *                   type: integer
+     *                 birthdays:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     *                     properties:
+     *                       staff_id:
+     *                         type: integer
+     *                       name:
+     *                         type: string
+     *                       email:
+     *                         type: string
+     *                       date_of_birth:
+     *                         type: string
+     *                         format: date
+     *                       day_month:
+     *                         type: string
+     *                       turning_age:
+     *                         type: integer
+     *                       image_path:
+     *                         type: string
+     *                       role_name:
+     *                         type: string
+     *       401:
+     *         description: Unauthorized - Invalid or missing token
+     *       403:
+     *         description: Forbidden - Requires Human Resource or higher role
+     */
+    app.get("/api/admin/dashboard/birthdays", [verifyToken, authJwt.canViewBirthdays], controller.getTodaysBirthdays);
+
+    /**
+     * @swagger
+     * /api/admin/dashboard/birthdays/send-wishes:
+     *   post:
+     *     summary: Send birthday wishes to today's celebrants
+     *     description: Sends the "birthday_wish" template to each staff member's official and personal email. Already-sent wishes are skipped. Restricted to Human Resource and higher hierarchy roles.
+     *     tags: [Dashboard]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     requestBody:
+     *       required: false
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               staff_ids:
+     *                 type: array
+     *                 description: Staff to wish. Omit to wish everyone still pending today.
+     *                 items:
+     *                   type: integer
+     *     responses:
+     *       200:
+     *         description: Wishes processed
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                 sent:
+     *                   type: integer
+     *                 skipped:
+     *                   type: integer
+     *                 failed:
+     *                   type: integer
+     *       403:
+     *         description: Forbidden - Requires Human Resource or higher role
+     *       404:
+     *         description: None of the given staff have a birthday today
+     *       502:
+     *         description: All wish emails failed to send
+     */
+    app.post("/api/admin/dashboard/birthdays/send-wishes", [verifyToken, authJwt.canViewBirthdays], controller.sendBirthdayWishes);
+
+    /**
+     * @swagger
      * /api/admin/incomplete-profiles:
      *   get:
      *     summary: Get incomplete user profiles

@@ -8,6 +8,7 @@ const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.lo
 const Op = db.Sequelize.Op;
 const Setting = db.settings;
 const emailService = require("../utils/email.service");
+const birthdayUtil = require("../utils/birthday.util");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -720,6 +721,95 @@ exports.getAllUsers = async (req, res) => {
     } catch (err) {
         res.status(500).send({
             message: err.message || "Some error occurred while retrieving users."
+        });
+    }
+};
+
+// Get active staff members whose birthday falls today (HR and above only)
+exports.getTodaysBirthdays = async (req, res) => {
+    try {
+        const tz = await getAppTimezone();
+        const birthdays = await birthdayUtil.getTodaysBirthdays(tz);
+
+        res.status(200).send({
+            date: birthdayUtil.getTodayDateString(tz),
+            count: birthdays.length,
+            birthdays
+        });
+    } catch (err) {
+        console.error("Error in getTodaysBirthdays:", err);
+        res.status(500).send({
+            message: err.message || "Some error occurred while retrieving today's birthdays."
+        });
+    }
+};
+
+/**
+ * Manually send birthday wishes from the dashboard.
+ * Body: { staff_ids?: number[] } — omit to wish everyone still pending today.
+ * Each wish goes to the staff member's official and personal address, and is
+ * recorded so neither this endpoint nor the scheduled job double-sends.
+ */
+exports.sendBirthdayWishes = async (req, res) => {
+    try {
+        const tz = await getAppTimezone();
+        const dateStr = birthdayUtil.getTodayDateString(tz);
+        const dateLabel = birthdayUtil.getTodayLongLabel(tz);
+
+        const birthdays = await birthdayUtil.getTodaysBirthdays(tz);
+        if (birthdays.length === 0) {
+            return res.status(200).send({ message: "No staff birthdays today.", results: [] });
+        }
+
+        const { staff_ids } = req.body || {};
+        let targets = birthdays;
+
+        if (Array.isArray(staff_ids) && staff_ids.length > 0) {
+            const requested = staff_ids.map(Number);
+            targets = birthdays.filter(b => requested.includes(b.staff_id));
+
+            if (targets.length === 0) {
+                return res.status(404).send({ message: "None of the given staff have a birthday today." });
+            }
+        }
+
+        const results = [];
+        for (const person of targets) {
+            results.push(await birthdayUtil.sendBirthdayWish(person, {
+                dateStr,
+                dateLabel,
+                source: 'manual',
+                triggeredBy: req.userId
+            }));
+        }
+
+        const sent = results.filter(r => r.outcome === 'sent');
+        const failed = results.filter(r => r.outcome === 'failed');
+
+        for (const r of sent) {
+            await logActivity({
+                admin_id: req.userId,
+                action: 'CREATE',
+                entity: 'BirthdayWish',
+                entity_id: r.staff_id,
+                description: `Sent birthday wish to ${r.name} (${r.recipients.join(', ')})`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+        }
+
+        res.status(failed.length > 0 && sent.length === 0 ? 502 : 200).send({
+            message: `${sent.length} birthday wish(es) sent.`,
+            sent: sent.length,
+            skipped: results.filter(r => r.outcome === 'already_sent').length,
+            no_email: results.filter(r => r.outcome === 'no_email').length,
+            failed: failed.length,
+            results
+        });
+    } catch (err) {
+        console.error("Error in sendBirthdayWishes:", err);
+        res.status(500).send({
+            message: err.message || "Some error occurred while sending birthday wishes."
         });
     }
 };

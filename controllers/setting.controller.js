@@ -180,6 +180,16 @@ exports.updateSetting = async (req, res) => {
             await setting.save();
         }
 
+        // Schedule-related settings are read when a cron job is registered, so
+        // re-register the affected jobs instead of waiting for a restart.
+        if (process.env.NODE_ENV !== 'test') {
+            try {
+                await require('../utils/cron').reloadCronForSetting(key);
+            } catch (cronErr) {
+                console.error(`Failed to reload cron jobs after updating "${key}":`, cronErr);
+            }
+        }
+
         await logActivity({
             admin_id: req.userId,
             action: 'UPDATE',

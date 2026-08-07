@@ -1,15 +1,44 @@
 const cron = require('node-cron');
 const db = require('../models');
 const emailService = require('./email.service');
+const birthdayUtil = require('./birthday.util');
+const seedBirthdayTemplates = require('./seed_birthday_template');
+const { getAppTimezone } = require('./hierarchy.util');
 const { Op } = require('sequelize');
 
-const startCronJobs = () => {
-    const Setting = db.settings;
-    Setting.findOne({ where: { key: 'pending_request_reminder_schedule' } }).then(scheduleSetting => {
-        const schedulePattern = scheduleSetting && scheduleSetting.value ? scheduleSetting.value : '0 8 * * *';
-        console.log(`[CRON] Starting daily reminder cron job with schedule: ${schedulePattern}`);
+// Live task handles, kept so a schedule change can re-register them without
+// restarting the process.
+let reminderTask = null;
+let birthdayTask = null;
 
-        cron.schedule(schedulePattern, async () => {
+const stopTask = (task) => {
+    if (!task) return;
+    try {
+        if (typeof task.destroy === 'function') task.destroy();
+        else task.stop();
+    } catch (err) {
+        console.error('[CRON] Failed to stop existing task:', err.message);
+    }
+};
+
+const startPendingRequestReminderCron = async () => {
+    const Setting = db.settings;
+    try {
+        stopTask(reminderTask);
+        reminderTask = null;
+
+        const scheduleSetting = await Setting.findOne({ where: { key: 'pending_request_reminder_schedule' } });
+        const schedulePattern = scheduleSetting && scheduleSetting.value ? scheduleSetting.value : '0 8 * * *';
+        const tz = await getAppTimezone();
+
+        if (!cron.validate(schedulePattern)) {
+            console.error(`[CRON] Invalid reminder cron expression "${schedulePattern}". Reminder job not scheduled.`);
+            return;
+        }
+
+        console.log(`[CRON] Starting daily reminder cron job with schedule: ${schedulePattern} (timezone: ${tz})`);
+
+        reminderTask = cron.schedule(schedulePattern, async () => {
         console.log('[CRON] Checking daily reminder configuration...');
         try {
             const Setting = db.settings;
@@ -99,10 +128,174 @@ const startCronJobs = () => {
         } catch (error) {
             console.error('[CRON] Error running daily reminders:', error);
         }
-    });
-    }).catch(err => {
-        console.error('Failed to fetch cron schedule:', err);
-    });
+        }, { timezone: tz });
+    } catch (err) {
+        console.error('Failed to start pending request reminder cron:', err);
+    }
 };
 
-module.exports = { startCronJobs };
+/**
+ * One birthday run. On each celebrant's birthday it sends:
+ *   1. a birthday wish to the celebrant, from the `birthday_wish` template
+ *   2. a summary digest to Human Resource and higher hierarchy users
+ *
+ * Exported so it can be triggered manually or under test without waiting
+ * for the schedule.
+ */
+const runBirthdayNotifications = async (tz) => {
+    const Setting = db.settings;
+
+    const enableSetting = await Setting.findOne({ where: { key: 'enable_birthday_notifications' } });
+    const enabled = enableSetting ? enableSetting.value === 'true' : true;
+
+    if (!enabled) {
+        console.log('[CRON] Birthday notifications are disabled in settings. Skipping.');
+        return { skipped: 'disabled', wishesSent: 0, digestsSent: 0 };
+    }
+
+    const todayLabel = birthdayUtil.getTodayLongLabel(tz);
+    const todayDate = birthdayUtil.getTodayDateString(tz);
+    const birthdays = await birthdayUtil.getTodaysBirthdays(tz);
+
+    if (birthdays.length === 0) {
+        console.log(`[CRON] No staff birthdays on ${todayLabel}. Skipping.`);
+        return { skipped: 'no_birthdays', wishesSent: 0, digestsSent: 0 };
+    }
+
+    // 1. Wish each celebrant on both their official and personal address.
+    //    Anyone already wished today (e.g. sent manually from the dashboard)
+    //    is skipped by sendBirthdayWish.
+    const wishSetting = await Setting.findOne({ where: { key: 'enable_birthday_wish_emails' } });
+    const wishesEnabled = wishSetting ? wishSetting.value === 'true' : true;
+    let wishesSent = 0;
+
+    if (wishesEnabled) {
+        for (const person of birthdays) {
+            const outcome = await birthdayUtil.sendBirthdayWish(person, {
+                dateStr: todayDate,
+                dateLabel: todayLabel,
+                source: 'cron'
+            });
+
+            if (outcome.outcome === 'sent') {
+                wishesSent++;
+            } else if (outcome.outcome === 'no_email') {
+                console.warn(`[CRON] Skipping birthday wish for ${person.name} — no email on record.`);
+            } else if (outcome.outcome === 'already_sent') {
+                console.log(`[CRON] Birthday wish for ${person.name} already sent today. Skipping.`);
+            } else {
+                console.error(`[CRON] Birthday wish for ${person.name} failed: ${outcome.error}`);
+            }
+        }
+        console.log(`[CRON] Sent ${wishesSent} birthday wish email(s).`);
+    } else {
+        console.log('[CRON] Birthday wish emails are disabled in settings. Sending digest only.');
+    }
+
+    // 2. Digest to the roles configured in Notification Configuration
+    const recipients = await birthdayUtil.getBirthdayDigestRecipients();
+    if (recipients.length === 0) {
+        console.warn('[CRON] No users found in the configured birthday digest roles.');
+        return { wishesSent, digestsSent: 0 };
+    }
+
+    const subject = birthdays.length === 1
+        ? `🎂 Birthday Today: ${birthdays[0].name}`
+        : `🎂 ${birthdays.length} Birthdays Today`;
+
+    console.log(`[CRON] Sending birthday digest (${birthdays.length} birthday(s)) to ${recipients.length} recipient(s).`);
+
+    let digestsSent = 0;
+    for (const recipient of recipients) {
+        const body = birthdayUtil.buildBirthdayEmailBody(birthdays, recipient, todayLabel);
+        const result = await emailService.sendEmail(
+            recipient.email,
+            subject,
+            body,
+            recipient.secondary_email || null
+        );
+        if (result.success) digestsSent++;
+    }
+
+    return { wishesSent, digestsSent };
+};
+
+/**
+ * Schedules the birthday job at 08:00 in the application timezone
+ * (Asia/Kolkata / IST by default).
+ */
+const startBirthdayNotificationCron = async () => {
+    try {
+        const Setting = db.settings;
+
+        stopTask(birthdayTask);
+        birthdayTask = null;
+
+        // Create the birthday templates if they are missing; never overwrites
+        // an existing row, so edits made in Email Settings are preserved.
+        await seedBirthdayTemplates();
+
+        const scheduleSetting = await Setting.findOne({ where: { key: 'birthday_notification_schedule' } });
+        const schedulePattern = scheduleSetting && scheduleSetting.value ? scheduleSetting.value : '0 8 * * *';
+        const tz = await getAppTimezone();
+
+        if (!cron.validate(schedulePattern)) {
+            console.error(`[CRON] Invalid birthday cron expression "${schedulePattern}". Birthday job not scheduled.`);
+            return;
+        }
+
+        birthdayTask = cron.schedule(schedulePattern, async () => {
+            console.log('[CRON] Checking birthday notification configuration...');
+            try {
+                await runBirthdayNotifications(tz);
+            } catch (error) {
+                console.error('[CRON] Error running birthday notifications:', error);
+            }
+        }, { timezone: tz });
+
+        const nextRun = typeof birthdayTask.getNextRun === 'function' ? birthdayTask.getNextRun() : null;
+        console.log(
+            `[CRON] Starting birthday notification cron job with schedule: ${schedulePattern} (timezone: ${tz})` +
+            (nextRun ? ` — next run ${nextRun.toISOString()}` : '')
+        );
+    } catch (err) {
+        console.error('Failed to start birthday notification cron:', err);
+    }
+};
+
+// Settings that change when a job runs. Saving one of these re-registers the
+// affected job immediately, so a schedule change does not need a restart.
+const CRON_SETTING_KEYS = {
+    pending_request_reminder_schedule: ['reminder'],
+    birthday_notification_schedule: ['birthday'],
+    application_timezone: ['reminder', 'birthday']
+};
+
+/**
+ * Re-register the cron jobs affected by a settings change.
+ * Returns true when the key was schedule-related and a reload happened.
+ */
+const reloadCronForSetting = async (key) => {
+    const targets = CRON_SETTING_KEYS[key];
+    if (!targets) return false;
+
+    console.log(`[CRON] Setting "${key}" changed — reloading: ${targets.join(', ')}`);
+
+    if (targets.includes('reminder')) await startPendingRequestReminderCron();
+    if (targets.includes('birthday')) await startBirthdayNotificationCron();
+
+    return true;
+};
+
+const startCronJobs = () => {
+    startPendingRequestReminderCron();
+    startBirthdayNotificationCron();
+};
+
+module.exports = {
+    startCronJobs,
+    startPendingRequestReminderCron,
+    startBirthdayNotificationCron,
+    reloadCronForSetting,
+    runBirthdayNotifications
+};
