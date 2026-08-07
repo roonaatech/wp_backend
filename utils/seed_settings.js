@@ -2,6 +2,16 @@ const db = require("../models");
 const Setting = db.settings;
 
 async function seedSettings() {
+    // Default the birthday digest to whichever roles currently hold the
+    // can_view_birthdays permission.
+    let defaultDigestRoleIds = '';
+    try {
+        const { getBirthdayPermittedRoleIds } = require("./birthday.util");
+        defaultDigestRoleIds = (await getBirthdayPermittedRoleIds()).sort((a, b) => a - b).join(',');
+    } catch (e) {
+        console.warn('Could not resolve default birthday digest roles; leaving blank (falls back to the birthday permission).');
+    }
+
     const settings = [
         {
             key: 'max_time_off_hours',
@@ -82,6 +92,46 @@ async function seedSettings() {
             validation_rules: null,
             is_public: false,
             display_order: 32
+        },
+        {
+            key: 'enable_birthday_notifications',
+            value: 'true',
+            description: 'Master switch for the daily birthday job (wish emails to celebrants and the digest to HR and higher hierarchy users).',
+            category: 'notifications',
+            data_type: 'boolean',
+            validation_rules: null,
+            is_public: false,
+            display_order: 33
+        },
+        {
+            key: 'birthday_digest_recipient_roles',
+            value: defaultDigestRoleIds,
+            description: 'Comma separated role IDs that receive the daily birthday digest email. Leave blank to fall back to Human Resource and higher hierarchy roles.',
+            category: 'notifications',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 36
+        },
+        {
+            key: 'enable_birthday_wish_emails',
+            value: 'true',
+            description: 'Send a birthday wish email to the staff member on their birthday, using the "Birthday Wish" email template. Turn off to send only the HR digest.',
+            category: 'notifications',
+            data_type: 'boolean',
+            validation_rules: null,
+            is_public: false,
+            display_order: 35
+        },
+        {
+            key: 'birthday_notification_schedule',
+            value: '0 8 * * *',
+            description: 'Cron schedule expression for the birthday digest email, evaluated in the application timezone (default: 0 8 * * * means 8:00 AM daily).',
+            category: 'notifications',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 34
         }
     ];
 

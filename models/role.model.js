@@ -114,6 +114,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage onboarding processes'
         },
+        can_view_birthdays: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can view staff birthdays on the dashboard and receive the birthday digest'
+        },
         can_manage_system_settings: {
             type: Sequelize.ENUM('none', 'all'),
             allowNull: false,
