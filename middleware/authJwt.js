@@ -482,11 +482,6 @@ const canManageAttendance = async (req, res, next) => {
     }
 };
 
-/**
- * Middleware to check if the caller can view staff birthdays.
- * Driven by the explicit can_view_birthdays permission, so renaming a role or
- * reordering the hierarchy never silently changes who has access.
- */
 const canViewBirthdays = async (req, res, next) => {
     try {
         const role = await getRoleForRequest(req);
@@ -501,6 +496,29 @@ const canViewBirthdays = async (req, res, next) => {
 
         res.status(403).send({
             message: "You don't have permission to view staff birthdays!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canViewAnniversaries = async (req, res, next) => {
+    try {
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
+        }
+
+        if (role.can_view_anniversaries == true) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to view staff work anniversaries!"
         });
     } catch (error) {
         console.error('Auth middleware error:', error);
@@ -553,6 +571,7 @@ const authJwt = {
     canViewAttendanceReport: canViewAttendanceReport,
     canManageAttendance: canManageAttendance,
     canViewBirthdays: canViewBirthdays,
+    canViewAnniversaries: canViewAnniversaries,
     canManageSystemSettings: async (req, res, next) => {
         try {
             const role = await getRoleForRequest(req);

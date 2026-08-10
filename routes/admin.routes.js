@@ -146,6 +146,7 @@ module.exports = function (app) {
      *         description: Forbidden - Requires Human Resource or higher role
      */
     app.get("/api/admin/dashboard/birthdays", [verifyToken, authJwt.canViewBirthdays], controller.getTodaysBirthdays);
+    app.get("/api/admin/dashboard/anniversaries", [verifyToken, authJwt.canViewAnniversaries], controller.getTodaysAnniversaries);
 
     /**
      * @swagger
@@ -192,6 +193,7 @@ module.exports = function (app) {
      *         description: All wish emails failed to send
      */
     app.post("/api/admin/dashboard/birthdays/send-wishes", [verifyToken, authJwt.canViewBirthdays], controller.sendBirthdayWishes);
+    app.post("/api/admin/dashboard/anniversaries/send-wishes", [verifyToken, authJwt.canViewAnniversaries], controller.sendAnniversaryWishes);
 
     /**
      * @swagger

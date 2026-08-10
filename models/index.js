@@ -121,5 +121,11 @@ db.user.hasMany(db.birthday_wish_logs, { foreignKey: 'staff_id', as: 'birthday_w
 db.birthday_wish_logs.belongsTo(db.user, { foreignKey: 'staff_id', as: 'staff' });
 db.birthday_wish_logs.belongsTo(db.user, { foreignKey: 'triggered_by', as: 'triggered_by_user' });
 
+// Anniversary wish delivery log
+db.anniversary_wish_logs = require("./anniversary_wish_log.model.js")(sequelize, Sequelize);
+db.user.hasMany(db.anniversary_wish_logs, { foreignKey: 'staff_id', as: 'anniversary_wishes', onDelete: 'CASCADE' });
+db.anniversary_wish_logs.belongsTo(db.user, { foreignKey: 'staff_id', as: 'anniversary_staff' });
+db.anniversary_wish_logs.belongsTo(db.user, { foreignKey: 'triggered_by', as: 'anniversary_triggered_by_user' });
+
 module.exports = db;
 
