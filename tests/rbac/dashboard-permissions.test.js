@@ -89,4 +89,69 @@ describe('Dashboard Permissions', () => {
             expect(res.status).toBe(403);
         });
     });
+
+    describe('GET /api/admin/dashboard/anniversaries', () => {
+        it('should allow Super Admin', async () => {
+            const token = await getSuperAdminToken();
+            const res = await request(app).get('/api/admin/dashboard/anniversaries').set('x-access-token', token);
+            expect(res.status).toBe(200);
+            expect(Array.isArray(res.body.anniversaries)).toBe(true);
+        });
+
+        it('should allow Admin', async () => {
+            const token = await getAdminToken();
+            const res = await request(app).get('/api/admin/dashboard/anniversaries').set('x-access-token', token);
+            expect(res.status).toBe(200);
+        });
+
+        it('should allow Human Resource (has can_view_anniversaries)', async () => {
+            const token = await getHRToken();
+            const res = await request(app).get('/api/admin/dashboard/anniversaries').set('x-access-token', token);
+            expect(res.status).toBe(200);
+        });
+
+        it('should DENY Manager (lacks can_view_anniversaries)', async () => {
+            const token = await getManagerToken();
+            const res = await request(app).get('/api/admin/dashboard/anniversaries').set('x-access-token', token);
+            expect(res.status).toBe(403);
+        });
+
+        it('should DENY Employee', async () => {
+            const token = await getEmployeeToken();
+            const res = await request(app).get('/api/admin/dashboard/anniversaries').set('x-access-token', token);
+            expect(res.status).toBe(403);
+        });
+
+        it('should DENY requests without a token', async () => {
+            const res = await request(app).get('/api/admin/dashboard/anniversaries');
+            expect(res.status).toBe(403);
+        });
+    });
+
+    describe('POST /api/admin/dashboard/anniversaries/send-wishes', () => {
+        it('should DENY Manager (lacks can_view_anniversaries)', async () => {
+            const token = await getManagerToken();
+            const res = await request(app)
+                .post('/api/admin/dashboard/anniversaries/send-wishes')
+                .set('x-access-token', token)
+                .send({ staff_ids: [] });
+            expect(res.status).toBe(403);
+        });
+
+        it('should DENY Employee', async () => {
+            const token = await getEmployeeToken();
+            const res = await request(app)
+                .post('/api/admin/dashboard/anniversaries/send-wishes')
+                .set('x-access-token', token)
+                .send({ staff_ids: [] });
+            expect(res.status).toBe(403);
+        });
+
+        it('should DENY requests without a token', async () => {
+            const res = await request(app)
+                .post('/api/admin/dashboard/anniversaries/send-wishes')
+                .send({ staff_ids: [] });
+            expect(res.status).toBe(403);
+        });
+    });
 });

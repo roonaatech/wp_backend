@@ -2,7 +2,9 @@ const cron = require('node-cron');
 const db = require('../models');
 const emailService = require('./email.service');
 const birthdayUtil = require('./birthday.util');
+const anniversaryUtil = require('./anniversary.util');
 const seedBirthdayTemplates = require('./seed_birthday_template');
+const seedAnniversaryTemplates = require('./seed_anniversary_template');
 const { getAppTimezone } = require('./hierarchy.util');
 const { Op } = require('sequelize');
 
@@ -10,6 +12,7 @@ const { Op } = require('sequelize');
 // restarting the process.
 let reminderTask = null;
 let birthdayTask = null;
+let anniversaryTask = null;
 
 const stopTask = (task) => {
     if (!task) return;
@@ -263,12 +266,124 @@ const startBirthdayNotificationCron = async () => {
     }
 };
 
+const runAnniversaryNotifications = async (tz) => {
+    const Setting = db.settings;
+
+    const enableSetting = await Setting.findOne({ where: { key: 'enable_anniversary_notifications' } });
+    const enabled = enableSetting ? enableSetting.value === 'true' : true;
+
+    if (!enabled) {
+        console.log('[CRON] Anniversary notifications are disabled in settings. Skipping.');
+        return { skipped: 'disabled', wishesSent: 0, digestsSent: 0 };
+    }
+
+    const todayLabel = anniversaryUtil.getTodayLongLabel(tz);
+    const todayDate = anniversaryUtil.getTodayDateString(tz);
+    const anniversaries = await anniversaryUtil.getTodaysAnniversaries(tz);
+
+    if (anniversaries.length === 0) {
+        console.log(`[CRON] No staff work anniversaries on ${todayLabel}. Skipping.`);
+        return { skipped: 'no_anniversaries', wishesSent: 0, digestsSent: 0 };
+    }
+
+    const wishSetting = await Setting.findOne({ where: { key: 'enable_anniversary_wish_emails' } });
+    const wishesEnabled = wishSetting ? wishSetting.value === 'true' : true;
+    let wishesSent = 0;
+
+    if (wishesEnabled) {
+        for (const person of anniversaries) {
+            const outcome = await anniversaryUtil.sendAnniversaryWish(person, {
+                dateStr: todayDate,
+                dateLabel: todayLabel,
+                source: 'cron'
+            });
+
+            if (outcome.outcome === 'sent') {
+                wishesSent++;
+            } else if (outcome.outcome === 'no_email') {
+                console.warn(`[CRON] Skipping anniversary wish for ${person.name} — no email on record.`);
+            } else if (outcome.outcome === 'already_sent') {
+                console.log(`[CRON] Anniversary wish for ${person.name} already sent today. Skipping.`);
+            } else {
+                console.error(`[CRON] Anniversary wish for ${person.name} failed: ${outcome.error}`);
+            }
+        }
+        console.log(`[CRON] Sent ${wishesSent} anniversary wish email(s).`);
+    } else {
+        console.log('[CRON] Anniversary wish emails are disabled in settings. Sending digest only.');
+    }
+
+    const recipients = await anniversaryUtil.getAnniversaryDigestRecipients();
+    if (recipients.length === 0) {
+        console.warn('[CRON] No users found in the configured anniversary digest roles.');
+        return { wishesSent, digestsSent: 0 };
+    }
+
+    const subject = anniversaries.length === 1
+        ? `🌟 Work Anniversary Today: ${anniversaries[0].name}`
+        : `🌟 ${anniversaries.length} Work Anniversaries Today`;
+
+    console.log(`[CRON] Sending anniversary digest (${anniversaries.length} anniversary(s)) to ${recipients.length} recipient(s).`);
+
+    let digestsSent = 0;
+    for (const recipient of recipients) {
+        const body = anniversaryUtil.buildAnniversaryEmailBody(anniversaries, recipient, todayLabel);
+        const result = await emailService.sendEmail(
+            recipient.email,
+            subject,
+            body,
+            recipient.secondary_email || null
+        );
+        if (result.success) digestsSent++;
+    }
+
+    return { wishesSent, digestsSent };
+};
+
+const startAnniversaryNotificationCron = async () => {
+    try {
+        const Setting = db.settings;
+
+        stopTask(anniversaryTask);
+        anniversaryTask = null;
+
+        await seedAnniversaryTemplates();
+
+        const scheduleSetting = await Setting.findOne({ where: { key: 'anniversary_notification_schedule' } });
+        const schedulePattern = scheduleSetting && scheduleSetting.value ? scheduleSetting.value : '0 8 * * *';
+        const tz = await getAppTimezone();
+
+        if (!cron.validate(schedulePattern)) {
+            console.error(`[CRON] Invalid anniversary cron expression "${schedulePattern}". Anniversary job not scheduled.`);
+            return;
+        }
+
+        anniversaryTask = cron.schedule(schedulePattern, async () => {
+            console.log('[CRON] Checking anniversary notification configuration...');
+            try {
+                await runAnniversaryNotifications(tz);
+            } catch (error) {
+                console.error('[CRON] Error running anniversary notifications:', error);
+            }
+        }, { timezone: tz });
+
+        const nextRun = typeof anniversaryTask.getNextRun === 'function' ? anniversaryTask.getNextRun() : null;
+        console.log(
+            `[CRON] Starting anniversary notification cron job with schedule: ${schedulePattern} (timezone: ${tz})` +
+            (nextRun ? ` — next run ${nextRun.toISOString()}` : '')
+        );
+    } catch (err) {
+        console.error('Failed to start anniversary notification cron:', err);
+    }
+};
+
 // Settings that change when a job runs. Saving one of these re-registers the
 // affected job immediately, so a schedule change does not need a restart.
 const CRON_SETTING_KEYS = {
     pending_request_reminder_schedule: ['reminder'],
     birthday_notification_schedule: ['birthday'],
-    application_timezone: ['reminder', 'birthday']
+    anniversary_notification_schedule: ['anniversary'],
+    application_timezone: ['reminder', 'birthday', 'anniversary']
 };
 
 /**
@@ -283,6 +398,7 @@ const reloadCronForSetting = async (key) => {
 
     if (targets.includes('reminder')) await startPendingRequestReminderCron();
     if (targets.includes('birthday')) await startBirthdayNotificationCron();
+    if (targets.includes('anniversary')) await startAnniversaryNotificationCron();
 
     return true;
 };
@@ -290,12 +406,15 @@ const reloadCronForSetting = async (key) => {
 const startCronJobs = () => {
     startPendingRequestReminderCron();
     startBirthdayNotificationCron();
+    startAnniversaryNotificationCron();
 };
 
 module.exports = {
     startCronJobs,
     startPendingRequestReminderCron,
     startBirthdayNotificationCron,
+    startAnniversaryNotificationCron,
     reloadCronForSetting,
-    runBirthdayNotifications
+    runBirthdayNotifications,
+    runAnniversaryNotifications
 };

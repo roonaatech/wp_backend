@@ -1,5 +1,6 @@
 const seedTemplates = require("./seed_templates");
 const seedBirthdayTemplates = require("./seed_birthday_template");
+const seedAnniversaryTemplates = require("./seed_anniversary_template");
 const seedRoles = require("./seed_roles");
 const seedLeaveTypes = require("./seed_leave_types");
 const seedSettings = require("./seed_settings");
@@ -17,6 +18,7 @@ async function run() {
         console.log("\n--- Seeding Email Templates ---");
         await seedTemplates();
         await seedBirthdayTemplates();
+        await seedAnniversaryTemplates();
 
         console.log("\n--- Seeding Settings ---");
         await seedSettings();
