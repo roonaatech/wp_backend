@@ -54,6 +54,36 @@ async function seedSettings() {
             display_order: 12
         },
         {
+            key: 'session_timeout',
+            value: '168',
+            description: 'Session timeout duration (in hours) before users are logged out',
+            category: 'general',
+            data_type: 'number',
+            validation_rules: '{"min": 24, "max": 8760, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 14
+        },
+        {
+            key: 'inactivity_timeout',
+            value: '5',
+            description: 'Idle inactivity duration (in minutes) before showing the session logout warning popup',
+            category: 'general',
+            data_type: 'number',
+            validation_rules: '{"min": 3, "max": 1440, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 15
+        },
+        {
+            key: 'inactivity_warning_duration',
+            value: '60',
+            description: 'Countdown duration (in seconds) to show the logout warning popup before signing out',
+            category: 'general',
+            data_type: 'number',
+            validation_rules: '{"min": 10, "max": 300, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 16
+        },
+        {
             key: 'leave_past_days_allowed',
             value: '0',
             description: 'Number of past days users can select when applying for leave (0 = only today and future)',
