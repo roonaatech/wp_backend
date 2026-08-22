@@ -2909,6 +2909,16 @@ exports.bulkUploadUsers = async (req, res) => {
             fs.unlinkSync(req.file.path);
         }
 
+        // Log bulk import action
+        await logActivity({
+            admin_id: req.userId,
+            action: "CREATE",
+            entity: "UserOnboarding",
+            description: `Bulk imported ${createdCount} employees via Bulk import method (CSV upload, ignored ${ignoredCount} existing accounts)`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.status(200).send({
             success: true,
             totalProcessed: lines.length - 1,

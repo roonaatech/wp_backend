@@ -265,7 +265,7 @@ exports.onboardEmployee = async (req, res) => {
             entity: "UserOnboarding",
             entity_id: user.staffid,
             affected_user_id: user.staffid,
-            description: `Onboarded new employee ${user.firstname} ${user.lastname} and created extended joining profile`,
+            description: `Onboarded new employee ${user.firstname} ${user.lastname} via Onboard Manually method`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
@@ -985,10 +985,10 @@ exports.completeEmployeeDeclaration = async (req, res) => {
         await logActivity({
             admin_id: userId,
             action: "UPDATE",
-            entity: "UserDeclaration",
+            entity: "UserOnboarding",
             entity_id: userId,
             affected_user_id: userId,
-            description: `${user.firstname} ${user.lastname} completed profile audit, updated details, and signed onboarding declaration.`,
+            description: `${user.firstname} ${user.lastname} completed onboarding declaration and profile audit during initial login`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
@@ -1017,7 +1017,7 @@ exports.inviteCandidate = async (req, res) => {
 
     const transaction = await db.sequelize.transaction();
     try {
-        const existingUser = await User.findOne({
+        const existingUsers = await User.findAll({
             where: {
                 [Op.or]: [
                     { email: personal_email },
@@ -1030,18 +1030,18 @@ exports.inviteCandidate = async (req, res) => {
                 attributes: ['display_name']
             }]
         });
-        if (existingUser) {
+        if (existingUsers.length > 0) {
             await transaction.rollback();
             return res.status(409).send({
                 message: "A user with this personal email already exists.",
-                existingUser: {
-                    firstname: existingUser.firstname,
-                    lastname: existingUser.lastname,
-                    email: existingUser.email,
-                    secondary_email: existingUser.secondary_email,
-                    role: existingUser.role_info ? existingUser.role_info.display_name : 'No Role Assigned',
-                    active: existingUser.active === 1
-                }
+                existingUsers: existingUsers.map(user => ({
+                    firstname: user.firstname,
+                    lastname: user.lastname,
+                    email: user.email,
+                    secondary_email: user.secondary_email,
+                    role: user.role_info ? user.role_info.display_name : 'No Role Assigned',
+                    active: user.active === 1
+                }))
             });
         }
 
@@ -1070,6 +1070,18 @@ exports.inviteCandidate = async (req, res) => {
         }, { transaction });
 
         await transaction.commit();
+
+        // Log invitation action
+        await logActivity({
+            admin_id: req.userId,
+            action: "CREATE",
+            entity: "UserOnboarding",
+            entity_id: user.staffid,
+            affected_user_id: user.staffid,
+            description: `Invited candidate ${user.firstname} ${user.lastname} (${personal_email}) for Self-service onboarding`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
 
         // Send email to candidate
         const targetEmail = personal_email;
@@ -1277,6 +1289,19 @@ exports.submitCandidateForm = async (req, res) => {
         }
 
         await transaction.commit();
+
+        // Log candidate submission action
+        await logActivity({
+            admin_id: id,
+            action: "UPDATE",
+            entity: "UserOnboarding",
+            entity_id: id,
+            affected_user_id: id,
+            description: `Candidate ${firstname} ${lastname} completed and submitted their onboarding form for HR approval`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.status(200).send({ message: "Profile submitted successfully for HR approval." });
     } catch (err) {
         console.error("Error submitting candidate form:", err);
@@ -1368,6 +1393,18 @@ exports.approveCandidateOnboarding = async (req, res) => {
         await profile.update({ onboarding_status: 'Completed', date_of_joining }, { transaction });
 
         await transaction.commit();
+
+        // Log approval action
+        await logActivity({
+            admin_id: req.userId,
+            action: "APPROVE",
+            entity: "UserOnboarding",
+            entity_id: user.staffid,
+            affected_user_id: user.staffid,
+            description: `Approved Self-service onboarding for employee ${user.firstname} ${user.lastname}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
 
         // Send Welcome Email
         try {
