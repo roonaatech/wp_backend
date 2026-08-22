@@ -232,7 +232,18 @@ exports.signin = async (req, res) => {
             const Role = db.roles;
             const userRole = await Role.findByPk(userRoleId);
             if (userRole && userRole.can_access_webapp != true) {
-                return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
+                // Bypass web app check ONLY if they need first-time setup (password reset or declaration)
+                const mustChangePassword = isServiceAccount ? false : !user.last_login;
+                let mustCompleteDeclaration = false;
+                if (!isServiceAccount) {
+                    const EmployeeProfile = db.employee_profiles;
+                    const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+                    mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+                }
+
+                if (!mustChangePassword && !mustCompleteDeclaration) {
+                    return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
+                }
             }
         }
 
