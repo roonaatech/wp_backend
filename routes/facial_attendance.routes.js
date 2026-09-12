@@ -38,6 +38,13 @@ module.exports = function (app) {
         controller.identifyFace
     );
 
+    // Check Face Registration Status of Current User
+    app.get(
+        "/api/attendance/face-status",
+        [verifyToken],
+        controller.getFaceStatus
+    );
+
     // Self-Service Face Registration
     app.post(
         "/api/attendance/register-face", 

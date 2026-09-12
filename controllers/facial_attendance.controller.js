@@ -133,6 +133,32 @@ exports.registerFace = async (req, res) => {
 };
 
 /**
+ * Get face registration status of current authenticated user
+ * GET /api/attendance/face-status
+ */
+exports.getFaceStatus = async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId, {
+            attributes: ['staffid', 'face_descriptor', 'face_registered_at', 'face_image_path']
+        });
+
+        if (!user) {
+            return res.status(404).send({ message: "User not found." });
+        }
+
+        const isRegistered = !!(user.face_descriptor && user.face_descriptor.length > 0);
+        res.status(200).send({
+            isRegistered,
+            registeredAt: user.face_registered_at,
+            faceImagePath: user.face_image_path ? user.face_image_path.replace(/\\/g, '/') : null
+        });
+    } catch (err) {
+        console.error("Error checking face status:", err);
+        res.status(500).send({ message: err.message || "Failed to check face status." });
+    }
+};
+
+/**
  * Identify an employee by face descriptor alone (no password needed)
  * POST /api/attendance/identify-face
  * Returns: { matched: true, email, employeeName } or { matched: false }

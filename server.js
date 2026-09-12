@@ -67,28 +67,33 @@ require('./routes/onboarding.routes')(app);
 require('./routes/facial_attendance.routes')(app);
 
 
+const startServer = () => {
+    // Only run background services if not in test mode
+    if (process.env.NODE_ENV !== 'test') {
+        // Seed Email Templates
+        require('./utils/seed_templates')();
+
+        // Start Cron Jobs
+        require('./utils/cron').startCronJobs();
+
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`Server is running on port ${PORT} at 0.0.0.0.`);
+            console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);
+            // Keep process alive check
+            setInterval(() => { }, 1000 * 60);
+        });
+    }
+};
+
 // Sync database
-db.sequelize.sync({ alter: true })
+db.sequelize.sync()
     .then(() => {
         console.log('Synced db.');
-        // Only run background services if not in test mode
-        if (process.env.NODE_ENV !== 'test') {
-            // Seed Email Templates
-            require('./utils/seed_templates')();
-
-            // Start Cron Jobs
-            require('./utils/cron').startCronJobs();
-
-            app.listen(PORT, '0.0.0.0', () => {
-                console.log(`Server is running on port ${PORT} at 0.0.0.0.`);
-                console.log(`API Documentation available at http://localhost:${PORT}/api-docs`);
-                // Keep process alive check
-                setInterval(() => { }, 1000 * 60);
-            });
-        }
+        startServer();
     })
     .catch((err) => {
-        console.log('Failed to sync db: ' + err.message);
+        console.log('Sync db warning: ' + err.message);
+        startServer();
     });
 
 // Export app for testing
