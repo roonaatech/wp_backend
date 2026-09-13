@@ -2,6 +2,16 @@ const db = require("../models");
 const Setting = db.settings;
 
 async function seedSettings() {
+    // Default the birthday digest to whichever roles currently hold the
+    // can_view_birthdays permission.
+    let defaultDigestRoleIds = '';
+    try {
+        const { getBirthdayPermittedRoleIds } = require("./birthday.util");
+        defaultDigestRoleIds = (await getBirthdayPermittedRoleIds()).sort((a, b) => a - b).join(',');
+    } catch (e) {
+        console.warn('Could not resolve default birthday digest roles; leaving blank (falls back to the birthday permission).');
+    }
+
     const settings = [
         {
             key: 'max_time_off_hours',
@@ -44,6 +54,36 @@ async function seedSettings() {
             display_order: 12
         },
         {
+            key: 'session_timeout',
+            value: '168',
+            description: 'Session timeout duration (in hours) before users are logged out',
+            category: 'general',
+            data_type: 'number',
+            validation_rules: '{"min": 24, "max": 8760, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 14
+        },
+        {
+            key: 'inactivity_timeout',
+            value: '5',
+            description: 'Idle inactivity duration (in minutes) before showing the session logout warning popup',
+            category: 'general',
+            data_type: 'number',
+            validation_rules: '{"min": 3, "max": 1440, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 15
+        },
+        {
+            key: 'inactivity_warning_duration',
+            value: '60',
+            description: 'Countdown duration (in seconds) to show the logout warning popup before signing out',
+            category: 'general',
+            data_type: 'number',
+            validation_rules: '{"min": 10, "max": 300, "step": 1, "required": true}',
+            is_public: false,
+            display_order: 16
+        },
+        {
             key: 'leave_past_days_allowed',
             value: '0',
             description: 'Number of past days users can select when applying for leave (0 = only today and future)',
@@ -82,6 +122,86 @@ async function seedSettings() {
             validation_rules: null,
             is_public: false,
             display_order: 32
+        },
+        {
+            key: 'enable_birthday_notifications',
+            value: 'true',
+            description: 'Master switch for the daily birthday job (wish emails to celebrants and the digest to HR and higher hierarchy users).',
+            category: 'notifications',
+            data_type: 'boolean',
+            validation_rules: null,
+            is_public: false,
+            display_order: 33
+        },
+        {
+            key: 'birthday_digest_recipient_roles',
+            value: defaultDigestRoleIds,
+            description: 'Comma separated role IDs that receive the daily birthday digest email. Leave blank to fall back to Human Resource and higher hierarchy roles.',
+            category: 'notifications',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 36
+        },
+        {
+            key: 'enable_birthday_wish_emails',
+            value: 'true',
+            description: 'Send a birthday wish email to the staff member on their birthday, using the "Birthday Wish" email template. Turn off to send only the HR digest.',
+            category: 'notifications',
+            data_type: 'boolean',
+            validation_rules: null,
+            is_public: false,
+            display_order: 35
+        },
+        {
+            key: 'birthday_notification_schedule',
+            value: '0 8 * * *',
+            description: 'Cron schedule expression for the birthday digest email, evaluated in the application timezone (default: 0 8 * * * means 8:00 AM daily).',
+            category: 'notifications',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 34
+        },
+        {
+            key: 'enable_anniversary_notifications',
+            value: 'true',
+            description: 'Master switch for the daily work anniversary job (wish emails to celebrants and the digest to HR and higher hierarchy users).',
+            category: 'notifications',
+            data_type: 'boolean',
+            validation_rules: null,
+            is_public: false,
+            display_order: 37
+        },
+        {
+            key: 'anniversary_digest_recipient_roles',
+            value: defaultDigestRoleIds,
+            description: 'Comma separated role IDs that receive the daily work anniversary digest email. Leave blank to fall back to Human Resource and higher hierarchy roles.',
+            category: 'notifications',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 40
+        },
+        {
+            key: 'enable_anniversary_wish_emails',
+            value: 'true',
+            description: 'Send a work anniversary wish email to the staff member on their anniversary, using the "Work Anniversary Wish" email template. Turn off to send only the HR digest.',
+            category: 'notifications',
+            data_type: 'boolean',
+            validation_rules: null,
+            is_public: false,
+            display_order: 39
+        },
+        {
+            key: 'anniversary_notification_schedule',
+            value: '0 8 * * *',
+            description: 'Cron schedule expression for the work anniversary digest email, evaluated in the application timezone (default: 0 8 * * * means 8:00 AM daily).',
+            category: 'notifications',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 38
         }
     ];
 

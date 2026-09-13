@@ -28,10 +28,14 @@ db.approvals = require("./approval.model.js")(sequelize, Sequelize);
 db.activity_logs = require("./activity_log.model.js")(sequelize, Sequelize);
 db.apk_versions = require("./apk_version.model.js")(sequelize, Sequelize);
 db.attendance_logs = require("./attendance_log.model.js")(sequelize, Sequelize);
+db.service_accounts = require("./service_account.model.js")(sequelize, Sequelize);
 
 // Associations
 db.user.belongsTo(db.roles, { foreignKey: 'role', as: 'role_info' });
 db.roles.hasMany(db.user, { foreignKey: 'role' });
+
+db.service_accounts.belongsTo(db.roles, { foreignKey: 'role_id', as: 'role_info' });
+db.roles.hasMany(db.service_accounts, { foreignKey: 'role_id' });
 
 db.user.hasMany(db.leave_requests, { foreignKey: 'staff_id' });
 db.leave_requests.belongsTo(db.user, { foreignKey: 'staff_id', as: 'user' });
@@ -41,6 +45,9 @@ db.leave_requests.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' 
 
 db.user.hasMany(db.on_duty_logs, { foreignKey: 'staff_id' });
 db.on_duty_logs.belongsTo(db.user, { foreignKey: 'staff_id', targetKey: 'staffid', as: 'user' });
+
+db.user.hasMany(db.attendance_logs, { foreignKey: 'staff_id' });
+db.attendance_logs.belongsTo(db.user, { foreignKey: 'staff_id', targetKey: 'staffid', as: 'user' });
 
 // On-duty approver relationship
 db.on_duty_logs.belongsTo(db.user, { foreignKey: 'manager_id', as: 'approver' });
@@ -107,6 +114,18 @@ db.employee_family_members.belongsTo(db.user, { foreignKey: 'staff_id' });
 
 db.user.hasMany(db.employee_documents, { foreignKey: 'staff_id', as: 'documents', onDelete: 'CASCADE' });
 db.employee_documents.belongsTo(db.user, { foreignKey: 'staff_id' });
+
+// Birthday wish delivery log
+db.birthday_wish_logs = require("./birthday_wish_log.model.js")(sequelize, Sequelize);
+db.user.hasMany(db.birthday_wish_logs, { foreignKey: 'staff_id', as: 'birthday_wishes', onDelete: 'CASCADE' });
+db.birthday_wish_logs.belongsTo(db.user, { foreignKey: 'staff_id', as: 'staff' });
+db.birthday_wish_logs.belongsTo(db.user, { foreignKey: 'triggered_by', as: 'triggered_by_user' });
+
+// Anniversary wish delivery log
+db.anniversary_wish_logs = require("./anniversary_wish_log.model.js")(sequelize, Sequelize);
+db.user.hasMany(db.anniversary_wish_logs, { foreignKey: 'staff_id', as: 'anniversary_wishes', onDelete: 'CASCADE' });
+db.anniversary_wish_logs.belongsTo(db.user, { foreignKey: 'staff_id', as: 'anniversary_staff' });
+db.anniversary_wish_logs.belongsTo(db.user, { foreignKey: 'triggered_by', as: 'anniversary_triggered_by_user' });
 
 module.exports = db;
 

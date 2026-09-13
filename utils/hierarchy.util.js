@@ -12,6 +12,8 @@ const getAppTimezone = async () => {
     }
 };
 
+exports.getAppTimezone = getAppTimezone;
+
 exports.notifyNextLevelIfManagerOnLeave = async (manager, applicant, requestType, requestDetails) => {
     try {
         if (!manager || !manager.approving_manager_id) return false;

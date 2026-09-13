@@ -66,9 +66,15 @@ exports.create = async (req, res) => {
             can_view_activities,
             can_access_webapp,
             can_manage_roles,
+            can_manage_service_accounts,
             can_manage_email_settings,
             can_manage_onboarding,
+            can_view_birthdays,
+            can_view_anniversaries,
             can_manage_system_settings,
+            can_access_attendance_portal,
+            can_view_attendance_report,
+            can_manage_attendance,
             active
         } = req.body;
 
@@ -106,9 +112,15 @@ exports.create = async (req, res) => {
             can_manage_leave_types: can_manage_leave_types || false,
             can_access_webapp: can_access_webapp || false,
             can_manage_roles: can_manage_roles || false,
+            can_manage_service_accounts: can_manage_service_accounts || false,
             can_manage_email_settings: can_manage_email_settings || false,
             can_manage_onboarding: (name === 'manager' || name === 'employee') ? false : (can_manage_onboarding || false),
+            can_view_birthdays: can_view_birthdays || false,
+            can_view_anniversaries: can_view_anniversaries || false,
             can_manage_system_settings: can_manage_system_settings || 'none',
+            can_access_attendance_portal: can_access_attendance_portal || false,
+            can_view_attendance_report: can_view_attendance_report || 'none',
+            can_manage_attendance: can_manage_attendance || 'none',
             active: active !== undefined ? active : true
         });
 
@@ -146,9 +158,15 @@ exports.update = async (req, res) => {
             can_view_activities,
             can_access_webapp,
             can_manage_roles,
+            can_manage_service_accounts,
             can_manage_email_settings,
             can_manage_onboarding,
+            can_view_birthdays,
+            can_view_anniversaries,
             can_manage_system_settings,
+            can_access_attendance_portal,
+            can_view_attendance_report,
+            can_manage_attendance,
             active
         } = req.body;
 
@@ -213,9 +231,15 @@ exports.update = async (req, res) => {
             can_view_activities: can_view_activities !== undefined ? can_view_activities : role.can_view_activities,
             can_access_webapp: can_access_webapp !== undefined ? can_access_webapp : role.can_access_webapp,
             can_manage_roles: can_manage_roles !== undefined ? can_manage_roles : role.can_manage_roles,
+            can_manage_service_accounts: can_manage_service_accounts !== undefined ? can_manage_service_accounts : role.can_manage_service_accounts,
             can_manage_email_settings: can_manage_email_settings !== undefined ? can_manage_email_settings : role.can_manage_email_settings,
             can_manage_onboarding: (role.name === 'manager' || role.name === 'employee' || name === 'manager' || name === 'employee') ? false : (can_manage_onboarding !== undefined ? can_manage_onboarding : role.can_manage_onboarding),
+            can_view_birthdays: can_view_birthdays !== undefined ? can_view_birthdays : role.can_view_birthdays,
+            can_view_anniversaries: can_view_anniversaries !== undefined ? can_view_anniversaries : role.can_view_anniversaries,
             can_manage_system_settings: can_manage_system_settings !== undefined ? can_manage_system_settings : role.can_manage_system_settings,
+            can_access_attendance_portal: can_access_attendance_portal !== undefined ? can_access_attendance_portal : role.can_access_attendance_portal,
+            can_view_attendance_report: can_view_attendance_report !== undefined ? can_view_attendance_report : role.can_view_attendance_report,
+            can_manage_attendance: can_manage_attendance !== undefined ? can_manage_attendance : role.can_manage_attendance,
             active: active !== undefined ? active : role.active
         });
 

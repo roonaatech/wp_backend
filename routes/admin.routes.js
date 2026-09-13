@@ -98,6 +98,105 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/admin/dashboard/birthdays:
+     *   get:
+     *     summary: Get today's staff birthdays
+     *     description: Fetch active staff members whose date of birth falls on today's date in the application timezone. Restricted to Human Resource and higher hierarchy roles.
+     *     tags: [Dashboard]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     responses:
+     *       200:
+     *         description: Today's birthdays retrieved successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 date:
+     *                   type: string
+     *                   format: date
+     *                 count:
+     *                   type: integer
+     *                 birthdays:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     *                     properties:
+     *                       staff_id:
+     *                         type: integer
+     *                       name:
+     *                         type: string
+     *                       email:
+     *                         type: string
+     *                       date_of_birth:
+     *                         type: string
+     *                         format: date
+     *                       day_month:
+     *                         type: string
+     *                       turning_age:
+     *                         type: integer
+     *                       image_path:
+     *                         type: string
+     *                       role_name:
+     *                         type: string
+     *       401:
+     *         description: Unauthorized - Invalid or missing token
+     *       403:
+     *         description: Forbidden - Requires Human Resource or higher role
+     */
+    app.get("/api/admin/dashboard/birthdays", [verifyToken, authJwt.canViewBirthdays], controller.getTodaysBirthdays);
+    app.get("/api/admin/dashboard/anniversaries", [verifyToken, authJwt.canViewAnniversaries], controller.getTodaysAnniversaries);
+
+    /**
+     * @swagger
+     * /api/admin/dashboard/birthdays/send-wishes:
+     *   post:
+     *     summary: Send birthday wishes to today's celebrants
+     *     description: Sends the "birthday_wish" template to each staff member's official and personal email. Already-sent wishes are skipped. Restricted to Human Resource and higher hierarchy roles.
+     *     tags: [Dashboard]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     requestBody:
+     *       required: false
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               staff_ids:
+     *                 type: array
+     *                 description: Staff to wish. Omit to wish everyone still pending today.
+     *                 items:
+     *                   type: integer
+     *     responses:
+     *       200:
+     *         description: Wishes processed
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                 sent:
+     *                   type: integer
+     *                 skipped:
+     *                   type: integer
+     *                 failed:
+     *                   type: integer
+     *       403:
+     *         description: Forbidden - Requires Human Resource or higher role
+     *       404:
+     *         description: None of the given staff have a birthday today
+     *       502:
+     *         description: All wish emails failed to send
+     */
+    app.post("/api/admin/dashboard/birthdays/send-wishes", [verifyToken, authJwt.canViewBirthdays], controller.sendBirthdayWishes);
+    app.post("/api/admin/dashboard/anniversaries/send-wishes", [verifyToken, authJwt.canViewAnniversaries], controller.sendAnniversaryWishes);
+
+    /**
+     * @swagger
      * /api/admin/incomplete-profiles:
      *   get:
      *     summary: Get incomplete user profiles
@@ -256,6 +355,12 @@ module.exports = function (app) {
      */
     app.get("/api/admin/users", [verifyToken, authJwt.canViewUsers], controller.getAllUsers);
 
+    // Service Accounts management routes
+    app.get("/api/admin/service-accounts", [verifyToken, authJwt.canManageServiceAccounts], controller.getAllServiceAccounts);
+    app.post("/api/admin/service-accounts", [verifyToken, authJwt.canManageServiceAccounts], controller.createServiceAccount);
+    app.put("/api/admin/service-accounts/:id", [verifyToken, authJwt.canManageServiceAccounts], controller.updateServiceAccount);
+    app.delete("/api/admin/service-accounts/:id", [verifyToken, authJwt.canManageServiceAccounts], controller.deleteServiceAccount);
+
     /**
      * @swagger
      * /api/admin/managers-admins:
@@ -306,6 +411,37 @@ module.exports = function (app) {
      *         description: Access denied
      */
     app.get("/api/admin/users/:id/yearly-history", [verifyToken, authJwt.canViewUsers], controller.getUserYearlyHistory);
+
+    /**
+     * @swagger
+     * /api/admin/users/{id}/attendance-history:
+     *   get:
+     *     summary: Get yearly attendance history for a user
+     *     description: Fetch present days (check-in/out) and absent working days for a specific user
+     *     tags: [Users]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: id
+     *         required: true
+     *         schema:
+     *           type: integer
+     *         description: Staff ID
+     *       - in: query
+     *         name: year
+     *         schema:
+     *           type: integer
+     *         description: Year to fetch data for
+     *     responses:
+     *       200:
+     *         description: Attendance history retrieved successfully
+     *       401:
+     *         description: Unauthorized
+     *       403:
+     *         description: Access denied
+     */
+    app.get("/api/admin/users/:id/attendance-history", [verifyToken, authJwt.canViewUsers], controller.getUserAttendanceHistory);
 
     /**
      * @swagger

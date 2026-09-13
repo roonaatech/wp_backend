@@ -10,6 +10,26 @@ const apkController = require("./apk.controller");
 const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
 
+// Session token lifetime in seconds. Configurable via JWT_EXPIRES_IN or database settings.
+// Default: 7 days. Set JWT_EXPIRES_IN to e.g. 2592000 for 30 days.
+const JWT_EXPIRES_IN = parseInt(process.env.JWT_EXPIRES_IN, 10) || 7 * 24 * 60 * 60;
+
+const getSessionTimeoutInSeconds = async () => {
+    try {
+        const Setting = db.settings;
+        const timeoutSetting = await Setting.findOne({ where: { key: 'session_timeout' } });
+        if (timeoutSetting && timeoutSetting.value) {
+            const hours = parseInt(timeoutSetting.value, 10);
+            if (!isNaN(hours) && hours > 0) {
+                return hours * 60 * 60;
+            }
+        }
+    } catch (err) {
+        console.error('[AUTH] Failed to fetch session timeout setting, falling back to default:', err.message);
+    }
+    return JWT_EXPIRES_IN;
+};
+
 exports.signup = (req, res) => {
     // Save User to Database
     TblStaff.create({
@@ -141,18 +161,31 @@ exports.signin = async (req, res) => {
         }
 
         // 2. If user not found yet (Local Auth, or First-time Sync where userid is null), find by Email
+        let isServiceAccount = false;
         if (!user) {
             user = await TblStaff.findOne({
                 where: {
                     email: req.body.email
                 }
             });
+
+            if (!user) {
+                // Try to find in Service Accounts
+                user = await db.service_accounts.findOne({
+                    where: {
+                        email: req.body.email
+                    }
+                });
+                if (user) {
+                    isServiceAccount = true;
+                }
+            }
         }
 
         let isNewUser = false; // Flag to track first-time login via sync
 
         // If PHP Auth succeeded, SYNC the user to local DB
-        if (phpAuthSuccess && phpUserData) {
+        if (phpAuthSuccess && phpUserData && !isServiceAccount) {
             const hashedPassword = bcrypt.hashSync(req.body.password, 8);
 
             // Prepare basic user data to sync (excluding role/admin as they are managed locally)
@@ -194,11 +227,23 @@ exports.signin = async (req, res) => {
 
         // Check for Web App Access Permission
         // Only if it is NOT a mobile app login
-        if (user.role && req.body.is_mobile_app !== true) {
+        const userRoleId = isServiceAccount ? user.role_id : user.role;
+        if (userRoleId && req.body.is_mobile_app !== true) {
             const Role = db.roles;
-            const userRole = await Role.findByPk(user.role);
+            const userRole = await Role.findByPk(userRoleId);
             if (userRole && userRole.can_access_webapp != true) {
-                return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
+                // Bypass web app check ONLY if they need first-time setup (password reset or declaration)
+                const mustChangePassword = isServiceAccount ? false : !user.last_login;
+                let mustCompleteDeclaration = false;
+                if (!isServiceAccount) {
+                    const EmployeeProfile = db.employee_profiles;
+                    const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+                    mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+                }
+
+                if (!mustChangePassword && !mustCompleteDeclaration) {
+                    return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
+                }
             }
         }
 
@@ -218,15 +263,21 @@ exports.signin = async (req, res) => {
         }
 
         // Compute first-time login flags BEFORE updating last_login
-        const mustChangePassword = !user.last_login;
+        const mustChangePassword = isServiceAccount ? false : !user.last_login;
 
         // Check if declaration is signed
-        const EmployeeProfile = db.employee_profiles;
-        const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
-        const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+        let mustCompleteDeclaration = false;
+        if (!isServiceAccount) {
+            const EmployeeProfile = db.employee_profiles;
+            const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+            mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+        }
 
         // Block mobile app login if password setup or declaration is not completed
         if (req.body.is_mobile_app === true) {
+            if (isServiceAccount) {
+                return res.status(403).send({ message: "Service accounts are not allowed to log in via the mobile app." });
+            }
             if (mustChangePassword) {
                 return res.status(403).send({
                     code: "PASSWORD_SETUP_REQUIRED",
@@ -244,34 +295,40 @@ exports.signin = async (req, res) => {
         // Update last_login timestamp
         await user.update({ last_login: new Date() });
 
-        var token = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
-            expiresIn: 86400 // 24 hours
-        });
+        const expiresIn = await getSessionTimeoutInSeconds();
+        var token = jwt.sign(
+            { id: isServiceAccount ? user.id : user.staffid, isServiceAccount },
+            config.JWT_SECRET,
+            { expiresIn }
+        );
 
         // Log activity
         await logActivity({
-            admin_id: user.staffid,
+            admin_id: isServiceAccount ? null : user.staffid,
             action: 'LOGIN',
-            entity: 'User',
-            entity_id: user.staffid,
-            affected_user_id: user.staffid,
-            description: `${user.firstname} ${user.lastname} logged in${phpAuthSuccess ? ' (via PHP Auth)' : ''}`,
+            entity: isServiceAccount ? 'ServiceAccount' : 'User',
+            entity_id: isServiceAccount ? user.id : user.staffid,
+            affected_user_id: isServiceAccount ? null : user.staffid,
+            description: isServiceAccount
+                ? `Service account ${user.name} (${user.email}) logged in`
+                : `${user.firstname} ${user.lastname} logged in${phpAuthSuccess ? ' (via PHP Auth)' : ''}`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
 
         res.status(200).send({
-            id: user.staffid,
-            staffid: user.staffid,
-            userid: user.userid, // Include userid to check if WorkPulse-only user (null) or external (not null)
-            firstname: user.firstname,
-            lastname: user.lastname,
+            id: isServiceAccount ? user.id : user.staffid,
+            staffid: isServiceAccount ? null : user.staffid,
+            userid: isServiceAccount ? null : user.userid,
+            firstname: isServiceAccount ? user.name : user.firstname,
+            lastname: isServiceAccount ? '' : user.lastname,
             email: user.email,
-            role: user.role,
-            gender: user.gender, // Include gender for frontend checks
-            isFirstLogin: isNewUser, // Return flag to frontend
+            role: userRoleId,
+            gender: isServiceAccount ? null : user.gender,
+            isFirstLogin: isNewUser,
             mustChangePassword,
             mustCompleteDeclaration,
+            isServiceAccount,
             accessToken: token
         });
     } catch (err) {
@@ -453,9 +510,10 @@ exports.exchangeQRToken = async (req, res) => {
         const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
         const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
 
-        // Issue a full 24h session token
+        // Issue a full session token (lifetime configurable via JWT_EXPIRES_IN)
+        const expiresIn = await getSessionTimeoutInSeconds();
         const sessionToken = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
-            expiresIn: 86400
+            expiresIn
         });
 
         res.status(200).send({
@@ -531,5 +589,38 @@ exports.validateCredentials = async (req, res) => {
     } catch (err) {
         console.error("Error validating credentials for external system:", err);
         res.status(500).send({ success: false, message: err.message });
+    }
+};
+
+/**
+ * Verify the currently authenticated user's own password.
+ * Used to authorize sensitive in-session actions such as entering/exiting
+ * the front-desk attendance kiosk (full-screen lock).
+ * POST /api/auth/verify-password  (requires a valid token)
+ */
+exports.verifyPassword = async (req, res) => {
+    const { password } = req.body;
+
+    if (!password) {
+        return res.status(400).send({ success: false, message: "Password is required." });
+    }
+
+    try {
+        const user = await TblStaff.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).send({ success: false, message: "User not found." });
+        }
+
+        const passwordIsValid = bcrypt.compareSync(password, user.password);
+        // Return 200 with success:false (not 401) so a wrong password isn't treated as a
+        // session/token failure by the client's global auth interceptor.
+        if (!passwordIsValid) {
+            return res.status(200).send({ success: false, message: "Incorrect password." });
+        }
+
+        return res.status(200).send({ success: true });
+    } catch (err) {
+        console.error("Error verifying password:", err);
+        return res.status(500).send({ success: false, message: err.message });
     }
 };

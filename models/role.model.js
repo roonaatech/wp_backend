@@ -96,6 +96,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage roles'
         },
+        can_manage_service_accounts: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can manage service accounts'
+        },
         can_manage_email_settings: {
             type: Sequelize.BOOLEAN,
             allowNull: false,
@@ -108,11 +114,38 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage onboarding processes'
         },
+        can_view_birthdays: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can view staff birthdays on the dashboard and receive the birthday digest'
+        },
+        can_view_anniversaries: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can view staff work anniversaries on the dashboard and receive the anniversary digest'
+        },
         can_manage_system_settings: {
             type: Sequelize.ENUM('none', 'all'),
             allowNull: false,
             defaultValue: 'none',
             comment: 'Manage system settings - none=no access, all=access'
+        },
+        can_access_attendance_portal: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false
+        },
+        can_view_attendance_report: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none'
+        },
+        can_manage_attendance: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none'
         },
         active: {
             type: Sequelize.BOOLEAN,
