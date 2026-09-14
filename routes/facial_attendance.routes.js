@@ -3,6 +3,9 @@ const {
     verifyToken, 
     canAccessWebApp, 
     canManageUsers,
+    isAdminOrAbove,
+    canRemoveFace,
+    canRegisterFaceId,
     canAccessAttendancePortal,
     canViewAttendanceReport,
     canManageAttendance
@@ -20,21 +23,35 @@ module.exports = function (app) {
     // Public / Receptionist-Authenticated: Verify user credentials and check-in/out via face match
     app.post(
         "/api/attendance/check-in-out-with-face", 
-        [verifyToken, canAccessWebApp, canAccessAttendancePortal], 
+        [verifyToken, canAccessAttendancePortal], 
         controller.checkInOutWithFace
     );
 
-    // Check employee attendance status for today (used by the portal to show correct button)
+    // Kiosk Attendance Terminal: Direct check-in / check-out
+    app.post(
+        "/api/attendance/kiosk-record",
+        [verifyToken, canAccessAttendancePortal],
+        controller.recordKioskAttendance
+    );
+
+    // Kiosk Attendance Terminal: Staff list
+    app.get(
+        "/api/attendance/staff-list",
+        [verifyToken, canAccessAttendancePortal],
+        controller.getStaffList
+    );
+
+    // Check employee attendance status for today (used by the portal/kiosk to show correct button)
     app.get(
         "/api/attendance/status/:email",
-        [verifyToken, canAccessWebApp, canAccessAttendancePortal],
+        [verifyToken, canAccessAttendancePortal],
         controller.getAttendanceStatus
     );
 
     // Identify employee by face descriptor (auto-fill email in the portal)
     app.post(
         "/api/attendance/identify-face",
-        [verifyToken, canAccessWebApp, canAccessAttendancePortal],
+        [verifyToken, canAccessAttendancePortal],
         controller.identifyFace
     );
 
@@ -52,11 +69,18 @@ module.exports = function (app) {
         controller.registerFace
     );
 
-    // Admin/HR Face Registration for a specific employee
+    // Authorized Roles (global permission): Face Registration for a specific employee
     app.post(
         "/api/admin/users/:id/register-face", 
-        [verifyToken, canManageUsers], 
+        [verifyToken, canAccessWebApp, canRegisterFaceId], 
         controller.registerFace
+    );
+
+    // Authorized Roles (Configured via System Settings): Remove face registration of an employee
+    app.delete(
+        "/api/admin/users/:id/face",
+        [verifyToken, canAccessWebApp, canRemoveFace],
+        controller.removeFace
     );
 
     // Admin/Manager/Employee: Fetch attendance logs with filters

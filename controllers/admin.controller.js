@@ -700,8 +700,11 @@ exports.getAllUsers = async (req, res) => {
 
         const queryOptions = {
             where: whereClause,
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login'],
-            include: [{ model: EmployeeProfile, as: 'profile_info', required: false, attributes: ['id', 'image_path', 'onboarding_status', 'consent_given', 'date_of_birth'] }],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login', 'face_image_path', 'face_registered_at'],
+            include: [
+                { model: EmployeeProfile, as: 'profile_info', required: false, attributes: ['id', 'image_path', 'onboarding_status', 'consent_given', 'date_of_birth'] },
+                { model: db.employee_documents, as: 'documents', required: false, where: { document_type: 'photo' }, attributes: ['id', 'file_path', 'document_type'] }
+            ],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
@@ -711,6 +714,18 @@ exports.getAllUsers = async (req, res) => {
         }
 
         const { count, rows } = await TblStaff.findAndCountAll(queryOptions);
+
+        // Fallback to Passport Size Photograph document if profile_info.image_path is not uploaded
+        rows.forEach(user => {
+            if ((!user.profile_info || !user.profile_info.image_path) && user.documents && user.documents.length > 0) {
+                const photoPath = user.documents[0].file_path;
+                if (!user.profile_info) {
+                    user.setDataValue('profile_info', { image_path: photoPath });
+                } else {
+                    user.profile_info.image_path = photoPath;
+                }
+            }
+        });
 
         res.send({
             totalItems: count,

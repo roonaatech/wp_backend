@@ -149,6 +149,12 @@ exports.onboardEmployee = async (req, res) => {
             const profileImageFile = req.files.find(f => f.fieldname === 'profile_image');
             if (profileImageFile) {
                 imagePath = profileImageFile.path;
+            } else {
+                // Fallback to Passport Size Photograph document if profile_image is not uploaded
+                const photoDocFile = req.files.find(f => f.fieldname === 'doc_photo' || f.fieldname === 'photo');
+                if (photoDocFile) {
+                    imagePath = photoDocFile.path;
+                }
             }
         }
 
@@ -367,6 +373,18 @@ exports.getEmployeeExtendedProfile = async (req, res) => {
             });
         }
 
+        // Fallback to Passport Size Photograph document if profile_info.image_path is not uploaded
+        if ((!user.profile_info || !user.profile_info.image_path) && user.documents) {
+            const photoDoc = user.documents.find(d => d.document_type === 'photo');
+            if (photoDoc) {
+                if (!user.profile_info) {
+                    user.setDataValue('profile_info', { image_path: photoDoc.file_path });
+                } else {
+                    user.profile_info.image_path = photoDoc.file_path;
+                }
+            }
+        }
+
         res.status(200).send(user);
 
     } catch (err) {
@@ -531,6 +549,23 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
                     }
                 }
                 profileImagePath = profileImageFile.path;
+            }
+        }
+
+        // If profile image is not uploaded, check if doc_photo is uploaded or exists
+        if (!profileImagePath) {
+            const photoDocFile = req.files ? req.files.find(f => f.fieldname === 'doc_photo' || f.fieldname === 'photo') : null;
+            if (photoDocFile) {
+                profileImagePath = photoDocFile.path;
+            } else if (image_path !== '') {
+                const existingPhotoDoc = await EmployeeDocument.findOne({
+                    where: { staff_id: id, document_type: 'photo' },
+                    order: [['id', 'DESC']],
+                    transaction
+                });
+                if (existingPhotoDoc) {
+                    profileImagePath = existingPhotoDoc.file_path;
+                }
             }
         }
 
@@ -777,6 +812,18 @@ exports.getMyProfile = async (req, res) => {
 
         if (!user) {
             return res.status(404).send({ message: "Employee profile not found." });
+        }
+
+        // Fallback to Passport Size Photograph document if profile_info.image_path is not uploaded
+        if ((!user.profile_info || !user.profile_info.image_path) && user.documents) {
+            const photoDoc = user.documents.find(d => d.document_type === 'photo');
+            if (photoDoc) {
+                if (!user.profile_info) {
+                    user.setDataValue('profile_info', { image_path: photoDoc.file_path });
+                } else {
+                    user.profile_info.image_path = photoDoc.file_path;
+                }
+            }
         }
 
         res.status(200).send(user);
@@ -1217,6 +1264,14 @@ exports.submitCandidateForm = async (req, res) => {
             calculatedAge = ageVal;
         }
 
+        let candidatePhotoPath = profile.image_path || null;
+        if (!candidatePhotoPath && req.files && req.files.length > 0) {
+            const photoFile = req.files.find(f => f.fieldname === 'doc_photo' || f.fieldname === 'photo');
+            if (photoFile) {
+                candidatePhotoPath = photoFile.path;
+            }
+        }
+
         await profile.update({
             birthplace, height_weight, blood_group, date_of_birth: date_of_birth || null, age: calculatedAge,
             has_disability: has_disability === 'true' || has_disability === true, disability_details,
@@ -1227,7 +1282,8 @@ exports.submitCandidateForm = async (req, res) => {
             bank_account_number, bank_ifsc_code, bank_name_address,
             consent_given: true, signature_name, signature_path: signaturePath, signature_date: new Date(), onboarding_place,
             onboarding_status: 'Pending_HR_Approval',
-            onboarding_token: null // invalidate token
+            onboarding_token: null, // invalidate token
+            ...(candidatePhotoPath ? { image_path: candidatePhotoPath } : {})
         }, { transaction });
 
         // Update arrays (educations, experiences, family_members)
@@ -1364,8 +1420,24 @@ exports.approveCandidateOnboarding = async (req, res) => {
             last_login: null
         }, { transaction });
 
+        let approvedImagePath = profile.image_path;
+        if (!approvedImagePath) {
+            const photoDoc = await EmployeeDocument.findOne({
+                where: { staff_id: id, document_type: 'photo' },
+                order: [['id', 'DESC']],
+                transaction
+            });
+            if (photoDoc) {
+                approvedImagePath = photoDoc.file_path;
+            }
+        }
+
         // Change status
-        await profile.update({ onboarding_status: 'Completed', date_of_joining }, { transaction });
+        await profile.update({
+            onboarding_status: 'Completed',
+            date_of_joining,
+            ...(approvedImagePath ? { image_path: approvedImagePath } : {})
+        }, { transaction });
 
         await transaction.commit();
 

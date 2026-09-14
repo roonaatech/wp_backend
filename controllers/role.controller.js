@@ -72,6 +72,7 @@ exports.create = async (req, res) => {
             can_view_birthdays,
             can_manage_system_settings,
             can_access_attendance_portal,
+            can_register_face_id,
             can_view_attendance_report,
             can_manage_attendance,
             active
@@ -117,6 +118,7 @@ exports.create = async (req, res) => {
             can_view_birthdays: can_view_birthdays || false,
             can_manage_system_settings: can_manage_system_settings || 'none',
             can_access_attendance_portal: can_access_attendance_portal || false,
+            can_register_face_id: can_register_face_id || false,
             can_view_attendance_report: can_view_attendance_report || 'none',
             can_manage_attendance: can_manage_attendance || 'none',
             active: active !== undefined ? active : true
@@ -162,6 +164,7 @@ exports.update = async (req, res) => {
             can_view_birthdays,
             can_manage_system_settings,
             can_access_attendance_portal,
+            can_register_face_id,
             can_view_attendance_report,
             can_manage_attendance,
             active
@@ -234,6 +237,7 @@ exports.update = async (req, res) => {
             can_view_birthdays: can_view_birthdays !== undefined ? can_view_birthdays : role.can_view_birthdays,
             can_manage_system_settings: can_manage_system_settings !== undefined ? can_manage_system_settings : role.can_manage_system_settings,
             can_access_attendance_portal: can_access_attendance_portal !== undefined ? can_access_attendance_portal : role.can_access_attendance_portal,
+            can_register_face_id: can_register_face_id !== undefined ? can_register_face_id : role.can_register_face_id,
             can_view_attendance_report: can_view_attendance_report !== undefined ? can_view_attendance_report : role.can_view_attendance_report,
             can_manage_attendance: can_manage_attendance !== undefined ? can_manage_attendance : role.can_manage_attendance,
             active: active !== undefined ? active : role.active

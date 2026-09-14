@@ -12,6 +12,19 @@ async function seedSettings() {
         console.warn('Could not resolve default birthday digest roles; leaving blank (falls back to the birthday permission).');
     }
 
+    let defaultRemoveFaceRoleIds = '1,3';
+    try {
+        const adminRoles = await db.roles.findAll({
+            where: { hierarchy_level: { [db.Sequelize.Op.lte]: 1 }, active: true },
+            order: [['hierarchy_level', 'ASC'], ['id', 'ASC']]
+        });
+        if (adminRoles.length > 0) {
+            defaultRemoveFaceRoleIds = adminRoles.map(r => r.id).join(',');
+        }
+    } catch (e) {
+        console.warn('Could not resolve default remove face roles; defaulting to 1,3.');
+    }
+
     const settings = [
         {
             key: 'max_time_off_hours',
@@ -132,6 +145,16 @@ async function seedSettings() {
             validation_rules: null,
             is_public: false,
             display_order: 34
+        },
+        {
+            key: 'remove_face_roles',
+            value: defaultRemoveFaceRoleIds,
+            description: 'Comma separated role IDs that have permission to remove or reset employee Face ID biometric data in the web application.',
+            category: 'face_id',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: false,
+            display_order: 40
         }
     ];
 

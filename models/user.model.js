@@ -93,6 +93,12 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.STRING(255),
             allowNull: true,
             comment: 'Path to the face capture used for face registration (kept separate from the profile photo)'
+        },
+        is_temporary_password: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Whether the current password is a temporary generated password'
         }
     }, {
         tableName: 'users',

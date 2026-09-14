@@ -20,6 +20,10 @@ const User = db.user;
  */
 const logActivity = async (params) => {
     try {
+        if (!params.admin_id) {
+            console.log(`[ACTIVITY] ${params.action} on ${params.entity || 'Entity'}: ${params.description || ''}`);
+            return null;
+        }
         const activityLog = await ActivityLog.create({
             action: params.action,
             entity: params.entity,
@@ -44,7 +48,8 @@ const logActivity = async (params) => {
  * Get IP address from request
  */
 const getClientIp = (req) => {
-    return (req.headers['x-forwarded-for'] || '').split(',')[0] || 
+    if (!req) return 'unknown';
+    return (req.headers && req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0] : null) || 
            req.socket?.remoteAddress || 
            req.connection?.remoteAddress || 
            'unknown';
@@ -54,6 +59,7 @@ const getClientIp = (req) => {
  * Get user agent from request
  */
 const getUserAgent = (req) => {
+    if (!req || !req.headers) return 'unknown';
     return req.headers['user-agent'] || 'unknown';
 };
 

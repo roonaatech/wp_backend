@@ -6,6 +6,7 @@ const { BIRTHDAY_WISH_SLUG, buildAgeBadge } = require("./seed_birthday_template"
 const Staff = db.user;
 const Role = db.roles;
 const EmployeeProfile = db.employee_profiles;
+const EmployeeDocument = db.employee_documents;
 const BirthdayWishLog = db.birthday_wish_logs;
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -81,6 +82,13 @@ const getTodaysBirthdays = async (tz) => {
                 attributes: ['date_of_birth', 'image_path']
             },
             {
+                model: EmployeeDocument,
+                as: 'documents',
+                required: false,
+                where: { document_type: 'photo' },
+                attributes: ['id', 'file_path', 'document_type']
+            },
+            {
                 model: Role,
                 as: 'role_info',
                 required: false,
@@ -105,7 +113,7 @@ const getTodaysBirthdays = async (tz) => {
             date_of_birth: dob,
             day_month: formatDayMonth(dob),
             turning_age: birthYear ? year - birthYear : null,
-            image_path: u.profile_info?.image_path || null,
+            image_path: u.profile_info?.image_path || u.documents?.[0]?.file_path || null,
             role_name: u.role_info?.display_name || u.role_info?.name || null
         };
     });

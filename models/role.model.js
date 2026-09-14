@@ -131,6 +131,11 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: false,
             defaultValue: false
         },
+        can_register_face_id: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false
+        },
         can_view_attendance_report: {
             type: Sequelize.ENUM('none', 'subordinates', 'all'),
             allowNull: false,

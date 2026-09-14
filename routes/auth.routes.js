@@ -171,6 +171,7 @@ module.exports = function (app) {
 
     app.post("/api/auth/signup", controller.signup);
     app.post("/api/auth/signin", controller.signin);
+    app.post("/api/auth/forgot-password", controller.forgotPassword);
     app.post("/api/auth/logout", [verifyToken], controller.logout);
     app.post("/api/auth/change-password", [verifyToken], controller.changePassword);
     app.post("/api/auth/generate-qr-token", [verifyToken], controller.generateQRToken);

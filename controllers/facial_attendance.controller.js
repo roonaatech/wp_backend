@@ -1,5 +1,6 @@
 const db = require("../models");
 const User = db.user;
+const Role = db.roles;
 const EmployeeProfile = db.employee_profiles;
 const AttendanceLog = db.attendance_logs;
 const Approval = db.approvals;
@@ -133,24 +134,142 @@ exports.registerFace = async (req, res) => {
 };
 
 /**
+ * Remove employee face descriptor and stored face photo
+ * DELETE /api/admin/users/:id/face (Admin and above)
+ */
+exports.removeFace = async (req, res) => {
+    const userId = req.params.id;
+
+    if (!userId) {
+        return res.status(400).send({ message: "User ID parameter is required." });
+    }
+
+    try {
+        const user = await User.findByPk(userId);
+        if (!user) {
+            return res.status(404).send({ message: "Employee not found." });
+        }
+
+        // Hierarchy & Permission validation:
+        // Super Admin (level 0) can remove anyone's face.
+        // Other authorized roles (governed by remove_face_roles setting) can remove anyone
+        // whose hierarchy level is equal or greater (cannot remove higher authority).
+        const callerRole = req.callerRole || (req.userId ? await Role.findByPk((await User.findByPk(req.userId))?.role) : null);
+        const targetUserRole = user.role ? await Role.findByPk(user.role) : null;
+
+        if (!callerRole) {
+            return res.status(403).send({ message: "Unable to validate caller role." });
+        }
+
+        const setting = await db.settings.findOne({ where: { key: 'remove_face_roles' } });
+        if (setting && setting.value !== null && setting.value !== undefined && setting.value.trim() !== '') {
+            const allowedRoleIds = setting.value.split(',').map(s => s.trim()).filter(Boolean);
+            if (!allowedRoleIds.includes(String(callerRole.id))) {
+                return res.status(403).send({ message: "Your role is not authorized to remove user face data." });
+            }
+        } else if (callerRole.hierarchy_level === null || callerRole.hierarchy_level === undefined || callerRole.hierarchy_level > 1) {
+            return res.status(403).send({ message: "Only Admin and Super Admin roles can remove user face data." });
+        }
+
+        if (callerRole.hierarchy_level > 0 && targetUserRole && targetUserRole.hierarchy_level < callerRole.hierarchy_level) {
+            return res.status(403).send({
+                message: `You don't have permission to remove face data for users with ${targetUserRole.display_name || targetUserRole.name} role.`
+            });
+        }
+
+        // Delete face image file from disk if it exists
+        if (user.face_image_path) {
+            try {
+                if (fs.existsSync(user.face_image_path)) {
+                    fs.unlinkSync(user.face_image_path);
+                }
+            } catch (fileErr) {
+                console.warn("Could not delete face image file:", fileErr.message);
+            }
+        }
+
+        // Reset face fields in database
+        await user.update({
+            face_descriptor: null,
+            face_descriptor_left: null,
+            face_descriptor_right: null,
+            face_image_path: null,
+            face_registered_at: null
+        });
+
+        // Log audit activity
+        await logActivity({
+            admin_id: req.userId,
+            action: 'REMOVE_FACE',
+            entity: 'User',
+            entity_id: userId,
+            affected_user_id: userId,
+            description: `Removed biometric face data and image for employee: ${user.firstname} ${user.lastname}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.status(200).send({
+            success: true,
+            message: `Face ID for ${user.firstname} ${user.lastname} has been removed successfully.`
+        });
+    } catch (err) {
+        console.error("Error removing face data:", err);
+        res.status(500).send({ message: err.message || "Error occurred while removing face data." });
+    }
+};
+
+/**
  * Get face registration status of current authenticated user
  * GET /api/attendance/face-status
  */
 exports.getFaceStatus = async (req, res) => {
     try {
+        if (req.isServiceAccount) {
+            const account = await db.service_accounts.findByPk(req.userId);
+            if (!account) {
+                return res.status(404).send({ message: "Service account not found." });
+            }
+
+            let canAccessAttendancePortal = false;
+            if (account.role_id) {
+                const role = await Role.findByPk(account.role_id);
+                if (role && (role.can_access_attendance_portal == true || role.can_access_attendance_portal === true)) {
+                    canAccessAttendancePortal = true;
+                }
+            }
+
+            return res.status(200).send({
+                isRegistered: false,
+                registeredAt: null,
+                faceImagePath: null,
+                isServiceAccount: true,
+                can_access_attendance_portal: canAccessAttendancePortal
+            });
+        }
+
         const user = await User.findByPk(req.userId, {
-            attributes: ['staffid', 'face_descriptor', 'face_registered_at', 'face_image_path']
+            attributes: ['staffid', 'role', 'face_descriptor', 'face_registered_at', 'face_image_path']
         });
 
         if (!user) {
             return res.status(404).send({ message: "User not found." });
         }
 
+        let canAccessAttendancePortal = false;
+        if (user.role) {
+            const role = await Role.findByPk(user.role);
+            if (role && (role.can_access_attendance_portal == true || role.can_access_attendance_portal === true)) {
+                canAccessAttendancePortal = true;
+            }
+        }
+
         const isRegistered = !!(user.face_descriptor && user.face_descriptor.length > 0);
         res.status(200).send({
             isRegistered,
             registeredAt: user.face_registered_at,
-            faceImagePath: user.face_image_path ? user.face_image_path.replace(/\\/g, '/') : null
+            faceImagePath: user.face_image_path ? user.face_image_path.replace(/\\/g, '/') : null,
+            can_access_attendance_portal: canAccessAttendancePortal
         });
     } catch (err) {
         console.error("Error checking face status:", err);
@@ -177,7 +296,7 @@ exports.identifyFace = async (req, res) => {
                 active: true,
                 face_descriptor: { [db.Sequelize.Op.ne]: null }
             },
-            attributes: ['staffid', 'email', 'firstname', 'lastname', 'face_descriptor']
+            attributes: ['staffid', 'email', 'firstname', 'lastname', 'face_descriptor', 'face_descriptor_left', 'face_descriptor_right']
         });
 
         if (!users || users.length === 0) {
@@ -191,9 +310,26 @@ exports.identifyFace = async (req, res) => {
         for (const user of users) {
             try {
                 const storedDescriptor = JSON.parse(user.face_descriptor);
-                const distance = getEuclideanDistance(faceDescriptor, storedDescriptor);
-                if (distance < bestDistance) {
-                    bestDistance = distance;
+                let userMinDist = getEuclideanDistance(faceDescriptor, storedDescriptor);
+
+                if (user.face_descriptor_left) {
+                    try {
+                        const storedLeft = JSON.parse(user.face_descriptor_left);
+                        const distLeft = getEuclideanDistance(faceDescriptor, storedLeft);
+                        if (distLeft < userMinDist) userMinDist = distLeft;
+                    } catch (_) {}
+                }
+
+                if (user.face_descriptor_right) {
+                    try {
+                        const storedRight = JSON.parse(user.face_descriptor_right);
+                        const distRight = getEuclideanDistance(faceDescriptor, storedRight);
+                        if (distRight < userMinDist) userMinDist = distRight;
+                    } catch (_) {}
+                }
+
+                if (userMinDist < bestDistance) {
+                    bestDistance = userMinDist;
                     bestMatch = user;
                 }
             } catch (parseErr) {
@@ -230,6 +366,15 @@ exports.getAttendanceStatus = async (req, res) => {
 
         const user = await User.findOne({ where: { email } });
         if (!user) {
+            // Check if this is a registered service account (terminal / kiosk)
+            const serviceAccount = await db.service_accounts.findOne({ where: { email } });
+            if (serviceAccount) {
+                return res.status(200).send({
+                    status: 'TERMINAL',
+                    employeeName: serviceAccount.name,
+                    isServiceAccount: true
+                });
+            }
             return res.status(404).send({ message: "Employee not found." });
         }
 
@@ -772,5 +917,202 @@ exports.deleteAttendanceLog = async (req, res) => {
         res.status(500).send({ message: err.message || "Failed to delete attendance log." });
     }
 };
+
+/**
+ * Fetch staff list for mobile / kiosk attendance terminal
+ * GET /api/attendance/staff-list
+ */
+exports.getStaffList = async (req, res) => {
+    try {
+        const users = await User.findAll({
+            where: { active: 1 },
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'face_descriptor'],
+            include: [
+                {
+                    model: Role,
+                    as: 'role_info',
+                    attributes: ['id', 'name', 'display_name'],
+                    required: false
+                }
+            ],
+            order: [['firstname', 'ASC'], ['lastname', 'ASC']]
+        });
+
+        const staff = users.map(u => ({
+            staffid: u.staffid,
+            firstname: u.firstname,
+            lastname: u.lastname,
+            name: `${u.firstname} ${u.lastname}`.trim(),
+            email: u.email,
+            roleName: u.role_info?.display_name || u.role_info?.name || 'Employee',
+            hasFaceRegistered: !!(u.face_descriptor && u.face_descriptor.length > 0)
+        }));
+
+        res.status(200).send(staff);
+    } catch (err) {
+        console.error("Error fetching staff list for kiosk:", err);
+        res.status(500).send({ message: err.message || "Failed to fetch staff list." });
+    }
+};
+
+/**
+ * Record Kiosk / Mobile Terminal attendance for an employee
+ * POST /api/attendance/kiosk-record
+ */
+exports.recordKioskAttendance = async (req, res) => {
+    const { email, action, latitude, longitude, phone_model } = req.body;
+
+    if (!email || !action || !['CHECK_IN', 'CHECK_OUT'].includes(action)) {
+        return res.status(400).send({
+            message: "Email and valid action ('CHECK_IN' or 'CHECK_OUT') are required."
+        });
+    }
+
+    try {
+        const user = await User.findOne({ where: { email } });
+        if (!user) {
+            return res.status(404).send({ message: "Employee not found." });
+        }
+
+        if (user.active == 0 || user.active === false || user.active === '0') {
+            return res.status(403).send({ message: "Employee account is inactive." });
+        }
+
+        const tz = await getAppTimezone();
+        const now = new Date();
+        const nowString = timezoneUtil.getNowStringInTimezone(tz);
+        const todayDateOnly = nowString.split(' ')[0];
+        const formattedNowTime = formatDateInTimezone(now, tz);
+
+        if (action === 'CHECK_IN') {
+            // Verify employee is NOT already checked in today
+            const existingOpenLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    date: todayDateOnly,
+                    check_out_time: null
+                }
+            });
+
+            if (existingOpenLog) {
+                return res.status(400).send({
+                    success: false,
+                    message: `${user.firstname} is already checked in today.`
+                });
+            }
+
+            // Verify if completed session exists today
+            const completedLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    date: todayDateOnly,
+                    check_out_time: { [db.Sequelize.Op.ne]: null }
+                }
+            });
+
+            if (completedLog) {
+                return res.status(400).send({
+                    success: false,
+                    message: `${user.firstname} has already completed attendance for today.`
+                });
+            }
+
+            // Create check-in record
+            const attendance = {
+                staff_id: user.staffid,
+                check_in_time: now,
+                date: todayDateOnly,
+                phone_model: phone_model || 'Mobile Kiosk Terminal',
+                ip_address: getClientIp(req),
+                latitude: latitude || null,
+                longitude: longitude || null
+            };
+
+            await AttendanceLog.create(attendance);
+
+            await logActivity({
+                admin_id: req.userId,
+                action: 'KIOSK_CHECK_IN',
+                entity: 'AttendanceLog',
+                affected_user_id: user.staffid,
+                description: `Kiosk Check-In recorded for ${user.firstname} ${user.lastname}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
+            return res.status(200).send({
+                success: true,
+                message: `Check-in successful! Welcome, ${user.firstname}.`,
+                action: 'CHECK_IN',
+                employeeName: `${user.firstname} ${user.lastname}`,
+                timestamp: formattedNowTime
+            });
+
+        } else {
+            // CHECK_OUT: Find active check-in
+            const existingLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    date: todayDateOnly,
+                    check_out_time: null
+                },
+                order: [['check_in_time', 'DESC']]
+            });
+
+            if (!existingLog) {
+                return res.status(400).send({
+                    success: false,
+                    message: `No active check-in found for ${user.firstname}. Please check in first.`
+                });
+            }
+
+            await existingLog.update({
+                check_out_time: now
+            });
+
+            if (user.approving_manager_id) {
+                await Approval.create({
+                    attendance_log_id: existingLog.id,
+                    manager_id: user.approving_manager_id,
+                    status: 'pending'
+                });
+            }
+
+            await logActivity({
+                admin_id: req.userId,
+                action: 'KIOSK_CHECK_OUT',
+                entity: 'AttendanceLog',
+                entity_id: existingLog.id,
+                affected_user_id: user.staffid,
+                description: `Kiosk Check-Out recorded for ${user.firstname} ${user.lastname}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
+            let durationText = '';
+            if (existingLog.check_in_time) {
+                const diffMs = now.getTime() - new Date(existingLog.check_in_time).getTime();
+                const totalMinutes = Math.floor(diffMs / 60000);
+                const hrs = Math.floor(totalMinutes / 60);
+                const mins = totalMinutes % 60;
+                durationText = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} mins`;
+            }
+
+            return res.status(200).send({
+                success: true,
+                message: `Check-out successful! Goodbye, ${user.firstname}.`,
+                action: 'CHECK_OUT',
+                employeeName: `${user.firstname} ${user.lastname}`,
+                timestamp: formattedNowTime,
+                duration: durationText
+            });
+        }
+
+    } catch (err) {
+        console.error("Error recording kiosk attendance:", err);
+        res.status(500).send({ message: err.message || "Error processing kiosk attendance." });
+    }
+};
+
 
 

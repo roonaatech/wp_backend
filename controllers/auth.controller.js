@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const apkController = require("./apk.controller");
+const emailService = require("../utils/email.service");
 
 const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
@@ -213,10 +214,11 @@ exports.signin = async (req, res) => {
         // Check for Web App Access Permission
         // Only if it is NOT a mobile app login
         const userRoleId = isServiceAccount ? user.role_id : user.role;
-        if (userRoleId && req.body.is_mobile_app !== true) {
-            const Role = db.roles;
-            const userRole = await Role.findByPk(userRoleId);
-            if (userRole && userRole.can_access_webapp != true) {
+        const Role = db.roles;
+        let userRole = null;
+        if (userRoleId) {
+            userRole = await Role.findByPk(userRoleId);
+            if (userRole && req.body.is_mobile_app !== true && userRole.can_access_webapp != true) {
                 return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
             }
         }
@@ -237,7 +239,8 @@ exports.signin = async (req, res) => {
         }
 
         // Compute first-time login flags BEFORE updating last_login
-        const mustChangePassword = isServiceAccount ? false : !user.last_login;
+        const isTemporaryPassword = user.is_temporary_password === true;
+        const mustChangePassword = isServiceAccount ? false : (!user.last_login || isTemporaryPassword);
 
         // Check if declaration is signed
         let mustCompleteDeclaration = false;
@@ -248,26 +251,33 @@ exports.signin = async (req, res) => {
         }
 
         // Block mobile app login if password setup or declaration is not completed
+        // (Users logging in with a temporary password are allowed in so they can update their password in-app)
+        // (Users/service accounts whose role has can_access_attendance_portal are allowed in directly for face attendance portal)
+        const isAttendancePortalUser = userRole && (userRole.can_access_attendance_portal == true || userRole.can_access_attendance_portal === true);
         if (req.body.is_mobile_app === true) {
-            if (isServiceAccount) {
+            if (isServiceAccount && !isAttendancePortalUser) {
                 return res.status(403).send({ message: "Service accounts are not allowed to log in via the mobile app." });
             }
-            if (mustChangePassword) {
-                return res.status(403).send({
-                    code: "PASSWORD_SETUP_REQUIRED",
-                    message: "Password setup is incomplete. Please log in using a web browser to set up your password before logging into the mobile app."
-                });
-            }
-            if (mustCompleteDeclaration) {
-                return res.status(403).send({
-                    code: "DECLARATION_REQUIRED",
-                    message: "Security declaration has not been completed. Please log in using a web browser to sign the declaration before logging into the mobile app."
-                });
+            if (!isAttendancePortalUser) {
+                if (mustChangePassword && !isTemporaryPassword) {
+                    return res.status(403).send({
+                        code: "PASSWORD_SETUP_REQUIRED",
+                        message: "Password setup is incomplete. Please log in using a web browser to set up your password before logging into the mobile app."
+                    });
+                }
+                if (mustCompleteDeclaration && !isTemporaryPassword) {
+                    return res.status(403).send({
+                        code: "DECLARATION_REQUIRED",
+                        message: "Security declaration has not been completed. Please log in using a web browser to sign the declaration before logging into the mobile app."
+                    });
+                }
             }
         }
 
-        // Update last_login timestamp
-        await user.update({ last_login: new Date() });
+        // Update last_login timestamp (keep null for temporary password until new password is set)
+        if (!isTemporaryPassword) {
+            await user.update({ last_login: new Date() });
+        }
 
         var token = jwt.sign(
             { id: isServiceAccount ? user.id : user.staffid, isServiceAccount },
@@ -297,14 +307,17 @@ exports.signin = async (req, res) => {
             lastname: isServiceAccount ? '' : user.lastname,
             email: user.email,
             role: userRoleId,
+            can_access_attendance_portal: userRole ? (userRole.can_access_attendance_portal == true) : false,
             gender: isServiceAccount ? null : user.gender,
             isFirstLogin: isNewUser,
             mustChangePassword,
+            isTemporaryPassword,
             mustCompleteDeclaration,
             isServiceAccount,
             accessToken: token
         });
     } catch (err) {
+        console.error("Sign in error:", err);
         res.status(500).send({ message: err.message });
     }
 };
@@ -312,6 +325,31 @@ exports.signin = async (req, res) => {
 exports.logout = async (req, res) => {
     try {
         const userId = req.userId; // From authJwt middleware
+        const isServiceAccount = req.isServiceAccount === true;
+
+        if (isServiceAccount) {
+            const account = await db.service_accounts.findByPk(userId);
+            if (!account) {
+                return res.status(404).send({ message: "Service account not found." });
+            }
+
+            await logActivity({
+                admin_id: null,
+                action: 'LOGOUT',
+                entity: 'ServiceAccount',
+                entity_id: userId,
+                affected_user_id: null,
+                description: `Service account ${account.name} (${account.email}) logged out`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
+            return res.status(200).send({
+                success: true,
+                message: "Service account logged out successfully"
+            });
+        }
+
         const user = await TblStaff.findOne({
             where: {
                 staffid: userId
@@ -382,9 +420,13 @@ exports.changePassword = async (req, res) => {
             return res.status(400).send({ message: "New password must be different from current password." });
         }
 
-        // Hash and update new password
+        // Hash and update new password, clearing temporary flag
         const hashedPassword = bcrypt.hashSync(newPassword, 8);
-        await user.update({ password: hashedPassword });
+        await user.update({
+            password: hashedPassword,
+            is_temporary_password: false,
+            last_login: new Date()
+        });
 
         // Log activity
         await logActivity({
@@ -404,6 +446,132 @@ exports.changePassword = async (req, res) => {
         });
     } catch (err) {
         res.status(500).send({ message: err.message });
+    }
+};
+
+/**
+ * Generate a temporary password and send it to user's email
+ */
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email || !email.trim()) {
+            return res.status(400).send({ message: "Email address is required." });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const user = await TblStaff.findOne({
+            where: {
+                email: normalizedEmail
+            }
+        });
+
+        if (!user) {
+            return res.status(404).send({
+                message: "No user account found with this email address."
+            });
+        }
+
+        if (user.active !== 1) {
+            return res.status(403).send({
+                message: "This account is inactive. Please contact your administrator."
+            });
+        }
+
+        // Generate an 8-character random temporary password: 'WP' + 6 alphanumeric chars
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+        let randomPart = '';
+        for (let i = 0; i < 6; i++) {
+            randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        const tempPassword = `WP${randomPart}`;
+
+        // Hash and save temporary password to database with is_temporary_password = true
+        const hashedPassword = bcrypt.hashSync(tempPassword, 8);
+        await user.update({
+            password: hashedPassword,
+            is_temporary_password: true,
+            last_login: null
+        });
+
+        // Send email with temporary password
+        const htmlBody = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 24px; }
+            .container { max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+            .logo { font-size: 24px; font-weight: 800; color: #3b82f6; margin-bottom: 20px; }
+            .title { font-size: 20px; font-weight: 700; color: #0f172a; margin-bottom: 12px; }
+            .badge { display: inline-block; background-color: #eff6ff; color: #2563eb; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 9999px; margin-bottom: 20px; }
+            .temp-box { background-color: #f1f5f9; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0; }
+            .temp-password { font-family: monospace; font-size: 26px; font-weight: 700; color: #1e293b; letter-spacing: 3px; }
+            .note { font-size: 13px; color: #64748b; line-height: 1.6; margin-top: 16px; }
+            .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="logo">WorkPulse</div>
+            <div class="badge">Password Reset Request</div>
+            <div class="title">Hello ${user.firstname},</div>
+            <p>You recently requested a temporary password to sign in to your WorkPulse mobile account.</p>
+            <div class="temp-box">
+              <div style="font-size: 12px; color: #64748b; margin-bottom: 6px; text-transform: uppercase; font-weight: 600;">Your Temporary Password</div>
+              <div class="temp-password">${tempPassword}</div>
+            </div>
+            <p class="note">
+              <strong>Next Steps:</strong><br>
+              1. Open the WorkPulse mobile app.<br>
+              2. Sign in using your email (<code>${user.email}</code>) and this temporary password.<br>
+              3. You will be prompted to create your new permanent password before proceeding to the dashboard.
+            </p>
+            <p class="note" style="color: #ef4444;">
+              If you did not request this password reset, please contact your system administrator immediately.
+            </p>
+            <div class="footer">
+              &copy; ${new Date().getFullYear()} WorkPulse Management. All rights reserved.
+            </div>
+          </div>
+        </body>
+        </html>
+        `;
+
+        const emailResult = await emailService.sendEmail(
+            user.email,
+            "WorkPulse - Your Temporary Password",
+            htmlBody
+        );
+
+        if (!emailResult.success) {
+            console.error("Failed to send temporary password email:", emailResult.error || emailResult.message);
+            return res.status(500).send({
+                message: "Failed to send email. Please check system email settings or contact administrator."
+            });
+        }
+
+        // Log activity
+        await logActivity({
+            admin_id: user.staffid,
+            action: 'PASSWORD_RESET_REQUESTED',
+            entity: 'User',
+            entity_id: user.staffid,
+            affected_user_id: user.staffid,
+            description: `Temporary password generated and emailed to ${user.email}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        return res.status(200).send({
+            success: true,
+            message: "A temporary password has been sent to your email address."
+        });
+    } catch (err) {
+        console.error("Forgot password error:", err);
+        return res.status(500).send({ message: err.message });
     }
 };
 
@@ -488,6 +656,8 @@ exports.exchangeQRToken = async (req, res) => {
             expiresIn: JWT_EXPIRES_IN
         });
 
+        const userRole = user.role ? await db.roles.findByPk(user.role) : null;
+
         res.status(200).send({
             accessToken: sessionToken,
             id: user.staffid,
@@ -495,6 +665,7 @@ exports.exchangeQRToken = async (req, res) => {
             lastname: user.lastname,
             email: user.email,
             role: user.role,
+            can_access_attendance_portal: userRole ? (userRole.can_access_attendance_portal === true) : false,
             mustChangePassword,
             mustCompleteDeclaration
         });
