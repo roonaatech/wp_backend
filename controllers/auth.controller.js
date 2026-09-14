@@ -11,10 +11,25 @@ const emailService = require("../utils/email.service");
 const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
 
-// Session token lifetime in seconds. Configurable via JWT_EXPIRES_IN so long-running
-// devices (e.g. the front-desk attendance kiosk) don't get logged out during a shift.
+// Session token lifetime in seconds. Configurable via JWT_EXPIRES_IN or database settings.
 // Default: 7 days. Set JWT_EXPIRES_IN to e.g. 2592000 for 30 days.
 const JWT_EXPIRES_IN = parseInt(process.env.JWT_EXPIRES_IN, 10) || 7 * 24 * 60 * 60;
+
+const getSessionTimeoutInSeconds = async () => {
+    try {
+        const Setting = db.settings;
+        const timeoutSetting = await Setting.findOne({ where: { key: 'session_timeout' } });
+        if (timeoutSetting && timeoutSetting.value) {
+            const hours = parseInt(timeoutSetting.value, 10);
+            if (!isNaN(hours) && hours > 0) {
+                return hours * 60 * 60;
+            }
+        }
+    } catch (err) {
+        console.error('[AUTH] Failed to fetch session timeout setting, falling back to default:', err.message);
+    }
+    return JWT_EXPIRES_IN;
+};
 
 exports.signup = (req, res) => {
     // Save User to Database
@@ -219,7 +234,18 @@ exports.signin = async (req, res) => {
         if (userRoleId) {
             userRole = await Role.findByPk(userRoleId);
             if (userRole && req.body.is_mobile_app !== true && userRole.can_access_webapp != true) {
-                return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
+                // Bypass web app check ONLY if they need first-time setup (password reset or declaration)
+                const mustChangePassword = isServiceAccount ? false : !user.last_login;
+                let mustCompleteDeclaration = false;
+                if (!isServiceAccount) {
+                    const EmployeeProfile = db.employee_profiles;
+                    const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+                    mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+                }
+
+                if (!mustChangePassword && !mustCompleteDeclaration) {
+                    return res.status(403).send({ message: "Access denied. You do not have permission to access the web application." });
+                }
             }
         }
 
@@ -279,10 +305,11 @@ exports.signin = async (req, res) => {
             await user.update({ last_login: new Date() });
         }
 
+        const expiresIn = await getSessionTimeoutInSeconds();
         var token = jwt.sign(
             { id: isServiceAccount ? user.id : user.staffid, isServiceAccount },
             config.JWT_SECRET,
-            { expiresIn: JWT_EXPIRES_IN }
+            { expiresIn }
         );
 
         // Log activity
@@ -652,8 +679,9 @@ exports.exchangeQRToken = async (req, res) => {
         const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
 
         // Issue a full session token (lifetime configurable via JWT_EXPIRES_IN)
+        const expiresIn = await getSessionTimeoutInSeconds();
         const sessionToken = jwt.sign({ id: user.staffid }, config.JWT_SECRET, {
-            expiresIn: JWT_EXPIRES_IN
+            expiresIn
         });
 
         const userRole = user.role ? await db.roles.findByPk(user.role) : null;
