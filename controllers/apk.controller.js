@@ -157,8 +157,17 @@ exports.getAllApks = async (req, res) => {
 
         const totalPages = Math.ceil(count / limit);
 
+        // Size is read from the stored file so existing versions show it too (null if the file is missing)
+        const data = await Promise.all(apks.map(async (apk) => {
+            let fileSize = null;
+            try {
+                fileSize = (await fs.promises.stat(path.resolve(apk.filepath))).size;
+            } catch (_) {}
+            return { ...apk.toJSON(), file_size: fileSize };
+        }));
+
         res.status(200).send({
-            data: apks,
+            data,
             pagination: {
                 currentPage: page,
                 totalPages: totalPages,
