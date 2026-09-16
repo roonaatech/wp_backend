@@ -265,7 +265,7 @@ exports.signin = async (req, res) => {
         }
 
         // Compute first-time login flags BEFORE updating last_login
-        const isTemporaryPassword = user.is_temporary_password === true;
+        const isTemporaryPassword = user.is_temporary_password === true || user.is_temporary_password === 1 || user.is_temporary_password === '1';
         const mustChangePassword = isServiceAccount ? false : (!user.last_login || isTemporaryPassword);
 
         // Check if declaration is signed

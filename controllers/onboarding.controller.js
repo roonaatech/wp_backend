@@ -889,9 +889,16 @@ exports.completeEmployeeDeclaration = async (req, res) => {
                 return res.status(400).send({ message: "Password must be at least 6 characters long." });
             }
             const hashedPassword = bcrypt.hashSync(password, 8);
-            await user.update({ password: hashedPassword, last_login: new Date() }, { transaction });
+            await user.update({
+                password: hashedPassword,
+                is_temporary_password: false,
+                last_login: new Date()
+            }, { transaction });
         } else {
-            await user.update({ last_login: new Date() }, { transaction });
+            await user.update({
+                is_temporary_password: false,
+                last_login: new Date()
+            }, { transaction });
         }
 
         // 2. Update core user details if provided

@@ -456,6 +456,7 @@ exports.resetUserPassword = async (req, res) => {
         // Update the password and reset last_login to null to force first-time flow
         await user.update({
             password: hashedPassword,
+            is_temporary_password: true,
             last_login: null
         });
 
