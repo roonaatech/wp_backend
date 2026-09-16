@@ -76,6 +76,8 @@ exports.create = async (req, res) => {
             can_register_face_id,
             can_view_attendance_report,
             can_manage_attendance,
+            can_edit_attendance,
+            can_delete_attendance,
             active
         } = req.body;
 
@@ -122,7 +124,9 @@ exports.create = async (req, res) => {
             can_access_attendance_portal: can_access_attendance_portal || false,
             can_register_face_id: can_register_face_id || false,
             can_view_attendance_report: can_view_attendance_report || 'none',
-            can_manage_attendance: can_manage_attendance || 'none',
+            can_manage_attendance: can_manage_attendance || can_edit_attendance || 'none',
+            can_edit_attendance: can_edit_attendance || can_manage_attendance || 'none',
+            can_delete_attendance: can_delete_attendance || can_manage_attendance || 'none',
             active: active !== undefined ? active : true
         });
 
@@ -170,6 +174,8 @@ exports.update = async (req, res) => {
             can_register_face_id,
             can_view_attendance_report,
             can_manage_attendance,
+            can_edit_attendance,
+            can_delete_attendance,
             active
         } = req.body;
 
@@ -244,6 +250,8 @@ exports.update = async (req, res) => {
             can_register_face_id: can_register_face_id !== undefined ? can_register_face_id : role.can_register_face_id,
             can_view_attendance_report: can_view_attendance_report !== undefined ? can_view_attendance_report : role.can_view_attendance_report,
             can_manage_attendance: can_manage_attendance !== undefined ? can_manage_attendance : role.can_manage_attendance,
+            can_edit_attendance: can_edit_attendance !== undefined ? can_edit_attendance : role.can_edit_attendance,
+            can_delete_attendance: can_delete_attendance !== undefined ? can_delete_attendance : role.can_delete_attendance,
             active: active !== undefined ? active : role.active
         });
 

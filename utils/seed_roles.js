@@ -30,6 +30,8 @@ async function seedRoles() {
       can_register_face_id: true,
       can_view_attendance_report: "all",
       can_manage_attendance: "all",
+      can_edit_attendance: "all",
+      can_delete_attendance: "all",
       can_manage_service_accounts: true,
       active: true
     },
@@ -59,6 +61,8 @@ async function seedRoles() {
       can_register_face_id: true,
       can_view_attendance_report: "all",
       can_manage_attendance: "all",
+      can_edit_attendance: "all",
+      can_delete_attendance: "all",
       can_manage_service_accounts: true,
       active: true
     },
@@ -87,6 +91,8 @@ async function seedRoles() {
       can_register_face_id: false,
       can_view_attendance_report: "all",
       can_manage_attendance: "all",
+      can_edit_attendance: "all",
+      can_delete_attendance: "all",
       can_manage_service_accounts: false,
       active: true
     },
@@ -115,6 +121,8 @@ async function seedRoles() {
       can_register_face_id: false,
       can_view_attendance_report: "subordinates",
       can_manage_attendance: "none",
+      can_edit_attendance: "none",
+      can_delete_attendance: "none",
       can_manage_service_accounts: false,
       active: true
     },
@@ -143,6 +151,8 @@ async function seedRoles() {
       can_register_face_id: false,
       can_view_attendance_report: "none",
       can_manage_attendance: "none",
+      can_edit_attendance: "none",
+      can_delete_attendance: "none",
       can_manage_service_accounts: false,
       active: true
     }

@@ -557,6 +557,52 @@ const canViewAttendanceReport = async (req, res, next) => {
     }
 };
 
+const canEditAttendance = async (req, res, next) => {
+    try {
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
+        }
+
+        if (role.can_edit_attendance === 'all' || role.can_edit_attendance === 'subordinates' ||
+            role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+            next();
+            return;
+        }
+        res.status(403).send({
+            message: "You don't have permission to edit attendance records!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+const canDeleteAttendance = async (req, res, next) => {
+    try {
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
+        }
+
+        if (role.can_delete_attendance === 'all' || role.can_delete_attendance === 'subordinates' ||
+            role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+            next();
+            return;
+        }
+        res.status(403).send({
+            message: "You don't have permission to delete attendance records!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const canManageAttendance = async (req, res, next) => {
     try {
         const role = await getRoleForRequest(req);
@@ -564,7 +610,9 @@ const canManageAttendance = async (req, res, next) => {
             return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        if (role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+        if (role.can_edit_attendance === 'all' || role.can_edit_attendance === 'subordinates' ||
+            role.can_delete_attendance === 'all' || role.can_delete_attendance === 'subordinates' ||
+            role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
             next();
             return;
         }
@@ -670,6 +718,8 @@ const authJwt = {
     canRegisterFaceId: canRegisterFaceId,
     canViewAttendanceReport: canViewAttendanceReport,
     canManageAttendance: canManageAttendance,
+    canEditAttendance: canEditAttendance,
+    canDeleteAttendance: canDeleteAttendance,
     canViewBirthdays: canViewBirthdays,
     canViewAnniversaries: canViewAnniversaries,
     canManageSystemSettings: async (req, res, next) => {

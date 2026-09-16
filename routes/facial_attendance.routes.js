@@ -8,7 +8,9 @@ const {
     canRegisterFaceId,
     canAccessAttendancePortal,
     canViewAttendanceReport,
-    canManageAttendance
+    canManageAttendance,
+    canEditAttendance,
+    canDeleteAttendance
 } = require("../middleware/authJwt");
 
 module.exports = function (app) {
@@ -93,14 +95,14 @@ module.exports = function (app) {
     // Edit attendance log
     app.put(
         "/api/admin/attendance-logs/:id",
-        [verifyToken, canManageAttendance],
+        [verifyToken, canEditAttendance],
         controller.updateAttendanceLog
     );
 
     // Delete attendance log
     app.delete(
         "/api/admin/attendance-logs/:id",
-        [verifyToken, canManageAttendance],
+        [verifyToken, canDeleteAttendance],
         controller.deleteAttendanceLog
     );
 };

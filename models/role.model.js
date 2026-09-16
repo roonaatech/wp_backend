@@ -152,6 +152,18 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: false,
             defaultValue: 'none'
         },
+        can_edit_attendance: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'none=no access, subordinates=only subordinates, all=everyone'
+        },
+        can_delete_attendance: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'none=no access, subordinates=only subordinates, all=everyone'
+        },
         active: {
             type: Sequelize.BOOLEAN,
             allowNull: false,
