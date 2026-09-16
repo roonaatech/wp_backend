@@ -480,15 +480,29 @@ exports.checkInOutWithFace = async (req, res) => {
             });
         }
 
+        // Profile descriptors verification (with angle tolerance & cross-mirror matching)
+        const PROFILE_THRESHOLD = 0.72;
+        let storedLeft = null;
+        let storedRight = null;
+        try {
+            if (user.face_descriptor_left) storedLeft = JSON.parse(user.face_descriptor_left);
+            if (user.face_descriptor_right) storedRight = JSON.parse(user.face_descriptor_right);
+        } catch (_) {}
+
+        // Collect all reference descriptors for this user
+        const allUserDescriptors = [storedDescriptor];
+        if (storedLeft) allUserDescriptors.push(storedLeft);
+        if (storedRight) allUserDescriptors.push(storedRight);
+
         // Compare Left Profile if provided and registered
-        if (faceDescriptorLeft && user.face_descriptor_left) {
+        if (faceDescriptorLeft && (storedLeft || storedRight)) {
             try {
-                const storedLeft = JSON.parse(user.face_descriptor_left);
-                const distanceLeft = getEuclideanDistance(faceDescriptorLeft, storedLeft);
-                if (distanceLeft >= threshold) {
+                const minLeftDistance = Math.min(...allUserDescriptors.map(d => getEuclideanDistance(faceDescriptorLeft, d)));
+                if (minLeftDistance >= PROFILE_THRESHOLD) {
                     return res.status(400).send({
                         success: false,
-                        message: "Left profile verification failed. Face does not match."
+                        distance: minLeftDistance,
+                        message: "Left profile verification failed. Face does not match registered profile."
                     });
                 }
             } catch (err) {
@@ -497,14 +511,14 @@ exports.checkInOutWithFace = async (req, res) => {
         }
 
         // Compare Right Profile if provided and registered
-        if (faceDescriptorRight && user.face_descriptor_right) {
+        if (faceDescriptorRight && (storedLeft || storedRight)) {
             try {
-                const storedRight = JSON.parse(user.face_descriptor_right);
-                const distanceRight = getEuclideanDistance(faceDescriptorRight, storedRight);
-                if (distanceRight >= threshold) {
+                const minRightDistance = Math.min(...allUserDescriptors.map(d => getEuclideanDistance(faceDescriptorRight, d)));
+                if (minRightDistance >= PROFILE_THRESHOLD) {
                     return res.status(400).send({
                         success: false,
-                        message: "Right profile verification failed. Face does not match."
+                        distance: minRightDistance,
+                        message: "Right profile verification failed. Face does not match registered profile."
                     });
                 }
             } catch (err) {
