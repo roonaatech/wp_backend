@@ -385,6 +385,13 @@ exports.getEmployeeExtendedProfile = async (req, res) => {
             }
         }
 
+        // Only Super Admin (hierarchy_level === 0) can see registered face biometric data
+        const isCallerSuperAdmin = callerRole && callerRole.hierarchy_level === 0;
+        if (!isCallerSuperAdmin) {
+            user.setDataValue('face_image_path', null);
+            user.setDataValue('face_registered_at', null);
+        }
+
         res.status(200).send(user);
 
     } catch (err) {
