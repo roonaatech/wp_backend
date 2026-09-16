@@ -305,13 +305,18 @@ exports.identifyFace = async (req, res) => {
 
         let bestMatch = null;
         let bestDistance = Infinity;
-        const threshold = 0.6;
+        let secondBestDistance = Infinity;
+        // Strict 1-to-N threshold (0.50) to prevent false positive identifications across multi-user database
+        const IDENTIFY_THRESHOLD = 0.50;
 
         for (const user of users) {
             try {
                 const storedDescriptor = JSON.parse(user.face_descriptor);
-                let userMinDist = getEuclideanDistance(faceDescriptor, storedDescriptor);
+                // Primary 1-to-N comparison: Frontal to Frontal template
+                const frontDist = getEuclideanDistance(faceDescriptor, storedDescriptor);
+                let userMinDist = frontDist;
 
+                // Check profile templates only if they provide a significantly closer match
                 if (user.face_descriptor_left) {
                     try {
                         const storedLeft = JSON.parse(user.face_descriptor_left);
@@ -329,8 +334,11 @@ exports.identifyFace = async (req, res) => {
                 }
 
                 if (userMinDist < bestDistance) {
+                    secondBestDistance = bestDistance;
                     bestDistance = userMinDist;
                     bestMatch = user;
+                } else if (userMinDist < secondBestDistance) {
+                    secondBestDistance = userMinDist;
                 }
             } catch (parseErr) {
                 // Skip users with invalid descriptor data
@@ -338,7 +346,7 @@ exports.identifyFace = async (req, res) => {
             }
         }
 
-        if (bestMatch && bestDistance < threshold) {
+        if (bestMatch && bestDistance < IDENTIFY_THRESHOLD) {
             return res.status(200).send({
                 matched: true,
                 email: bestMatch.email,
