@@ -306,39 +306,23 @@ exports.identifyFace = async (req, res) => {
         let bestMatch = null;
         let bestDistance = Infinity;
         let secondBestDistance = Infinity;
-        // Strict 1-to-N threshold (0.50) to prevent false positive identifications across multi-user database
-        const IDENTIFY_THRESHOLD = 0.50;
+        // Strict 1-to-N threshold (0.45) to prevent false positive identifications across multi-user database
+        const IDENTIFY_THRESHOLD = 0.45;
 
         for (const user of users) {
             try {
                 const storedDescriptor = JSON.parse(user.face_descriptor);
-                // Primary 1-to-N comparison: Frontal to Frontal template
+                // Strict 1-to-N comparison: Frontal to Frontal template only.
+                // Profile/angled templates (left/right) are not compared in open 1-to-N search
+                // because angled poses have higher geometric distortion and cause cross-user collisions.
                 const frontDist = getEuclideanDistance(faceDescriptor, storedDescriptor);
-                let userMinDist = frontDist;
 
-                // Check profile templates only if they provide a significantly closer match
-                if (user.face_descriptor_left) {
-                    try {
-                        const storedLeft = JSON.parse(user.face_descriptor_left);
-                        const distLeft = getEuclideanDistance(faceDescriptor, storedLeft);
-                        if (distLeft < userMinDist) userMinDist = distLeft;
-                    } catch (_) {}
-                }
-
-                if (user.face_descriptor_right) {
-                    try {
-                        const storedRight = JSON.parse(user.face_descriptor_right);
-                        const distRight = getEuclideanDistance(faceDescriptor, storedRight);
-                        if (distRight < userMinDist) userMinDist = distRight;
-                    } catch (_) {}
-                }
-
-                if (userMinDist < bestDistance) {
+                if (frontDist < bestDistance) {
                     secondBestDistance = bestDistance;
-                    bestDistance = userMinDist;
+                    bestDistance = frontDist;
                     bestMatch = user;
-                } else if (userMinDist < secondBestDistance) {
-                    secondBestDistance = userMinDist;
+                } else if (frontDist < secondBestDistance) {
+                    secondBestDistance = frontDist;
                 }
             } catch (parseErr) {
                 // Skip users with invalid descriptor data
@@ -346,7 +330,12 @@ exports.identifyFace = async (req, res) => {
             }
         }
 
-        if (bestMatch && bestDistance < IDENTIFY_THRESHOLD) {
+        // Biometric 1-to-N verification criteria:
+        // 1. Distance must be strictly lower than 0.45 (true matches are typically < 0.40)
+        // 2. Must have a clear margin from the 2nd best candidate to avoid ambiguous identity assignments
+        const hasClearMargin = (secondBestDistance === Infinity) || ((secondBestDistance - bestDistance) >= 0.03) || (bestDistance < 0.38);
+
+        if (bestMatch && bestDistance < IDENTIFY_THRESHOLD && hasClearMargin) {
             return res.status(200).send({
                 matched: true,
                 email: bestMatch.email,
