@@ -13,16 +13,20 @@
     "test:exhaustive": "NODE_ENV=test node tests/validation/exhaustive-rbac-test.js",
     "test:all": "NODE_ENV=test node tests/run-all-tests.js",
     "sonar": "npm run test:coverage && sonar-scanner",
-    "sonar:verify": "node tests/verify-sonar-setup.js"
+    "sonar:verify": "node tests/verify-sonar-setup.js",
+    "postinstall": "node scripts/patch-faceapi.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "@vladmandic/face-api": "^1.7.15",
     "app-info-parser": "^1.1.6",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.1",
+    "canvas": "^3.2.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
@@ -32,6 +36,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.12",
     "nodemon": "^3.1.11",
+    "onnxruntime-node": "^1.30.0",
     "sequelize": "^6.37.7",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"

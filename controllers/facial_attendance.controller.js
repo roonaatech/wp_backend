@@ -10,6 +10,7 @@ const timezoneUtil = require("../utils/timezone.util");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
+const faceBiometrics = require("../services/face_biometrics.service");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -23,12 +24,7 @@ const getAppTimezone = async () => {
 
 // Calculate Euclidean distance between two descriptor arrays
 const getEuclideanDistance = (arr1, arr2) => {
-    if (!arr1 || !arr2 || arr1.length !== arr2.length) return Infinity;
-    let sum = 0;
-    for (let i = 0; i < arr1.length; i++) {
-        sum += Math.pow(arr1[i] - arr2[i], 2);
-    }
-    return Math.sqrt(sum);
+    return faceBiometrics.getEuclideanDistance(arr1, arr2);
 };
 
 /**
@@ -38,15 +34,34 @@ const getEuclideanDistance = (arr1, arr2) => {
  */
 exports.registerFace = async (req, res) => {
     const userId = req.params.id || req.userId;
-    const { faceDescriptor, faceDescriptorLeft, faceDescriptorRight, profileImage } = req.body;
-
-    if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
-        return res.status(400).send({
-            message: "A valid 128-dimensional face descriptor array is required."
-        });
-    }
+    let { faceDescriptor, faceDescriptorLeft, faceDescriptorRight, profileImage, imageLeft, imageRight } = req.body;
 
     try {
+        // Server-side descriptor extraction if raw images are provided
+        if ((!faceDescriptor || !Array.isArray(faceDescriptor)) && profileImage) {
+            const extracted = await faceBiometrics.extractDescriptor(profileImage);
+            if (!extracted) {
+                return res.status(400).send({ message: "No face detected in the front profile image." });
+            }
+            faceDescriptor = extracted.descriptor;
+        }
+
+        if ((!faceDescriptorLeft || !Array.isArray(faceDescriptorLeft)) && imageLeft) {
+            const extractedLeft = await faceBiometrics.extractDescriptor(imageLeft);
+            if (extractedLeft) faceDescriptorLeft = extractedLeft.descriptor;
+        }
+
+        if ((!faceDescriptorRight || !Array.isArray(faceDescriptorRight)) && imageRight) {
+            const extractedRight = await faceBiometrics.extractDescriptor(imageRight);
+            if (extractedRight) faceDescriptorRight = extractedRight.descriptor;
+        }
+
+        if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
+            return res.status(400).send({
+                message: "A valid 128-dimensional face descriptor or front profile image is required."
+            });
+        }
+
         const user = await User.findByPk(userId);
         if (!user) {
             return res.status(404).send({ message: "Employee not found." });
@@ -54,7 +69,7 @@ exports.registerFace = async (req, res) => {
 
         // Prevent the same face from being registered for more than one employee.
         // Compare the incoming descriptor against every OTHER user's registered face.
-        const DUPLICATE_THRESHOLD = 0.5;
+        const DUPLICATE_THRESHOLD = 0.45;
         const otherUsers = await User.findAll({
             where: {
                 staffid: { [db.Sequelize.Op.ne]: user.staffid },
@@ -278,16 +293,17 @@ exports.getFaceStatus = async (req, res) => {
 };
 
 /**
- * Identify an employee by face descriptor alone (no password needed)
+ * Identify an employee by face image or descriptor (auto-fill / auto-identify)
  * POST /api/attendance/identify-face
- * Returns: { matched: true, email, employeeName } or { matched: false }
+ * Returns: { matched: true, email, employeeName, distance } or { matched: false }
  */
 exports.identifyFace = async (req, res) => {
     try {
-        const { faceDescriptor } = req.body;
+        const { faceDescriptor, image, snapshotImage } = req.body;
+        const rawImage = image || snapshotImage;
 
-        if (!faceDescriptor || !Array.isArray(faceDescriptor)) {
-            return res.status(400).send({ matched: false, message: "Face descriptor is required." });
+        if ((!faceDescriptor || !Array.isArray(faceDescriptor)) && !rawImage) {
+            return res.status(400).send({ matched: false, message: "Face snapshot image or descriptor is required." });
         }
 
         // Fetch all active users with registered face descriptors
@@ -296,55 +312,33 @@ exports.identifyFace = async (req, res) => {
                 active: true,
                 face_descriptor: { [db.Sequelize.Op.ne]: null }
             },
-            attributes: ['staffid', 'email', 'firstname', 'lastname', 'face_descriptor', 'face_descriptor_left', 'face_descriptor_right']
+            attributes: ['staffid', 'email', 'firstname', 'lastname', 'face_descriptor']
         });
 
         if (!users || users.length === 0) {
             return res.status(200).send({ matched: false, message: "No registered faces found." });
         }
 
-        let bestMatch = null;
-        let bestDistance = Infinity;
-        let secondBestDistance = Infinity;
-        // Strict 1-to-N threshold (0.45) to prevent false positive identifications across multi-user database
-        const IDENTIFY_THRESHOLD = 0.45;
+        const result = await faceBiometrics.identifyEmployee(faceDescriptor || rawImage, users, {
+            threshold: 0.45,
+            margin: 0.03
+        });
 
-        for (const user of users) {
-            try {
-                const storedDescriptor = JSON.parse(user.face_descriptor);
-                // Strict 1-to-N comparison: Frontal to Frontal template only.
-                // Profile/angled templates (left/right) are not compared in open 1-to-N search
-                // because angled poses have higher geometric distortion and cause cross-user collisions.
-                const frontDist = getEuclideanDistance(faceDescriptor, storedDescriptor);
-
-                if (frontDist < bestDistance) {
-                    secondBestDistance = bestDistance;
-                    bestDistance = frontDist;
-                    bestMatch = user;
-                } else if (frontDist < secondBestDistance) {
-                    secondBestDistance = frontDist;
-                }
-            } catch (parseErr) {
-                // Skip users with invalid descriptor data
-                continue;
-            }
-        }
-
-        // Biometric 1-to-N verification criteria:
-        // 1. Distance must be strictly lower than 0.45 (true matches are typically < 0.40)
-        // 2. Must have a clear margin from the 2nd best candidate to avoid ambiguous identity assignments
-        const hasClearMargin = (secondBestDistance === Infinity) || ((secondBestDistance - bestDistance) >= 0.03) || (bestDistance < 0.38);
-
-        if (bestMatch && bestDistance < IDENTIFY_THRESHOLD && hasClearMargin) {
+        if (result.matched && result.user) {
             return res.status(200).send({
                 matched: true,
-                email: bestMatch.email,
-                employeeName: `${bestMatch.firstname} ${bestMatch.lastname}`,
-                distance: bestDistance
+                email: result.user.email,
+                employeeName: `${result.user.firstname} ${result.user.lastname}`,
+                distance: result.distance,
+                descriptor: result.descriptor
             });
         }
 
-        return res.status(200).send({ matched: false, message: "Face not recognized." });
+        return res.status(200).send({
+            matched: false,
+            message: result.message || "Face not recognized.",
+            distance: result.closestDistance
+        });
 
     } catch (err) {
         console.error("Error identifying face:", err);
@@ -424,11 +418,12 @@ exports.getAttendanceStatus = async (req, res) => {
  * POST /api/attendance/check-in-out-with-face
  */
 exports.checkInOutWithFace = async (req, res) => {
-    const { email, password, faceDescriptor, faceDescriptorLeft, faceDescriptorRight, snapshotImage, latitude, longitude, phone_model, action, livenessVerified } = req.body;
+    let { email, password, faceDescriptor, faceDescriptorLeft, faceDescriptorRight, snapshotImage, image, imageLeft, imageRight, latitude, longitude, phone_model, action, livenessVerified } = req.body;
+    const rawImage = snapshotImage || image;
 
-    if (!email || (!password && !livenessVerified) || !faceDescriptor) {
+    if (!email || (!password && !livenessVerified)) {
         return res.status(400).send({
-            message: "Email, password/liveness, and face descriptor are required."
+            message: "Email and password/liveness are required."
         });
     }
 
@@ -439,6 +434,34 @@ exports.checkInOutWithFace = async (req, res) => {
     }
 
     try {
+        // Server-side descriptor extraction from snapshot if not already supplied
+        if ((!faceDescriptor || !Array.isArray(faceDescriptor)) && rawImage) {
+            const extracted = await faceBiometrics.extractDescriptor(rawImage);
+            if (!extracted) {
+                return res.status(400).send({
+                    success: false,
+                    message: "No face detected in the attendance snapshot."
+                });
+            }
+            faceDescriptor = extracted.descriptor;
+        }
+
+        if ((!faceDescriptorLeft || !Array.isArray(faceDescriptorLeft)) && imageLeft) {
+            const extractedLeft = await faceBiometrics.extractDescriptor(imageLeft);
+            if (extractedLeft) faceDescriptorLeft = extractedLeft.descriptor;
+        }
+
+        if ((!faceDescriptorRight || !Array.isArray(faceDescriptorRight)) && imageRight) {
+            const extractedRight = await faceBiometrics.extractDescriptor(imageRight);
+            if (extractedRight) faceDescriptorRight = extractedRight.descriptor;
+        }
+
+        if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
+            return res.status(400).send({
+                message: "A valid face descriptor or camera snapshot image is required."
+            });
+        }
+
         // 1. Authenticate password
         const user = await User.findOne({ where: { email } });
         if (!user) {
