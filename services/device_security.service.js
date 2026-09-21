@@ -19,17 +19,31 @@ class DeviceSecurityService {
      * @param {string} [params.userAgent]
      * @param {boolean|string} [params.isMobile]
      * @param {boolean|string} [params.isMobileApp]
+     * @param {string} [params.deviceId]
      * @returns {boolean}
      */
-    isMobileClient({ userAgent = '', isMobile, isMobileApp = false } = {}) {
+    isMobileClient({ userAgent = '', isMobile, isMobileApp = false, deviceId } = {}) {
         if (isMobileApp === true || isMobileApp === 'true') return true;
         if (isMobile === true || isMobile === 'true') return true;
         if (isMobile === false || isMobile === 'false') return false;
 
-        if (!userAgent) return false;
-        // Regex checking for Android, iPhone, iPad, iPod, BlackBerry, Opera Mini, Mobile, okhttp, Expo, WorkPulseApp
-        const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|okhttp|Expo|WorkPulseApp/i;
-        return mobileRegex.test(userAgent);
+        if (userAgent) {
+            // Check for Mobile User-Agents (Android, iOS, Flutter/Dart, Mobile Browser, okhttp, etc.)
+            const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|okhttp|Expo|WorkPulseApp|Dart/i;
+            if (mobileRegex.test(userAgent)) return true;
+
+            // If it's explicitly a desktop browser (Macintosh, Windows NT, Linux x86_64) with no mobile keywords:
+            if (/Macintosh|Windows NT|Linux x86_64/i.test(userAgent) && !/Mobile|Android|iPhone|iPad/i.test(userAgent)) {
+                return false;
+            }
+        }
+
+        // If device ID is provided (e.g. from mobile client), treat as mobile
+        if (deviceId && typeof deviceId === 'string' && deviceId.startsWith('wp-dev-')) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -52,7 +66,7 @@ class DeviceSecurityService {
 
         // Strict Requirement: Single-Device Security Binding & Anti-Proxy rules ONLY apply to mobile clients (mobile app / mobile browser).
         // Laptop / desktop browser logins (PC, Mac, Linux) MUST NEVER be blocked and MUST NEVER trigger security violations.
-        const isMobileDevice = this.isMobileClient({ userAgent, isMobile, isMobileApp });
+        const isMobileDevice = this.isMobileClient({ userAgent, isMobile, isMobileApp, deviceId });
         if (!isMobileDevice) {
             return { allowed: true, isDesktop: true };
         }

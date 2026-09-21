@@ -481,16 +481,13 @@ exports.checkInOutWithFace = async (req, res) => {
             }
         }
 
-        // Single Device Security & Proxy Attendance Prevention (Mobile Only)
+        // Single Device Security & Proxy Attendance Prevention (Mobile Only for Check-In / Check-Out)
         const isMobileHeader = req.headers['x-is-mobile'];
         const userAgent = getUserAgent(req);
-        const isMobile = isMobileHeader !== undefined
-            ? (isMobileHeader === 'true' || isMobileHeader === true)
-            : (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|okhttp|Expo|WorkPulseApp/i.test(userAgent || ''));
+        const deviceId = req.headers['x-device-id'] || req.body.deviceId || req.body.device_id || req.query.deviceId;
+        const deviceName = req.headers['x-device-name'] || req.body.deviceName || req.body.device_name || phone_model;
 
-        const deviceId = req.headers['x-device-id'] || req.body.deviceId;
-        const deviceName = req.headers['x-device-name'] || req.body.deviceName || phone_model;
-        if (deviceId && isMobile) {
+        if (deviceId) {
             const clientIp = getClientIp(req);
             const deviceCheck = await deviceSecurity.verifyAndBindDevice({
                 staffId: user.staffid,
@@ -498,7 +495,7 @@ exports.checkInOutWithFace = async (req, res) => {
                 deviceName,
                 userAgent,
                 ipAddress: clientIp,
-                isMobile: true,
+                isMobile: isMobileHeader !== undefined ? (isMobileHeader === 'true' || isMobileHeader === true) : undefined,
                 action: action === 'CHECK_IN' ? 'MOBILE_FACE_CHECK_IN' : 'MOBILE_FACE_CHECK_OUT'
             });
 
@@ -1198,16 +1195,13 @@ exports.getMyBadgeData = async (req, res) => {
             return res.status(403).send({ message: "Employee account is inactive." });
         }
 
-        // Single Device Security & Proxy Attendance Prevention (Mobile Only)
+        // Single Device Security & Proxy Attendance Prevention (Mobile Only for Badge Access)
         const isMobileHeader = req.headers['x-is-mobile'];
         const userAgent = getUserAgent(req);
-        const isMobile = isMobileHeader !== undefined
-            ? (isMobileHeader === 'true' || isMobileHeader === true)
-            : (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|okhttp|Expo|WorkPulseApp/i.test(userAgent || ''));
+        const deviceId = req.headers['x-device-id'] || req.query.deviceId || req.query.device_id;
+        const deviceName = req.headers['x-device-name'] || req.query.deviceName || req.query.device_name;
 
-        const deviceId = req.headers['x-device-id'] || req.query.deviceId;
-        const deviceName = req.headers['x-device-name'] || req.query.deviceName;
-        if (deviceId && isMobile) {
+        if (deviceId) {
             const clientIp = getClientIp(req);
             const deviceCheck = await deviceSecurity.verifyAndBindDevice({
                 staffId: user.staffid,
@@ -1215,7 +1209,7 @@ exports.getMyBadgeData = async (req, res) => {
                 deviceName,
                 userAgent,
                 ipAddress: clientIp,
-                isMobile: true,
+                isMobile: isMobileHeader !== undefined ? (isMobileHeader === 'true' || isMobileHeader === true) : undefined,
                 action: 'SMART_BADGE_ACCESS'
             });
 
