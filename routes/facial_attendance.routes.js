@@ -36,6 +36,20 @@ module.exports = function (app) {
         controller.recordKioskAttendance
     );
 
+    // Dynamic Employee Smart Badge: Get current user's signed dynamic QR badge
+    app.get(
+        "/api/attendance/my-badge",
+        [verifyToken],
+        controller.getMyBadgeData
+    );
+
+    // Kiosk Attendance Terminal: Scan dynamic QR badge to record check-in / check-out
+    app.post(
+        "/api/attendance/scan-qr-badge",
+        [verifyToken, canAccessAttendancePortal],
+        controller.scanQrBadgeAttendance
+    );
+
     // Kiosk Attendance Terminal: Staff list
     app.get(
         "/api/attendance/staff-list",

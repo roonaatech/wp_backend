@@ -11,6 +11,7 @@ const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
 const faceBiometrics = require("../services/face_biometrics.service");
+const badgeSecurity = require("../services/badge_security.service");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -1148,5 +1149,281 @@ exports.recordKioskAttendance = async (req, res) => {
     }
 };
 
+/**
+ * Generate a dynamic QR attendance badge for the authenticated employee
+ * GET /api/attendance/my-badge
+ */
+exports.getMyBadgeData = async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId, {
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'face_image_path']
+        });
 
+        if (!user) {
+            return res.status(404).send({ message: "Employee not found." });
+        }
 
+        if (user.active == 0 || user.active === false || user.active === '0') {
+            return res.status(403).send({ message: "Employee account is inactive." });
+        }
+
+        // Get Role name
+        let roleName = 'Staff';
+        if (user.role) {
+            const roleObj = await Role.findByPk(user.role);
+            if (roleObj) roleName = roleObj.display_name || roleObj.name;
+        }
+
+        // Get Employee profile image and department if available
+        let profileImage = user.face_image_path ? user.face_image_path.replace(/\\/g, '/') : null;
+        let department = null;
+        try {
+            const empProfile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+            if (empProfile) {
+                if (empProfile.image_path) profileImage = empProfile.image_path.replace(/\\/g, '/');
+                if (empProfile.department) department = empProfile.department;
+            }
+        } catch (_) {}
+
+        // Get today's attendance status
+        const tz = await getAppTimezone();
+        const nowString = timezoneUtil.getNowStringInTimezone(tz);
+        const todayDateOnly = nowString.split(' ')[0];
+
+        let todayStatus = 'NOT_CHECKED_IN';
+        let checkInTime = null;
+
+        const openLog = await AttendanceLog.findOne({
+            where: {
+                staff_id: user.staffid,
+                date: todayDateOnly,
+                check_out_time: null
+            }
+        });
+
+        if (openLog) {
+            todayStatus = 'CHECKED_IN';
+            checkInTime = formatDateInTimezone(openLog.check_in_time, tz);
+        } else {
+            const completedLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    date: todayDateOnly,
+                    check_out_time: { [db.Sequelize.Op.ne]: null }
+                }
+            });
+            if (completedLog) {
+                todayStatus = 'COMPLETED';
+            }
+        }
+
+        // Generate HMAC-SHA256 signed dynamic badge token
+        const badgeInfo = badgeSecurity.generateBadgeToken({
+            staffId: user.staffid,
+            email: user.email,
+            name: `${user.firstname} ${user.lastname}`
+        });
+
+        return res.status(200).send({
+            success: true,
+            qrPayload: badgeInfo.token,
+            expiresAt: badgeInfo.expiresAt,
+            ttlSeconds: badgeInfo.ttlSeconds,
+            employee: {
+                staffId: user.staffid,
+                name: `${user.firstname} ${user.lastname}`,
+                email: user.email,
+                role: roleName,
+                department,
+                avatarUrl: profileImage
+            },
+            todayStatus,
+            checkInTime
+        });
+
+    } catch (err) {
+        console.error("Error generating dynamic badge data:", err);
+        res.status(500).send({ message: err.message || "Error generating dynamic badge." });
+    }
+};
+
+/**
+ * Verify and record attendance from scanned dynamic QR badge at kiosk terminal
+ * POST /api/attendance/scan-qr-badge
+ */
+exports.scanQrBadgeAttendance = async (req, res) => {
+    const { qrPayload, latitude, longitude, phone_model } = req.body;
+
+    if (!qrPayload) {
+        return res.status(400).send({
+            success: false,
+            message: "QR badge payload is required."
+        });
+    }
+
+    try {
+        // 1. Verify cryptographic validity, expiration & replay protection
+        const verification = badgeSecurity.verifyBadgeToken(qrPayload);
+        if (!verification.valid) {
+            return res.status(400).send({
+                success: false,
+                message: verification.error || "Invalid or expired QR badge. Please refresh."
+            });
+        }
+
+        const { staffId, email } = verification.data;
+
+        // 2. Fetch employee details
+        const user = await User.findOne({
+            where: {
+                [db.Sequelize.Op.or]: [
+                    { staffid: staffId },
+                    { email: email }
+                ]
+            }
+        });
+
+        if (!user) {
+            return res.status(404).send({
+                success: false,
+                message: "Employee not found."
+            });
+        }
+
+        if (user.active == 0 || user.active === false || user.active === '0') {
+            return res.status(403).send({
+                success: false,
+                message: "Employee account is inactive."
+            });
+        }
+
+        const tz = await getAppTimezone();
+        const now = new Date();
+        const nowString = timezoneUtil.getNowStringInTimezone(tz);
+        const todayDateOnly = nowString.split(' ')[0];
+        const formattedNowTime = formatDateInTimezone(now, tz);
+
+        // Fetch avatar for display
+        let avatarUrl = user.face_image_path ? user.face_image_path.replace(/\\/g, '/') : null;
+        try {
+            const empProfile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+            if (empProfile && empProfile.image_path) {
+                avatarUrl = empProfile.image_path.replace(/\\/g, '/');
+            }
+        } catch (_) {}
+
+        // 3. Determine whether to CHECK_IN or CHECK_OUT
+        const existingOpenLog = await AttendanceLog.findOne({
+            where: {
+                staff_id: user.staffid,
+                date: todayDateOnly,
+                check_out_time: null
+            },
+            order: [['check_in_time', 'DESC']]
+        });
+
+        if (!existingOpenLog) {
+            // Check if already completed today
+            const completedLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    date: todayDateOnly,
+                    check_out_time: { [db.Sequelize.Op.ne]: null }
+                }
+            });
+
+            if (completedLog) {
+                return res.status(400).send({
+                    success: false,
+                    message: `${user.firstname} ${user.lastname} has already completed attendance for today.`
+                });
+            }
+
+            // Perform CHECK_IN
+            const attendance = {
+                staff_id: user.staffid,
+                check_in_time: now,
+                date: todayDateOnly,
+                phone_model: phone_model || 'Front Desk QR Terminal',
+                ip_address: getClientIp(req),
+                latitude: latitude || null,
+                longitude: longitude || null
+            };
+
+            const createdLog = await AttendanceLog.create(attendance);
+
+            await logActivity({
+                admin_id: req.userId,
+                action: 'BADGE_QR_CHECK_IN',
+                entity: 'AttendanceLog',
+                entity_id: createdLog.id,
+                affected_user_id: user.staffid,
+                description: `Dynamic QR Badge Check-In recorded for ${user.firstname} ${user.lastname}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
+            return res.status(200).send({
+                success: true,
+                type: 'CHECK_IN',
+                employeeName: `${user.firstname} ${user.lastname}`,
+                email: user.email,
+                timestamp: formattedNowTime,
+                avatarUrl,
+                message: `Welcome, ${user.firstname}! Check-in recorded at ${formattedNowTime.split(' ')[1] || formattedNowTime}.`
+            });
+
+        } else {
+            // Perform CHECK_OUT
+            await existingOpenLog.update({
+                check_out_time: now
+            });
+
+            if (user.approving_manager_id) {
+                await Approval.create({
+                    attendance_log_id: existingOpenLog.id,
+                    manager_id: user.approving_manager_id,
+                    status: 'pending'
+                });
+            }
+
+            await logActivity({
+                admin_id: req.userId,
+                action: 'BADGE_QR_CHECK_OUT',
+                entity: 'AttendanceLog',
+                entity_id: existingOpenLog.id,
+                affected_user_id: user.staffid,
+                description: `Dynamic QR Badge Check-Out recorded for ${user.firstname} ${user.lastname}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
+            let durationText = '';
+            if (existingOpenLog.check_in_time) {
+                const diffMs = now.getTime() - new Date(existingOpenLog.check_in_time).getTime();
+                const totalMinutes = Math.floor(diffMs / 60000);
+                const hrs = Math.floor(totalMinutes / 60);
+                const mins = totalMinutes % 60;
+                durationText = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} mins`;
+            }
+
+            return res.status(200).send({
+                success: true,
+                type: 'CHECK_OUT',
+                employeeName: `${user.firstname} ${user.lastname}`,
+                email: user.email,
+                timestamp: formattedNowTime,
+                avatarUrl,
+                duration: durationText,
+                message: `Goodbye, ${user.firstname}! Check-out recorded. Total time: ${durationText || 'completed'}.`
+            });
+        }
+
+    } catch (err) {
+        console.error("Error scanning QR badge attendance:", err);
+        res.status(500).send({
+            success: false,
+            message: err.message || "Error processing QR badge scan."
+        });
+    }
+};

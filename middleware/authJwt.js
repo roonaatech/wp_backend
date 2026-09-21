@@ -496,7 +496,7 @@ const canAccessAttendancePortal = async (req, res, next) => {
             return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        if (role.can_access_attendance_portal == true) {
+        if (role.can_access_attendance_portal == true || role.can_access_kiosk == true) {
             next();
             return;
         }
