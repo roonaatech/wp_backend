@@ -1284,6 +1284,19 @@ exports.getMyBadgeData = async (req, res) => {
             qrPayload: badgeInfo.token,
             expiresAt: badgeInfo.expiresAt,
             ttlSeconds: badgeInfo.ttlSeconds,
+            badge: {
+                staffId: user.staffid,
+                name: `${user.firstname} ${user.lastname}`,
+                email: user.email,
+                role: roleName,
+                department,
+                avatarUrl: profileImage,
+                qrPayload: badgeInfo.token,
+                expiresAt: badgeInfo.expiresAt,
+                ttlSeconds: badgeInfo.ttlSeconds,
+                todayStatus,
+                checkInTime
+            },
             employee: {
                 staffId: user.staffid,
                 name: `${user.firstname} ${user.lastname}`,
