@@ -481,18 +481,24 @@ exports.checkInOutWithFace = async (req, res) => {
             }
         }
 
-        // Single Device Security & Proxy Attendance Prevention
+        // Single Device Security & Proxy Attendance Prevention (Mobile Only)
+        const isMobileHeader = req.headers['x-is-mobile'];
+        const userAgent = getUserAgent(req);
+        const isMobile = isMobileHeader !== undefined
+            ? (isMobileHeader === 'true' || isMobileHeader === true)
+            : (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|okhttp|Expo|WorkPulseApp/i.test(userAgent || ''));
+
         const deviceId = req.headers['x-device-id'] || req.body.deviceId;
         const deviceName = req.headers['x-device-name'] || req.body.deviceName || phone_model;
-        if (deviceId) {
+        if (deviceId && isMobile) {
             const clientIp = getClientIp(req);
-            const userAgent = getUserAgent(req);
             const deviceCheck = await deviceSecurity.verifyAndBindDevice({
                 staffId: user.staffid,
                 deviceId,
                 deviceName,
                 userAgent,
                 ipAddress: clientIp,
+                isMobile: true,
                 action: action === 'CHECK_IN' ? 'MOBILE_FACE_CHECK_IN' : 'MOBILE_FACE_CHECK_OUT'
             });
 
@@ -1192,18 +1198,24 @@ exports.getMyBadgeData = async (req, res) => {
             return res.status(403).send({ message: "Employee account is inactive." });
         }
 
-        // Single Device Security & Proxy Attendance Prevention
+        // Single Device Security & Proxy Attendance Prevention (Mobile Only)
+        const isMobileHeader = req.headers['x-is-mobile'];
+        const userAgent = getUserAgent(req);
+        const isMobile = isMobileHeader !== undefined
+            ? (isMobileHeader === 'true' || isMobileHeader === true)
+            : (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|okhttp|Expo|WorkPulseApp/i.test(userAgent || ''));
+
         const deviceId = req.headers['x-device-id'] || req.query.deviceId;
         const deviceName = req.headers['x-device-name'] || req.query.deviceName;
-        if (deviceId) {
+        if (deviceId && isMobile) {
             const clientIp = getClientIp(req);
-            const userAgent = getUserAgent(req);
             const deviceCheck = await deviceSecurity.verifyAndBindDevice({
                 staffId: user.staffid,
                 deviceId,
                 deviceName,
                 userAgent,
                 ipAddress: clientIp,
+                isMobile: true,
                 action: 'SMART_BADGE_ACCESS'
             });
 

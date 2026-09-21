@@ -14,6 +14,25 @@ const { Op } = db.Sequelize;
 class DeviceSecurityService {
 
     /**
+     * Helper to detect whether a request is from a Mobile Client (Mobile App or Mobile Browser)
+     * @param {Object} params
+     * @param {string} [params.userAgent]
+     * @param {boolean|string} [params.isMobile]
+     * @param {boolean|string} [params.isMobileApp]
+     * @returns {boolean}
+     */
+    isMobileClient({ userAgent = '', isMobile, isMobileApp = false } = {}) {
+        if (isMobileApp === true || isMobileApp === 'true') return true;
+        if (isMobile === true || isMobile === 'true') return true;
+        if (isMobile === false || isMobile === 'false') return false;
+
+        if (!userAgent) return false;
+        // Regex checking for Android, iPhone, iPad, iPod, BlackBerry, Opera Mini, Mobile, okhttp, Expo, WorkPulseApp
+        const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|okhttp|Expo|WorkPulseApp/i;
+        return mobileRegex.test(userAgent);
+    }
+
+    /**
      * Verify device authorization and update/bind device for the employee
      * @param {Object} params
      * @param {number} params.staffId - Employee staff ID
@@ -21,12 +40,21 @@ class DeviceSecurityService {
      * @param {string} [params.deviceName] - Device model / browser (e.g., "iPhone 15 / Safari")
      * @param {string} [params.userAgent] - Browser User-Agent
      * @param {string} [params.ipAddress] - Request IP address
+     * @param {boolean|string} [params.isMobile] - Explicit mobile flag
+     * @param {boolean|string} [params.isMobileApp] - Mobile app flag
      * @param {string} [params.action] - Action being performed (e.g. 'ATTENDANCE_BADGE', 'FACE_ATTENDANCE')
-     * @returns {Promise<{ allowed: boolean, error?: string, violationLogged?: boolean }>}
+     * @returns {Promise<{ allowed: boolean, error?: string, violationLogged?: boolean, isDesktop?: boolean }>}
      */
-    async verifyAndBindDevice({ staffId, deviceId, deviceName, userAgent, ipAddress, action = 'ATTENDANCE_BADGE' }) {
+    async verifyAndBindDevice({ staffId, deviceId, deviceName, userAgent, ipAddress, action = 'ATTENDANCE_BADGE', isMobile, isMobileApp }) {
         if (!staffId) {
             return { allowed: false, error: "Staff ID is required for device verification." };
+        }
+
+        // Strict Requirement: Single-Device Security Binding & Anti-Proxy rules ONLY apply to mobile clients (mobile app / mobile browser).
+        // Laptop / desktop browser logins (PC, Mac, Linux) MUST NEVER be blocked and MUST NEVER trigger security violations.
+        const isMobileDevice = this.isMobileClient({ userAgent, isMobile, isMobileApp });
+        if (!isMobileDevice) {
+            return { allowed: true, isDesktop: true };
         }
 
         // If no deviceId provided (e.g. desktop non-mobile browser call without fingerprint), allow

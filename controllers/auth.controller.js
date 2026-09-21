@@ -301,29 +301,6 @@ exports.signin = async (req, res) => {
             }
         }
 
-        // Single-Device Security Binding & Anti-Proxy Check
-        const deviceId = req.headers['x-device-id'] || req.body.deviceId;
-        const deviceName = req.headers['x-device-name'] || req.body.deviceName;
-        if (!isServiceAccount && deviceId) {
-            const clientIp = getClientIp(req);
-            const userAgent = getUserAgent(req);
-            const deviceCheck = await deviceSecurity.verifyAndBindDevice({
-                staffId: user.staffid,
-                deviceId,
-                deviceName,
-                userAgent,
-                ipAddress: clientIp,
-                action: 'MOBILE_LOGIN'
-            });
-
-            if (!deviceCheck.allowed) {
-                return res.status(403).send({
-                    deviceViolation: true,
-                    message: deviceCheck.error
-                });
-            }
-        }
-
         // Update last_login timestamp (keep null for temporary password until new password is set)
         if (!isTemporaryPassword) {
             await user.update({ last_login: new Date() });
