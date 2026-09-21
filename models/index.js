@@ -127,5 +127,16 @@ db.user.hasMany(db.anniversary_wish_logs, { foreignKey: 'staff_id', as: 'anniver
 db.anniversary_wish_logs.belongsTo(db.user, { foreignKey: 'staff_id', as: 'anniversary_staff' });
 db.anniversary_wish_logs.belongsTo(db.user, { foreignKey: 'triggered_by', as: 'anniversary_triggered_by_user' });
 
+// Single Device Binding & Proxy Attendance Violation Models
+db.employee_devices = require("./employee_device.model.js")(sequelize, Sequelize);
+db.user.hasMany(db.employee_devices, { foreignKey: 'staff_id', as: 'devices', onDelete: 'CASCADE' });
+db.employee_devices.belongsTo(db.user, { foreignKey: 'staff_id', as: 'user' });
+
+db.device_violation_logs = require("./device_violation_log.model.js")(sequelize, Sequelize);
+db.user.hasMany(db.device_violation_logs, { foreignKey: 'attempted_staff_id', as: 'attempted_violations', onDelete: 'CASCADE' });
+db.device_violation_logs.belongsTo(db.user, { foreignKey: 'attempted_staff_id', as: 'attempted_user' });
+db.device_violation_logs.belongsTo(db.user, { foreignKey: 'bound_staff_id', as: 'bound_user' });
+db.device_violation_logs.belongsTo(db.user, { foreignKey: 'resolved_by', as: 'resolver' });
+
 module.exports = db;
 

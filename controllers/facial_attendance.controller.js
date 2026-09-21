@@ -12,6 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const faceBiometrics = require("../services/face_biometrics.service");
 const badgeSecurity = require("../services/badge_security.service");
+const deviceSecurity = require("../services/device_security.service");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -477,6 +478,30 @@ exports.checkInOutWithFace = async (req, res) => {
             const passwordIsValid = bcrypt.compareSync(password, user.password);
             if (!passwordIsValid) {
                 return res.status(400).send({ message: "Invalid Password!" });
+            }
+        }
+
+        // Single Device Security & Proxy Attendance Prevention
+        const deviceId = req.headers['x-device-id'] || req.body.deviceId;
+        const deviceName = req.headers['x-device-name'] || req.body.deviceName || phone_model;
+        if (deviceId) {
+            const clientIp = getClientIp(req);
+            const userAgent = getUserAgent(req);
+            const deviceCheck = await deviceSecurity.verifyAndBindDevice({
+                staffId: user.staffid,
+                deviceId,
+                deviceName,
+                userAgent,
+                ipAddress: clientIp,
+                action: action === 'CHECK_IN' ? 'MOBILE_FACE_CHECK_IN' : 'MOBILE_FACE_CHECK_OUT'
+            });
+
+            if (!deviceCheck.allowed) {
+                return res.status(403).send({
+                    success: false,
+                    deviceViolation: true,
+                    message: deviceCheck.error
+                });
             }
         }
 
@@ -1165,6 +1190,30 @@ exports.getMyBadgeData = async (req, res) => {
 
         if (user.active == 0 || user.active === false || user.active === '0') {
             return res.status(403).send({ message: "Employee account is inactive." });
+        }
+
+        // Single Device Security & Proxy Attendance Prevention
+        const deviceId = req.headers['x-device-id'] || req.query.deviceId;
+        const deviceName = req.headers['x-device-name'] || req.query.deviceName;
+        if (deviceId) {
+            const clientIp = getClientIp(req);
+            const userAgent = getUserAgent(req);
+            const deviceCheck = await deviceSecurity.verifyAndBindDevice({
+                staffId: user.staffid,
+                deviceId,
+                deviceName,
+                userAgent,
+                ipAddress: clientIp,
+                action: 'SMART_BADGE_ACCESS'
+            });
+
+            if (!deviceCheck.allowed) {
+                return res.status(403).send({
+                    success: false,
+                    deviceViolation: true,
+                    message: deviceCheck.error
+                });
+            }
         }
 
         // Get Role name

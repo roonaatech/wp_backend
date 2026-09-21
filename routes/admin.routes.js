@@ -658,4 +658,9 @@ module.exports = function (app) {
      *         description: Unauthorized
      */
     app.get("/api/admin/reports/monthly-summary", [verifyToken, authJwt.canViewReports], controller.getMonthlySummary);
+
+    // Single-Device Security & Proxy Attendance Routes
+    app.get("/api/admin/device-violations", [verifyToken, authJwt.canViewReports], controller.getDeviceViolations);
+    app.put("/api/admin/device-violations/:id", [verifyToken, authJwt.canManageUsers], controller.updateDeviceViolationStatus);
+    app.post("/api/admin/reset-employee-device/:staffId", [verifyToken, authJwt.canManageUsers], controller.resetEmployeeDevice);
 };

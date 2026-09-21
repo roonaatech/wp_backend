@@ -10,6 +10,7 @@ const Setting = db.settings;
 const emailService = require("../utils/email.service");
 const birthdayUtil = require("../utils/birthday.util");
 const anniversaryUtil = require("../utils/anniversary.util");
+const deviceSecurity = require("../services/device_security.service");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -3118,3 +3119,123 @@ exports.deleteServiceAccount = async (req, res) => {
         res.status(500).send({ message: err.message });
     }
 };
+
+/**
+ * Get proxy attendance device violation logs (Admin / HR)
+ * GET /api/admin/device-violations
+ */
+exports.getDeviceViolations = async (req, res) => {
+    const { status, page = 1, limit = 50 } = req.query;
+    const offset = (page - 1) * limit;
+
+    try {
+        const whereClause = {};
+        if (status) {
+            whereClause.status = status;
+        }
+
+        const { count, rows } = await db.device_violation_logs.findAndCountAll({
+            where: whereClause,
+            include: [
+                {
+                    model: db.user,
+                    as: 'attempted_user',
+                    attributes: ['staffid', 'firstname', 'lastname', 'email', 'role']
+                },
+                {
+                    model: db.user,
+                    as: 'bound_user',
+                    attributes: ['staffid', 'firstname', 'lastname', 'email', 'role']
+                },
+                {
+                    model: db.user,
+                    as: 'resolver',
+                    attributes: ['staffid', 'firstname', 'lastname']
+                }
+            ],
+            order: [['created_at', 'DESC']],
+            limit: parseInt(limit),
+            offset: parseInt(offset)
+        });
+
+        res.status(200).send({
+            total: count,
+            pages: Math.ceil(count / limit),
+            currentPage: parseInt(page),
+            violations: rows
+        });
+    } catch (err) {
+        console.error("Error fetching device violations:", err);
+        res.status(500).send({ message: err.message || "Failed to fetch device violation logs." });
+    }
+};
+
+/**
+ * Update device violation status (Admin / HR)
+ * PUT /api/admin/device-violations/:id
+ */
+exports.updateDeviceViolationStatus = async (req, res) => {
+    const { id } = req.params;
+    const { status, hr_notes } = req.body;
+
+    if (!['REPORTED', 'REVIEWED', 'RESOLVED'].includes(status)) {
+        return res.status(400).send({ message: "Invalid status value." });
+    }
+
+    try {
+        const violation = await db.device_violation_logs.findByPk(id);
+        if (!violation) {
+            return res.status(404).send({ message: "Violation log not found." });
+        }
+
+        await violation.update({
+            status,
+            hr_notes: hr_notes !== undefined ? hr_notes : violation.hr_notes,
+            resolved_by: status === 'RESOLVED' ? req.userId : violation.resolved_by,
+            resolved_at: status === 'RESOLVED' ? new Date() : violation.resolved_at
+        });
+
+        res.status(200).send({ message: "Violation status updated successfully.", violation });
+    } catch (err) {
+        console.error("Error updating violation status:", err);
+        res.status(500).send({ message: err.message || "Failed to update violation status." });
+    }
+};
+
+/**
+ * Reset device binding for an employee (Admin / HR)
+ * POST /api/admin/reset-employee-device/:staffId
+ */
+exports.resetEmployeeDevice = async (req, res) => {
+    const { staffId } = req.params;
+    const { reason } = req.body;
+
+    try {
+        const user = await db.user.findOne({ where: { staffid: staffId } });
+        if (!user) {
+            return res.status(404).send({ message: "Employee not found." });
+        }
+
+        const result = await deviceSecurity.resetEmployeeDeviceBinding(staffId, req.userId, reason);
+
+        // Log admin activity
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'EmployeeDevice',
+            entity_id: staffId,
+            description: `Reset mobile device binding for ${user.firstname} ${user.lastname} (Staff ID: ${staffId}). Reason: ${reason || 'Admin reset'}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.status(200).send({
+            message: `Device binding reset successfully for ${user.firstname} ${user.lastname}. They can now bind a new device on their next attendance attempt.`,
+            clearedCount: result.count
+        });
+    } catch (err) {
+        console.error("Error resetting employee device:", err);
+        res.status(500).send({ message: err.message || "Failed to reset employee device binding." });
+    }
+};
+
