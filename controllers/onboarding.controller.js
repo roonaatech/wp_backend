@@ -385,11 +385,17 @@ exports.getEmployeeExtendedProfile = async (req, res) => {
             }
         }
 
-        // Only Super Admin (hierarchy_level === 0) can see registered face biometric data
+        // Only Super Admin (hierarchy_level === 0) can see registered face biometric data and mobile unique details
         const isCallerSuperAdmin = callerRole && callerRole.hierarchy_level === 0;
         if (!isCallerSuperAdmin) {
             user.setDataValue('face_image_path', null);
             user.setDataValue('face_registered_at', null);
+            user.setDataValue('bound_device', null);
+        } else {
+            const activeDevice = await db.employee_devices.findOne({
+                where: { staff_id: user.staffid, is_active: true }
+            });
+            user.setDataValue('bound_device', activeDevice);
         }
 
         res.status(200).send(user);
