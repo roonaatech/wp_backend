@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const BADGE_SECRET = process.env.BADGE_SECRET || process.env.JWT_SECRET || 'workpulse-dynamic-badge-secret-key-2026';
 
 // Token validity window (in milliseconds)
-const TOKEN_TTL_MS = 30 * 1000; // 30 seconds validity
+const TOKEN_TTL_MS = 15 * 1000; // 15 seconds strict validity matching badge rotation
 
 // Anti-replay cache: stores recently used nonces to prevent token reuse
 const usedNonces = new Map(); // nonce -> timestamp

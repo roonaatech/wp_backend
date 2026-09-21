@@ -7,6 +7,7 @@ const bcrypt = require("bcryptjs");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const apkController = require("./apk.controller");
 const emailService = require("../utils/email.service");
+const deviceSecurity = require("../services/device_security.service");
 
 const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
@@ -297,6 +298,29 @@ exports.signin = async (req, res) => {
                         message: "Security declaration has not been completed. Please log in using a web browser to sign the declaration before logging into the mobile app."
                     });
                 }
+            }
+        }
+
+        // Single-Device Security Binding & Anti-Proxy Check
+        const deviceId = req.headers['x-device-id'] || req.body.deviceId;
+        const deviceName = req.headers['x-device-name'] || req.body.deviceName;
+        if (!isServiceAccount && deviceId) {
+            const clientIp = getClientIp(req);
+            const userAgent = getUserAgent(req);
+            const deviceCheck = await deviceSecurity.verifyAndBindDevice({
+                staffId: user.staffid,
+                deviceId,
+                deviceName,
+                userAgent,
+                ipAddress: clientIp,
+                action: 'MOBILE_LOGIN'
+            });
+
+            if (!deviceCheck.allowed) {
+                return res.status(403).send({
+                    deviceViolation: true,
+                    message: deviceCheck.error
+                });
             }
         }
 
