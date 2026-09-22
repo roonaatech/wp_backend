@@ -63,8 +63,62 @@ const getUserAgent = (req) => {
     return req.headers['user-agent'] || 'unknown';
 };
 
+/**
+ * Detect client login device from express request:
+ * Returns: "Web", "Mob App", or "Mob Browser"
+ * @param {Object} req - Express request
+ * @returns {string} - "Web" | "Mob App" | "Mob Browser"
+ */
+const getClientDevice = (req) => {
+    if (!req) return 'Web';
+    const ua = getUserAgent(req);
+    const body = req.body || {};
+    const headers = req.headers || {};
+
+    const isMobileApp = body.is_mobile_app === true ||
+                        body.client_type === 'mobile_app' ||
+                        headers['x-client-type'] === 'mobile-app' ||
+                        /Dart|Flutter|WorkPulseMobile/i.test(ua);
+    if (isMobileApp) return 'Mob App';
+
+    const isMobileBrowser = body.client_type === 'mobile_browser' ||
+                            headers['sec-ch-ua-mobile'] === '?1' ||
+                            /Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    if (isMobileBrowser) return 'Mob Browser';
+
+    return 'Web';
+};
+
+/**
+ * Detect device from activity log object (checking new_values, description, or user_agent)
+ * @param {Object} activity - Activity log instance or plain object
+ * @returns {string} - "Web" | "Mob App" | "Mob Browser"
+ */
+const detectDeviceFromActivity = (activity) => {
+    if (!activity) return 'Web';
+
+    let newVals = activity.new_values;
+    if (typeof newVals === 'string') {
+        try { newVals = JSON.parse(newVals); } catch (_) { newVals = null; }
+    }
+    if (newVals?.login_device) return newVals.login_device;
+
+    const desc = activity.description || '';
+    if (desc.includes('(Mob App)') || desc.includes('via Mob App')) return 'Mob App';
+    if (desc.includes('(Mob Browser)') || desc.includes('via Mob Browser')) return 'Mob Browser';
+    if (desc.includes('(Web)') || desc.includes('via Web')) return 'Web';
+
+    const ua = activity.user_agent || '';
+    if (/Dart|Flutter|WorkPulseMobile/i.test(ua)) return 'Mob App';
+    if (/Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)) return 'Mob Browser';
+
+    return 'Web';
+};
+
 module.exports = {
     logActivity,
     getClientIp,
-    getUserAgent
+    getUserAgent,
+    getClientDevice,
+    detectDeviceFromActivity
 };

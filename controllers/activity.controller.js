@@ -2,6 +2,7 @@ const db = require("../models");
 const ActivityLog = db.activity_logs;
 const User = db.user;
 const { Op } = require("sequelize");
+const { detectDeviceFromActivity } = require("../utils/activity.logger");
 
 /**
  * Helper function to get subordinate user IDs
@@ -309,15 +310,16 @@ exports.exportActivities = async (req, res) => {
         });
 
         // Generate CSV
-        let csv = 'Timestamp,Action,Entity,Admin,Affected User,Description\n';
+        let csv = 'Timestamp,Action,Entity,Admin,Device,Affected User,Description\n';
 
         activities.forEach(activity => {
             const admin = activity.admin ? `${activity.admin.firstname} ${activity.admin.lastname}` : 'Unknown';
             const d = new Date(activity.createdAt);
             const timestamp = `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()} ${d.getHours() % 12 || 12}:${d.getMinutes().toString().padStart(2, '0')} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
             const description = (activity.description || '').replace(/"/g, '""');
+            const device = detectDeviceFromActivity(activity);
 
-            csv += `"${timestamp}","${activity.action}","${activity.entity}","${admin}","","${description}"\n`;
+            csv += `"${timestamp}","${activity.action}","${activity.entity}","${admin}","${device}","","${description}"\n`;
         });
 
         res.setHeader('Content-Type', 'text/csv');

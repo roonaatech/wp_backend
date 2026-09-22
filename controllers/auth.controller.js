@@ -4,7 +4,7 @@ const TblStaff = db.user;
 const axios = require('axios'); // For PHP API
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const { logActivity, getClientIp, getUserAgent, getClientDevice } = require("../utils/activity.logger");
 const apkController = require("./apk.controller");
 const emailService = require("../utils/email.service");
 const deviceSecurity = require("../services/device_security.service");
@@ -311,6 +311,9 @@ exports.signin = async (req, res) => {
         const tokenOptions = isServiceAccount ? { expiresIn: '36500d' } : { expiresIn: await getSessionTimeoutInSeconds() };
         var token = jwt.sign(tokenPayload, config.JWT_SECRET, tokenOptions);
 
+        // Detect login device type ("Web", "Mob App", or "Mob Browser")
+        const loginDevice = getClientDevice(req);
+
         // Log activity
         await logActivity({
             admin_id: isServiceAccount ? null : user.staffid,
@@ -318,9 +321,10 @@ exports.signin = async (req, res) => {
             entity: isServiceAccount ? 'ServiceAccount' : 'User',
             entity_id: isServiceAccount ? user.id : user.staffid,
             affected_user_id: isServiceAccount ? null : user.staffid,
+            new_values: { login_device: loginDevice },
             description: isServiceAccount
-                ? `Service account ${user.name} (${user.email}) logged in`
-                : `${user.firstname} ${user.lastname} logged in${phpAuthSuccess ? ' (via PHP Auth)' : ''}`,
+                ? `Service account ${user.name} (${user.email}) logged in (${loginDevice})`
+                : `${user.firstname} ${user.lastname} logged in (${loginDevice})${phpAuthSuccess ? ' (via PHP Auth)' : ''}`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
@@ -387,13 +391,15 @@ exports.logout = async (req, res) => {
         }
 
         // Log activity
+        const logoutDevice = getClientDevice(req);
         await logActivity({
             admin_id: userId,
             action: 'LOGOUT',
             entity: 'User',
             entity_id: userId,
             affected_user_id: userId,
-            description: `${user.firstname} ${user.lastname} logged out`,
+            new_values: { device: logoutDevice },
+            description: `${user.firstname} ${user.lastname} logged out (${logoutDevice})`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
@@ -684,6 +690,20 @@ exports.exchangeQRToken = async (req, res) => {
         });
 
         const userRole = user.role ? await db.roles.findByPk(user.role) : null;
+
+        // Log QR Login Activity
+        const qrLoginDevice = getClientDevice(req);
+        await logActivity({
+            admin_id: user.staffid,
+            action: 'LOGIN',
+            entity: 'User',
+            entity_id: user.staffid,
+            affected_user_id: user.staffid,
+            new_values: { login_device: qrLoginDevice, method: 'QR' },
+            description: `${user.firstname} ${user.lastname} logged in via QR (${qrLoginDevice})`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
 
         res.status(200).send({
             accessToken: sessionToken,
