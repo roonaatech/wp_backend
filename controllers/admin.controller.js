@@ -1555,6 +1555,7 @@ exports.getMonthlySummary = async (req, res) => {
     console.log('API Hit: getMonthlySummary', req.query);
     try {
         const { Op } = require("sequelize");
+        const AttendanceLog = db.attendance_logs;
         const LeaveRequest = db.leave_requests;
         const OnDutyLog = db.on_duty_logs;
         const TimeOffRequest = db.time_off_requests;
@@ -1573,7 +1574,7 @@ exports.getMonthlySummary = async (req, res) => {
         const lastDay = new Date(y, m, 0).getDate();
         const endDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-        // UTC bounds for on-duty timestamp columns
+        // UTC bounds for timestamp columns
         const [sUTC] = getUTCBounds(startDate, reportTz);
         const [, eUTC] = getUTCBounds(endDate, reportTz);
 
@@ -1595,6 +1596,19 @@ exports.getMonthlySummary = async (req, res) => {
         } else if (!canViewAll && !canViewSubs) {
             return res.send({ summary: [] });
         }
+
+        // --- Fetch Attendance Logs in date range ---
+        const attendanceLogs = await AttendanceLog.findAll({
+            where: {
+                ...staffFilter,
+                [Op.or]: [
+                    { date: { [Op.between]: [startDate, endDate] } },
+                    { check_in_time: { [Op.between]: [sUTC, eUTC] } }
+                ]
+            },
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }],
+            order: [['date', 'ASC'], ['check_in_time', 'ASC']]
+        });
 
         // --- Fetch Leave Requests in date range ---
         const leaves = await LeaveRequest.findAll({
@@ -1635,13 +1649,86 @@ exports.getMonthlySummary = async (req, res) => {
                     firstname: userData?.firstname || 'Unknown',
                     lastname: userData?.lastname || '',
                     email: userData?.email || '',
+                    present_days: 0,
+                    work_minutes: 0,
                     leave_days: 0,
                     timeoff_minutes: 0,
                     onduty_minutes: 0,
+                    attendance_dates: new Set(),
+                    attendance_records: [],
                     records: []
                 };
             }
         };
+
+        // Populate active staff within scope so all employees are represented
+        let baseStaffWhere = { active: 1 };
+        if (!canViewAll && canViewSubs) {
+            baseStaffWhere.approving_manager_id = req.userId;
+        }
+        const activeStaffList = await Staff.findAll({
+            where: baseStaffWhere,
+            attributes: ['staffid', 'firstname', 'lastname', 'email']
+        });
+        activeStaffList.forEach(st => ensureStaff(st.staffid, st));
+
+        // Process Attendance Logs
+        attendanceLogs.forEach(log => {
+            if (!log.check_in_time) return;
+            const sid = log.staff_id;
+            ensureStaff(sid, log.user);
+
+            const dStr = log.date || getDateInTimezone(log.check_in_time, reportTz);
+            staffMap[sid].attendance_dates.add(dStr);
+
+            let diffMins = 0;
+            let durationStr = 'Active / In Progress';
+            let durHours = 'Active';
+            let t1 = '';
+            let t2 = '';
+
+            const f1 = formatDateInTimezone(log.check_in_time, reportTz);
+            t1 = f1 ? f1.split(' ')[1].substring(0, 5) : '';
+
+            if (log.check_in_time && log.check_out_time) {
+                const diffMs = new Date(log.check_out_time).getTime() - new Date(log.check_in_time).getTime();
+                if (diffMs > 0) {
+                    diffMins = Math.floor(diffMs / 60000);
+                    staffMap[sid].work_minutes += diffMins;
+                    const h = Math.floor(diffMins / 60);
+                    const min = diffMins % 60;
+                    durHours = h > 0 && min > 0 ? `${h}h ${min}m` : (h > 0 ? `${h}h` : (min > 0 ? `${min}m` : '< 1m'));
+                    
+                    const f2 = formatDateInTimezone(log.check_out_time, reportTz);
+                    t2 = f2 ? f2.split(' ')[1].substring(0, 5) : '';
+                    durationStr = t1 && t2 ? `${t1} to ${t2} (${durHours})` : durHours;
+                }
+            } else if (log.check_in_time) {
+                durationStr = t1 ? `${t1} (Active)` : 'Active';
+            }
+
+            let detailStr = log.phone_model || 'Attendance Log';
+            if (log.ip_address && log.ip_address !== '127.0.0.1' && !log.ip_address.startsWith('::ffff:127.')) {
+                detailStr += ` (${log.ip_address})`;
+            }
+
+            staffMap[sid].attendance_records.push({
+                id: log.id,
+                date: dStr,
+                check_in_time: log.check_in_time,
+                check_out_time: log.check_out_time,
+                check_in_time_str: t1,
+                check_out_time_str: t2 || (log.check_in_time ? 'Active' : '—'),
+                duration: durationStr,
+                formatted_duration: durHours,
+                work_minutes: diffMins,
+                phone_model: log.phone_model || 'Web / Kiosk',
+                ip_address: log.ip_address || 'N/A',
+                latitude: log.latitude,
+                longitude: log.longitude,
+                status: log.check_out_time ? 'Completed' : 'Active'
+            });
+        });
 
         // Calculate leave days (clamped to month boundaries) - Only Approved
         leaves.forEach(leave => {
@@ -1785,18 +1872,74 @@ exports.getMonthlySummary = async (req, res) => {
         });
 
         // Convert to array and format hours
-        const summary = Object.values(staffMap).map(s => ({
-            staff_id: s.staff_id,
-            firstname: s.firstname,
-            lastname: s.lastname,
-            email: s.email,
-            leave_days: s.leave_days,
-            timeoff_hours: parseFloat((s.timeoff_minutes / 60).toFixed(1)),
-            timeoff_minutes: s.timeoff_minutes,
-            onduty_hours: parseFloat((s.onduty_minutes / 60).toFixed(1)),
-            onduty_minutes: s.onduty_minutes,
-            records: s.records || []
-        }));
+        const summary = Object.values(staffMap).map(s => {
+            const presentDays = s.attendance_dates ? s.attendance_dates.size : 0;
+            
+            // Sort individual attendance records chronologically
+            s.attendance_records.sort((a, b) => {
+                const da = a.date || '';
+                const db = b.date || '';
+                if (da !== db) return da.localeCompare(db);
+                const ta = a.check_in_time ? new Date(a.check_in_time).getTime() : 0;
+                const tb = b.check_in_time ? new Date(b.check_in_time).getTime() : 0;
+                return ta - tb;
+            });
+
+            // Build records list for the employee with a single grouped Attendance row at the top
+            const recordsList = [...s.records];
+            if (s.attendance_records.length > 0) {
+                const attDates = Array.from(s.attendance_dates).sort();
+                const minDate = attDates[0];
+                const maxDate = attDates[attDates.length - 1];
+                const dateRangeStr = minDate === maxDate ? minDate : `${minDate} to ${maxDate}`;
+                
+                const h = Math.floor(s.work_minutes / 60);
+                const m = s.work_minutes % 60;
+                const totalWorkDuration = h > 0 && m > 0 ? `${h}h ${m}m` : (h > 0 ? `${h}h` : (m > 0 ? `${m}m` : (s.attendance_records.length > 0 ? '< 1m' : '0h')));
+
+                recordsList.unshift({
+                    type: 'Attendance',
+                    is_grouped: true,
+                    date: dateRangeStr,
+                    start_date: minDate,
+                    end_date: maxDate,
+                    present_days: presentDays,
+                    duration: totalWorkDuration,
+                    work_minutes: s.work_minutes,
+                    detail: `${s.attendance_records.length} session(s) logged`,
+                    sessions: s.attendance_records
+                });
+            }
+
+            // Sort non-attendance records chronologically while keeping grouped Attendance at the top
+            recordsList.sort((a, b) => {
+                if (a.type === 'Attendance') return -1;
+                if (b.type === 'Attendance') return 1;
+                const da = a.date || a.start_date || '';
+                const db = b.date || b.start_date || '';
+                if (da !== db) return da.localeCompare(db);
+                const ta = a.start_time ? new Date(a.start_time).getTime() : 0;
+                const tb = b.start_time ? new Date(b.start_time).getTime() : 0;
+                return ta - tb;
+            });
+
+            return {
+                staff_id: s.staff_id,
+                firstname: s.firstname,
+                lastname: s.lastname,
+                email: s.email,
+                present_days: presentDays,
+                work_hours: parseFloat((s.work_minutes / 60).toFixed(1)),
+                work_minutes: s.work_minutes,
+                leave_days: s.leave_days,
+                timeoff_hours: parseFloat((s.timeoff_minutes / 60).toFixed(1)),
+                timeoff_minutes: s.timeoff_minutes,
+                onduty_hours: parseFloat((s.onduty_minutes / 60).toFixed(1)),
+                onduty_minutes: s.onduty_minutes,
+                attendance_records: s.attendance_records,
+                records: recordsList
+            };
+        });
 
         // Sort by name
         summary.sort((a, b) => `${a.firstname} ${a.lastname}`.localeCompare(`${b.firstname} ${b.lastname}`));
