@@ -306,12 +306,10 @@ exports.signin = async (req, res) => {
             await user.update({ last_login: new Date() });
         }
 
-        const expiresIn = await getSessionTimeoutInSeconds();
-        var token = jwt.sign(
-            { id: isServiceAccount ? user.id : user.staffid, isServiceAccount },
-            config.JWT_SECRET,
-            { expiresIn }
-        );
+        // Service accounts never time out (100-year token lifetime); standard users use configured session timeout
+        const tokenPayload = { id: isServiceAccount ? user.id : user.staffid, isServiceAccount };
+        const tokenOptions = isServiceAccount ? { expiresIn: '36500d' } : { expiresIn: await getSessionTimeoutInSeconds() };
+        var token = jwt.sign(tokenPayload, config.JWT_SECRET, tokenOptions);
 
         // Log activity
         await logActivity({

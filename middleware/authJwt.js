@@ -12,6 +12,15 @@ const verifyToken = (req, res, next) => {
 
     jwt.verify(token, config.JWT_SECRET, (err, decoded) => {
         if (err) {
+            // Service accounts never expire: if an older token expired, still accept it if decoded signature was valid
+            if (err.name === 'TokenExpiredError') {
+                const decodedUnsafe = jwt.decode(token);
+                if (decodedUnsafe && decodedUnsafe.isServiceAccount) {
+                    req.userId = decodedUnsafe.id;
+                    req.isServiceAccount = true;
+                    return next();
+                }
+            }
             return res.status(401).send({
                 message: "Unauthorized!"
             });
