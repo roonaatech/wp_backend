@@ -2,6 +2,7 @@ const db = require("../models");
 const EmailConfig = db.email_config;
 const EmailTemplate = db.email_templates;
 const emailService = require("../utils/email.service");
+const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
 // Get Email Configuration
 exports.getConfig = async (req, res) => {
@@ -46,6 +47,17 @@ exports.updateConfig = async (req, res) => {
             });
         }
 
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'EmailConfig',
+            entity_id: config.id,
+            description: `Updated email SMTP configuration (${from_email || config.from_email})`,
+            new_values: { provider_type, host, port, secure, auth_user, from_name, from_email },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.status(200).send({ message: "Configuration saved successfully.", config });
     } catch (err) {
         console.error("Error in updateConfig:", err);
@@ -88,6 +100,18 @@ exports.updateTemplate = async (req, res) => {
         const [updated] = await EmailTemplate.update(req.body, { where: { id: id } });
         if (updated) {
             const updatedTemplate = await EmailTemplate.findByPk(id);
+
+            await logActivity({
+                admin_id: req.userId,
+                action: 'UPDATE',
+                entity: 'EmailTemplate',
+                entity_id: id,
+                description: `Updated email template: ${updatedTemplate.name || updatedTemplate.subject || id}`,
+                new_values: { subject: updatedTemplate.subject },
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+
             res.status(200).send({ message: "Template updated successfully.", template: updatedTemplate });
         } else {
             res.status(404).send({ message: `Cannot update Template with id=${id}. Maybe Template was not found or req.body is empty!` });

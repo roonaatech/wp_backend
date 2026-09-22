@@ -2,6 +2,7 @@ const db = require("../models");
 const Role = db.roles;
 const User = db.user;
 const { Op } = require("sequelize");
+const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
 // Get all roles
 exports.findAll = async (req, res) => {
@@ -130,6 +131,17 @@ exports.create = async (req, res) => {
             active: active !== undefined ? active : true
         });
 
+        await logActivity({
+            admin_id: req.userId,
+            action: 'CREATE',
+            entity: 'Role',
+            entity_id: role.id,
+            description: `Created role: ${role.display_name} (${role.name})`,
+            new_values: { name: role.name, display_name: role.display_name, hierarchy_level: role.hierarchy_level },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.status(201).json({
             message: "Role created successfully",
             role
@@ -255,6 +267,17 @@ exports.update = async (req, res) => {
             active: active !== undefined ? active : role.active
         });
 
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'Role',
+            entity_id: role.id,
+            description: `Updated role: ${role.display_name} (${role.name})`,
+            new_values: { name: role.name, display_name: role.display_name, hierarchy_level: role.hierarchy_level },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.json({
             message: "Role updated successfully",
             role
@@ -290,6 +313,16 @@ exports.delete = async (req, res) => {
 
         await role.destroy();
 
+        await logActivity({
+            admin_id: req.userId,
+            action: 'DELETE',
+            entity: 'Role',
+            entity_id: id,
+            description: `Deleted role: ${role.display_name} (${role.name})`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.json({
             message: "Role deleted successfully"
         });
@@ -322,6 +355,16 @@ exports.updateHierarchy = async (req, res) => {
                 }
             })
         );
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'Role',
+            description: `Reordered role hierarchy levels (${roles.length} roles)`,
+            new_values: { reordered_roles: roles },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
 
         res.json({
             message: "Hierarchy updated successfully"

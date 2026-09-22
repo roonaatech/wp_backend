@@ -3,6 +3,7 @@ const ApkVersion = db.apk_versions;
 const User = db.user;
 const fs = require("fs");
 const path = require("path");
+const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
 // Try to load app-info-parser, but gracefully handle if not installed
 let AppInfoParser;
@@ -124,6 +125,17 @@ exports.uploadApk = async (req, res) => {
             uploaded_by: req.userId,
             release_notes: release_notes,
             is_visible: is_visible === 'true' || is_visible === true
+        });
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'CREATE',
+            entity: 'ApkVersion',
+            entity_id: apk.id,
+            description: `Uploaded APK release version ${version}`,
+            new_values: { version, filename: req.file.filename, is_visible: apk.is_visible, release_notes },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
         });
 
         res.status(200).send({
@@ -266,6 +278,17 @@ exports.deleteApk = async (req, res) => {
         }
 
         await apk.destroy();
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'DELETE',
+            entity: 'ApkVersion',
+            entity_id: id,
+            description: `Deleted APK release version ${apk.version}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.status(200).send({ message: "APK deleted successfully!" });
     } catch (err) {
         res.status(500).send({
@@ -286,6 +309,17 @@ exports.updateVisibility = async (req, res) => {
 
         apk.is_visible = is_visible;
         await apk.save();
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'ApkVersion',
+            entity_id: apk.id,
+            description: `Updated APK version ${apk.version} visibility to ${is_visible ? 'Visible' : 'Hidden'}`,
+            new_values: { is_visible },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
 
         res.status(200).send({ message: "Visibility updated successfully!" });
     } catch (err) {
@@ -311,6 +345,17 @@ exports.updateReleaseNotes = async (req, res) => {
 
         apk.release_notes = release_notes;
         await apk.save();
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'ApkVersion',
+            entity_id: apk.id,
+            description: `Updated release notes for APK version ${apk.version}`,
+            new_values: { release_notes },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
 
         res.status(200).send({
             message: "Release notes updated successfully!",

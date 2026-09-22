@@ -1,5 +1,6 @@
 const db = require("../models");
 const LeaveType = db.leave_types;
+const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
 // Get leave types filtered by user's gender and assigned in user_leave_types
 exports.findByUserGender = async (req, res) => {
@@ -82,7 +83,7 @@ exports.findAllAdmin = (req, res) => {
 };
 
 // Create new leave type
-exports.create = (req, res) => {
+exports.create = async (req, res) => {
     const { name, description, days_allowed, gender_restriction } = req.body;
 
     if (!name) {
@@ -98,24 +99,35 @@ exports.create = (req, res) => {
         }
     }
 
-    LeaveType.create({
-        name: name,
-        description: description || null,
-        days_allowed: days_allowed || 0,
-        gender_restriction: finalGenderRestriction,
-        status: true
-    })
-        .then(data => {
-            res.status(201).send({
-                message: "Leave type created successfully!",
-                data: data
-            });
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: err.message || "Some error occurred while creating leave type."
-            });
+    try {
+        const data = await LeaveType.create({
+            name: name,
+            description: description || null,
+            days_allowed: days_allowed || 0,
+            gender_restriction: finalGenderRestriction,
+            status: true
         });
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'CREATE',
+            entity: 'LeaveType',
+            entity_id: data.id,
+            description: `Created leave type: ${name} (${days_allowed || 0} days allowed)`,
+            new_values: { name, description, days_allowed, gender_restriction: finalGenderRestriction },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.status(201).send({
+            message: "Leave type created successfully!",
+            data: data
+        });
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Some error occurred while creating leave type."
+        });
+    }
 };
 
 // Update leave type
@@ -184,6 +196,18 @@ exports.update = async (req, res) => {
             status: status !== undefined ? status : leaveType.status
         });
 
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'LeaveType',
+            entity_id: leaveType.id,
+            description: `Updated leave type: ${updatedLeaveType.name} (${updatedLeaveType.days_allowed} days allowed, ${updatedLeaveType.status ? 'Active' : 'Inactive'})`,
+            old_values: { name: leaveType.name, description: leaveType.description, days_allowed: leaveType.days_allowed, status: leaveType.status },
+            new_values: { name: updatedLeaveType.name, description: updatedLeaveType.description, days_allowed: updatedLeaveType.days_allowed, status: updatedLeaveType.status },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.send({
             message: "Leave type updated successfully!",
             data: updatedLeaveType
@@ -247,6 +271,16 @@ exports.delete = async (req, res) => {
 
         // Proceed with deletion if validation passed
         await leaveType.destroy();
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'DELETE',
+            entity: 'LeaveType',
+            entity_id: id,
+            description: `Deleted leave type: ${leaveType.name}`,
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
 
         res.send({
             message: "Leave type deleted successfully!"

@@ -571,6 +571,18 @@ exports.updateOnDutyDetails = async (req, res) => {
 
         await log.save();
 
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'OnDutyLog',
+            entity_id: log.id,
+            affected_user_id: log.staff_id,
+            description: `Updated on-duty request ID: ${log.id} (${log.client_name || 'On-Duty'})`,
+            new_values: { client_name, location, end_location, purpose },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.status(200).send({ message: "On-Duty details updated successfully!", log });
     } catch (err) {
         res.status(500).send({ message: err.message });

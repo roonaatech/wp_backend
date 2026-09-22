@@ -1176,6 +1176,18 @@ exports.approveAttendance = async (req, res) => {
         );
 
         if (num === 1) {
+            await logActivity({
+                admin_id: req.userId,
+                action: status === 'Approved' ? 'APPROVE' : 'REJECT',
+                entity: 'Approval',
+                entity_id: id,
+                affected_user_id: approval.staff_id || null,
+                description: `${status} attendance request (Approval ID: ${id})${rejection_reason ? ': ' + rejection_reason : ''}`,
+                old_values: { status: approval.status },
+                new_values: { status, rejection_reason: rejection_reason || null },
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
             res.send({ message: "Approval status was updated successfully." });
         } else {
             res.status(400).send({ message: `Cannot update Approval with id=${id}.` });
@@ -3193,6 +3205,19 @@ exports.updateDeviceViolationStatus = async (req, res) => {
             hr_notes: hr_notes !== undefined ? hr_notes : violation.hr_notes,
             resolved_by: status === 'RESOLVED' ? req.userId : violation.resolved_by,
             resolved_at: status === 'RESOLVED' ? new Date() : violation.resolved_at
+        });
+
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'DeviceViolation',
+            entity_id: id,
+            affected_user_id: violation.staff_id || null,
+            description: `Updated device violation status to ${status} for staff ID ${violation.staff_id}`,
+            old_values: { status: violation.status, hr_notes: violation.hr_notes },
+            new_values: { status, hr_notes },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
         });
 
         res.status(200).send({ message: "Violation status updated successfully.", violation });

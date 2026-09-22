@@ -1161,6 +1161,18 @@ exports.updateLeaveDetails = async (req, res) => {
 
         await leave.save();
 
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'LeaveRequest',
+            entity_id: leave.id,
+            affected_user_id: leave.staff_id,
+            description: `Updated leave request ID: ${leave.id} (${leave.leave_type})`,
+            new_values: { leave_type, start_date, end_date, reason, is_half_day },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.status(200).send({ message: "Leave request updated successfully!", leave });
     } catch (err) {
         res.status(500).send({ message: err.message });
@@ -1411,7 +1423,16 @@ exports.deleteLeave = async (req, res) => {
             }
 
             await leaveRequest.destroy();
-            logActivity(req, `Deleted leave request ID: ${requestId}`);
+            await logActivity({
+                admin_id: userId,
+                action: 'DELETE',
+                entity: 'LeaveRequest',
+                entity_id: requestId,
+                affected_user_id: userId,
+                description: `Deleted leave request ID: ${requestId} (${leaveRequest.leave_type || 'Leave'})`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
             return res.status(200).send({ message: "Leave request deleted successfully." });
         }
 
@@ -1427,7 +1448,16 @@ exports.deleteLeave = async (req, res) => {
             }
 
             await onDutyLog.destroy();
-            logActivity(req, `Deleted on-duty request ID: ${requestId}`);
+            await logActivity({
+                admin_id: userId,
+                action: 'DELETE',
+                entity: 'OnDutyLog',
+                entity_id: requestId,
+                affected_user_id: userId,
+                description: `Deleted on-duty request ID: ${requestId}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
             return res.status(200).send({ message: "On-duty request deleted successfully." });
         }
 
@@ -1435,7 +1465,6 @@ exports.deleteLeave = async (req, res) => {
 
     } catch (error) {
         console.error(`Error deleting request:`, error);
-        logActivity(req, `Error deleting request ID: ${id}`, error);
         res.status(500).send({ message: "Error deleting request.", error: error.message });
     }
 };

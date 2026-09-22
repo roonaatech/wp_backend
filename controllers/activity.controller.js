@@ -164,8 +164,11 @@ exports.getActivitySummary = async (req, res) => {
         });
 
         // Get top users
-        const topUsers = await ActivityLog.findAll({
-            where,
+        const topUsersRaw = await ActivityLog.findAll({
+            where: {
+                ...where,
+                admin_id: { [Op.ne]: null }
+            },
             attributes: [
                 'admin_id',
                 [db.sequelize.fn('COUNT', db.sequelize.col('id')), 'count']
@@ -176,12 +179,48 @@ exports.getActivitySummary = async (req, res) => {
             raw: true
         });
 
+        const adminIds = topUsersRaw.map(u => u.admin_id).filter(Boolean);
+        const usersList = adminIds.length > 0 ? await User.findAll({
+            where: { staffid: { [Op.in]: adminIds } },
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role'],
+            raw: true
+        }) : [];
+
+        const userMap = {};
+        usersList.forEach(u => { userMap[u.staffid] = u; });
+
+        const topUsers = topUsersRaw.map(u => ({
+            admin_id: u.admin_id,
+            count: parseInt(u.count, 10),
+            user: userMap[u.admin_id] || null
+        }));
+
+        // Calculate core write, update, delete counts
+        let writeCount = 0;
+        let updateCount = 0;
+        let deleteCount = 0;
+        let approvalCount = 0;
+
+        actionCounts.forEach(item => {
+            const cnt = parseInt(item.count, 10) || 0;
+            if (item.action === 'CREATE') writeCount += cnt;
+            else if (item.action === 'UPDATE' || item.action === 'UPDATE_PROFILE') updateCount += cnt;
+            else if (item.action === 'DELETE') deleteCount += cnt;
+            else if (item.action === 'APPROVE' || item.action === 'REJECT') approvalCount += cnt;
+        });
+
         return res.status(200).json({
             success: true,
             data: {
                 actionCounts,
                 entityCounts,
-                topUsers
+                topUsers,
+                crudSummary: {
+                    writeCount,
+                    updateCount,
+                    deleteCount,
+                    approvalCount
+                }
             }
         });
     } catch (error) {

@@ -3,6 +3,7 @@ const UserLeaveType = db.user_leave_types;
 const LeaveType = db.leave_types;
 const LeaveRequest = db.leave_requests;
 const { Op } = require("sequelize");
+const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 
 // Get all leave types for a user
 exports.getUserLeaveTypes = async (req, res) => {
@@ -166,6 +167,17 @@ exports.updateUserLeaveTypes = async (req, res) => {
                 await record.update({ days_allowed: update.days_allowed });
             }
         }
+        await logActivity({
+            admin_id: req.userId,
+            action: 'UPDATE',
+            entity: 'UserLeaveType',
+            affected_user_id: parseInt(userId),
+            description: `Updated assigned leave types and quotas for employee ID ${userId} (${targetUser.firstname} ${targetUser.lastname})`,
+            new_values: { updated_allocations: updates },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
         res.json({ message: "Leave types updated successfully." });
     } catch (err) {
         res.status(500).json({ message: err.message });
