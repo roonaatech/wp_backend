@@ -1232,6 +1232,7 @@ exports.getMyBadgeData = async (req, res) => {
         const userAgent = getUserAgent(req);
         const deviceId = req.headers['x-device-id'] || req.query.deviceId || req.query.device_id;
         const deviceName = req.headers['x-device-name'] || req.query.deviceName || req.query.device_name;
+        const deviceModel = req.headers['x-device-model'] || req.query.deviceModel || req.query.device_model;
 
         const isMobile = deviceSecurity.isMobileClient({
             userAgent,
@@ -1252,6 +1253,7 @@ exports.getMyBadgeData = async (req, res) => {
                 staffId: user.staffid,
                 deviceId,
                 deviceName,
+                deviceModel,
                 userAgent,
                 ipAddress: clientIp,
                 isMobile: isMobile,

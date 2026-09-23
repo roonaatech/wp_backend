@@ -47,14 +47,43 @@ class DeviceSecurityService {
     }
 
     /**
-     * Extract hardware model name/code from user-agent, deviceName, or deviceId
+     * Normalize IP address (handles IPv4-mapped IPv6, comma-separated lists, localhosts)
+     * @param {string} ip
+     * @returns {string}
+     */
+    normalizeIp(ip) {
+        if (!ip || typeof ip !== 'string') return '';
+        let cleaned = ip.trim();
+        if (cleaned.startsWith('::ffff:')) {
+            cleaned = cleaned.substring(7);
+        }
+        if (cleaned.includes(',')) {
+            cleaned = cleaned.split(',')[0].trim();
+        }
+        if (cleaned === '::1' || cleaned === '127.0.0.1' || cleaned === 'localhost') {
+            return '127.0.0.1';
+        }
+        return cleaned;
+    }
+
+    /**
+     * Extract hardware model name/code from user-agent, deviceName, deviceId, or explicit deviceModel
      * @param {Object} params
      * @param {string} [params.userAgent]
      * @param {string} [params.deviceName]
      * @param {string} [params.deviceId]
+     * @param {string} [params.deviceModel]
      * @returns {string|null}
      */
-    extractDeviceModel({ userAgent = '', deviceName = '', deviceId = '' } = {}) {
+    extractDeviceModel({ userAgent = '', deviceName = '', deviceId = '', deviceModel = '' } = {}) {
+        // 0. Explicit device model passed from client (e.g. from Client Hints API)
+        if (deviceModel && typeof deviceModel === 'string' && deviceModel.trim().length >= 2) {
+            const cleaned = deviceModel.trim();
+            if (!/^(K|Mobile|wv|unknown|undefined|null)$/i.test(cleaned)) {
+                return cleaned;
+            }
+        }
+
         // 1. Android model from User-Agent
         if (userAgent) {
             const m = userAgent.match(/\bAndroid[^;)]*;\s*([^;)]+)/i);
@@ -66,23 +95,31 @@ class DeviceSecurityService {
             }
         }
 
-        // 2. From deviceName (e.g. "Samsung SM-S911B (Android 14)" or "Pixel 7 Pro")
+        // 2. From deviceName (e.g. "Samsung SM-S911B (Android 14)", "SM-A536B - Chrome", "Pixel 7 Pro")
         if (deviceName) {
-            const brandMatch = deviceName.match(/(?:Samsung|Google|Xiaomi|OnePlus|Motorola|Oppo|Vivo|Realme|Sony|Huawei|Honor|Nothing)\s+([^()]+)/i);
-            if (brandMatch) {
-                const cleaned = brandMatch[1].trim();
-                if (cleaned.length >= 3) return cleaned;
-            }
             const modelCodeMatch = deviceName.match(/\b([A-Z0-9]{2,5}-[A-Z0-9]{3,6})\b/i);
             if (modelCodeMatch) return modelCodeMatch[1].trim();
+
+            const pixelMatch = deviceName.match(/\b(Pixel\s+[0-9a-zA-Z ]+)\b/i);
+            if (pixelMatch) return pixelMatch[1].trim();
+
+            const brandMatch = deviceName.match(/(?:Samsung|Google|Xiaomi|OnePlus|Motorola|Oppo|Vivo|Realme|Sony|Huawei|Honor|Nothing)\s+([^()\-]+)/i);
+            if (brandMatch) {
+                const cleaned = brandMatch[1].trim();
+                if (cleaned.length >= 2) return cleaned;
+            }
         }
 
         // 3. From hardware-seeded deviceId (e.g. "wp-dev-app-TP1A-220624-014_SM-A536B-timestamp")
         if (deviceId && typeof deviceId === 'string' && deviceId.startsWith('wp-dev-app-')) {
-            const parts = deviceId.split('-');
-            for (const part of parts) {
-                if (/([A-Z0-9]{2,5}_[A-Z0-9]{3,6})/i.test(part) || /([A-Z0-9]{2,5}[0-9]{2,4}[A-Z]?)/i.test(part)) {
+            const parts = deviceId.split(/[-_]/);
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i];
+                if (/^SM-[A-Z0-9]{3,5}$/i.test(part) || /^Pixel/i.test(part) || /([A-Z0-9]{2,4}[0-9]{3,4}[A-Z]?)/i.test(part)) {
                     return part.replace(/_/g, '-');
+                }
+                if (i < parts.length - 1 && /^SM$/i.test(part) && /^[A-Z0-9]{3,5}$/i.test(parts[i + 1])) {
+                    return `SM-${parts[i + 1]}`;
                 }
             }
         }
@@ -96,14 +133,15 @@ class DeviceSecurityService {
      * @param {number} params.staffId - Employee staff ID
      * @param {string} params.deviceId - Unique device UUID/fingerprint from client
      * @param {string} [params.deviceName] - Device model / browser (e.g., "iPhone 15 / Safari")
+     * @param {string} [params.deviceModel] - Explicit device model (e.g. "SM-A536B")
      * @param {string} [params.userAgent] - Browser User-Agent
      * @param {string} [params.ipAddress] - Request IP address
      * @param {boolean|string} [params.isMobile] - Explicit mobile flag
      * @param {boolean|string} [params.isMobileApp] - Mobile app flag
-     * @param {string} [params.action] - Action being performed (e.g. 'ATTENDANCE_BADGE', 'FACE_ATTENDANCE')
+     * @param {string} [params.action] - Action being performed (e.g. 'ATTENDANCE_BADGE', 'FACE_ATTENDANCE', 'MOBILE_LOGIN')
      * @returns {Promise<{ allowed: boolean, error?: string, violationLogged?: boolean, isDesktop?: boolean }>}
      */
-    async verifyAndBindDevice({ staffId, deviceId, deviceName, userAgent, ipAddress, action = 'ATTENDANCE_BADGE', isMobile, isMobileApp }) {
+    async verifyAndBindDevice({ staffId, deviceId, deviceName, deviceModel, userAgent, ipAddress, action = 'ATTENDANCE_BADGE', isMobile, isMobileApp }) {
         if (!staffId) {
             return { allowed: false, error: "Staff ID is required for device verification." };
         }
@@ -142,42 +180,60 @@ class DeviceSecurityService {
                 });
 
                 if (candidateDevices.length > 0) {
-                    const clientModel = this.extractDeviceModel({ userAgent, deviceName, deviceId: cleanDeviceId });
+                    const clientModel = this.extractDeviceModel({ userAgent, deviceName, deviceId: cleanDeviceId, deviceModel });
                     const isClientIos = /iPhone|iPad/i.test(userAgent || '') || /iPhone|iPad/i.test(deviceName || '');
+                    const isClientAndroid = /Android/i.test(userAgent || '') || /Android/i.test(deviceName || '');
+                    const cleanClientIp = this.normalizeIp(ipAddress);
 
                     for (const candidate of candidateDevices) {
                         const candidateUa = candidate.user_agent || '';
                         const candidateDevName = candidate.device_name || '';
                         const candidateDevId = candidate.device_id || '';
                         const candidateModel = this.extractDeviceModel({ userAgent: candidateUa, deviceName: candidateDevName, deviceId: candidateDevId });
+                        const isCandidateIos = /iPhone|iPad/i.test(candidateDevName) || /iPhone|iPad/i.test(candidateUa) || candidateDevId.includes('iOS') || candidateDevId.includes('iPhone');
+                        const isCandidateAndroid = /Android/i.test(candidateUa) || /Android/i.test(candidateDevName) || candidateDevId.includes('Android') || candidateDevId.includes('SM-') || candidateDevId.includes('Pixel');
+                        const cleanCandidateIp = this.normalizeIp(candidate.ip_address);
 
                         let isModelMatch = false;
-                        if (clientModel && candidateModel && (
-                            clientModel.toLowerCase() === candidateModel.toLowerCase() ||
-                            candidateModel.toLowerCase().includes(clientModel.toLowerCase()) ||
-                            clientModel.toLowerCase().includes(candidateModel.toLowerCase())
-                        )) {
-                            isModelMatch = true;
+                        if (clientModel && candidateModel) {
+                            const c1 = clientModel.toLowerCase().replace(/[^a-z0-9]/g, '');
+                            const c2 = candidateModel.toLowerCase().replace(/[^a-z0-9]/g, '');
+                            if (c1 === c2 || c1.includes(c2) || c2.includes(c1)) {
+                                isModelMatch = true;
+                            }
                         } else if (clientModel && (
                             candidateDevName.toLowerCase().includes(clientModel.toLowerCase()) ||
                             candidateDevId.toLowerCase().includes(clientModel.toLowerCase()) ||
                             candidateUa.toLowerCase().includes(clientModel.toLowerCase())
                         )) {
                             isModelMatch = true;
-                        } else if (isClientIos && (/iPhone|iPad/i.test(candidateDevName) || /iPhone|iPad/i.test(candidateUa) || candidateDevId.includes('iOS') || candidateDevId.includes('iPhone'))) {
+                        } else if (candidateModel && (
+                            (deviceName && deviceName.toLowerCase().includes(candidateModel.toLowerCase())) ||
+                            cleanDeviceId.toLowerCase().includes(candidateModel.toLowerCase()) ||
+                            (userAgent && userAgent.toLowerCase().includes(candidateModel.toLowerCase()))
+                        )) {
+                            isModelMatch = true;
+                        } else if (isClientIos && isCandidateIos) {
                             isModelMatch = true;
                         }
 
                         // Verify same network IP
                         const isIpMatch = Boolean(
-                            ipAddress && candidate.ip_address &&
-                            (ipAddress === candidate.ip_address || ipAddress === '127.0.0.1' || ipAddress === '::1' || candidate.ip_address === '127.0.0.1' || candidate.ip_address === '::1')
+                            cleanClientIp && cleanCandidateIp &&
+                            (cleanClientIp === cleanCandidateIp || cleanClientIp === '127.0.0.1' || cleanCandidateIp === '127.0.0.1')
                         );
 
                         if (isModelMatch && isIpMatch) {
                             conflictDevice = candidate;
-                            console.log(`[DeviceSecurityService] Cross-platform physical device match detected: Client model '${clientModel || 'iOS'}' on IP ${ipAddress} matches bound device #${candidate.id} (Staff ID: ${candidate.staff_id}).`);
+                            console.log(`[DeviceSecurityService] Cross-platform physical device match detected: Model '${clientModel || candidateModel || 'Mobile'}' on IP ${cleanClientIp} matches bound device #${candidate.id} (Staff ID: ${candidate.staff_id}).`);
                             break;
+                        } else if (isClientAndroid && isCandidateAndroid && isIpMatch) {
+                            // If both are Android phones on the exact same IP and neither reported a contradictory model (e.g. Chrome UA reduction where clientModel is null)
+                            if (!clientModel || !candidateModel) {
+                                conflictDevice = candidate;
+                                console.log(`[DeviceSecurityService] Cross-platform Android phone match on same IP detected: Candidate #${candidate.id} (Staff ID: ${candidate.staff_id}) vs Staff ID: ${staffId} on ${cleanClientIp}.`);
+                                break;
+                            }
                         }
                     }
                 }

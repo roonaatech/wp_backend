@@ -301,6 +301,62 @@ exports.signin = async (req, res) => {
             }
         }
 
+        // --- SINGLE-DEVICE SECURITY & PROXY LOGIN ENFORCEMENT ---
+        // For mobile devices (mobile app & mobile web browser): Only 1 employee can be bound/logged in per physical mobile device.
+        // Shared office laptops and desktop PCs are 100% exempt.
+        const isMobileHeader = req.headers['x-is-mobile'];
+        const isMobileAppHeader = req.headers['x-is-mobile-app'];
+        const userAgent = getUserAgent(req);
+        const deviceId = req.headers['x-device-id'] || req.body.deviceId || req.body.device_id;
+        const deviceName = req.headers['x-device-name'] || req.body.deviceName || req.body.device_name;
+        const deviceModel = req.headers['x-device-model'] || req.body.deviceModel || req.body.device_model;
+
+        const isMobileDevice = deviceSecurity.isMobileClient({
+            userAgent,
+            isMobile: isMobileHeader || req.body.is_mobile || (req.body.client_type === 'mobile_browser'),
+            isMobileApp: isMobileAppHeader || req.body.is_mobile_app || (req.body.client_type === 'mobile_app'),
+            deviceId
+        });
+
+        if (isMobileDevice && !isServiceAccount && !isAttendancePortalUser) {
+            const clientIp = getClientIp(req);
+            const isMobileApp = (
+                isMobileAppHeader === 'true' ||
+                isMobileAppHeader === true ||
+                req.body.is_mobile_app === true ||
+                req.body.client_type === 'mobile_app' ||
+                (deviceId && typeof deviceId === 'string' && deviceId.startsWith('wp-dev-app-'))
+            );
+
+            let effectiveDeviceId = (deviceId && typeof deviceId === 'string' && deviceId.trim()) ? deviceId.trim() : null;
+            if (!effectiveDeviceId) {
+                const model = deviceSecurity.extractDeviceModel({ userAgent, deviceName, deviceModel }) || 'phone';
+                effectiveDeviceId = isMobileApp
+                    ? `wp-dev-app-${model}-${user.staffid}`
+                    : `wp-dev-browser-${model}-${user.staffid}`;
+            }
+
+            const deviceCheck = await deviceSecurity.verifyAndBindDevice({
+                staffId: user.staffid,
+                deviceId: effectiveDeviceId,
+                deviceName,
+                deviceModel,
+                userAgent,
+                ipAddress: clientIp,
+                isMobile: true,
+                isMobileApp: isMobileApp,
+                action: 'MOBILE_LOGIN'
+            });
+
+            if (!deviceCheck.allowed) {
+                return res.status(403).send({
+                    success: false,
+                    deviceViolation: true,
+                    message: deviceCheck.error || "Security Alert: This mobile device is registered to another employee. Multiple employee logins from the same mobile phone are restricted."
+                });
+            }
+        }
+
         // Update last_login timestamp (keep null for temporary password until new password is set)
         if (!isTemporaryPassword) {
             await user.update({ last_login: new Date() });
