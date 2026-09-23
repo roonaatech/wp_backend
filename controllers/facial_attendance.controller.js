@@ -1246,16 +1246,6 @@ exports.getMyBadgeData = async (req, res) => {
             (deviceId && typeof deviceId === 'string' && deviceId.startsWith('wp-dev-app-'))
         );
 
-        // Security Policy: On mobile devices, attendance badges MUST be accessed via the official WorkPulse Mobile App.
-        // Mobile web browsers are strictly blocked from generating dynamic QR badges to prevent cross-account proxy attendance.
-        if (isMobile && !isMobileApp) {
-            return res.status(403).send({
-                success: false,
-                isMobileWebBlocked: true,
-                message: "Dynamic attendance badges on mobile devices must be accessed through the official WorkPulse Mobile App. Please open the WorkPulse Mobile App on your device."
-            });
-        }
-
         if (deviceId) {
             const clientIp = getClientIp(req);
             const deviceCheck = await deviceSecurity.verifyAndBindDevice({
@@ -1527,7 +1517,7 @@ exports.scanQrBadgeAttendance = async (req, res) => {
         const { staffId, email, deviceId: badgeDeviceId } = verification.data;
 
         // Verify device integrity: If the badge was generated from a mobile device, ensure that device isn't registered to another employee
-        if (badgeDeviceId && typeof badgeDeviceId === 'string' && badgeDeviceId.startsWith('wp-dev-app-')) {
+        if (badgeDeviceId && typeof badgeDeviceId === 'string' && (badgeDeviceId.startsWith('wp-dev-app-') || badgeDeviceId.startsWith('wp-dev-'))) {
             const conflictDevice = await EmployeeDevice.findOne({
                 where: {
                     device_id: badgeDeviceId,

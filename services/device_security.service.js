@@ -47,6 +47,50 @@ class DeviceSecurityService {
     }
 
     /**
+     * Extract hardware model name/code from user-agent, deviceName, or deviceId
+     * @param {Object} params
+     * @param {string} [params.userAgent]
+     * @param {string} [params.deviceName]
+     * @param {string} [params.deviceId]
+     * @returns {string|null}
+     */
+    extractDeviceModel({ userAgent = '', deviceName = '', deviceId = '' } = {}) {
+        // 1. Android model from User-Agent
+        if (userAgent) {
+            const m = userAgent.match(/\bAndroid[^;)]*;\s*([^;)]+)/i);
+            if (m) {
+                const cleaned = m[1].replace(/\s*Build\/.*$/i, '').trim();
+                if (cleaned && cleaned.length >= 3 && !/^(K|Mobile|wv)$/i.test(cleaned)) {
+                    return cleaned;
+                }
+            }
+        }
+
+        // 2. From deviceName (e.g. "Samsung SM-S911B (Android 14)" or "Pixel 7 Pro")
+        if (deviceName) {
+            const brandMatch = deviceName.match(/(?:Samsung|Google|Xiaomi|OnePlus|Motorola|Oppo|Vivo|Realme|Sony|Huawei|Honor|Nothing)\s+([^()]+)/i);
+            if (brandMatch) {
+                const cleaned = brandMatch[1].trim();
+                if (cleaned.length >= 3) return cleaned;
+            }
+            const modelCodeMatch = deviceName.match(/\b([A-Z0-9]{2,5}-[A-Z0-9]{3,6})\b/i);
+            if (modelCodeMatch) return modelCodeMatch[1].trim();
+        }
+
+        // 3. From hardware-seeded deviceId (e.g. "wp-dev-app-TP1A-220624-014_SM-A536B-timestamp")
+        if (deviceId && typeof deviceId === 'string' && deviceId.startsWith('wp-dev-app-')) {
+            const parts = deviceId.split('-');
+            for (const part of parts) {
+                if (/([A-Z0-9]{2,5}_[A-Z0-9]{3,6})/i.test(part) || /([A-Z0-9]{2,5}[0-9]{2,4}[A-Z]?)/i.test(part)) {
+                    return part.replace(/_/g, '-');
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Verify device authorization and update/bind device for the employee
      * @param {Object} params
      * @param {number} params.staffId - Employee staff ID
@@ -78,25 +122,66 @@ class DeviceSecurityService {
 
         const cleanDeviceId = deviceId.trim();
 
-        // Enforce that on mobile clients, dynamic attendance badges must be accessed via the official WorkPulse Mobile App
-        const isAppClient = isMobileApp === true || isMobileApp === 'true' || cleanDeviceId.startsWith('wp-dev-app-');
-        if (action === 'SMART_BADGE_ACCESS' && isMobileDevice && !isAppClient) {
-            return {
-                allowed: false,
-                isMobileWebBlocked: true,
-                error: "Dynamic attendance badges on mobile devices must be accessed through the official WorkPulse Mobile App."
-            };
-        }
-
         try {
-            // 1. Check if this deviceId is actively registered to a DIFFERENT employee
-            const conflictDevice = await EmployeeDevice.findOne({
+            // 1. Check if this deviceId is actively registered to a DIFFERENT employee (direct match)
+            let conflictDevice = await EmployeeDevice.findOne({
                 where: {
                     device_id: cleanDeviceId,
                     staff_id: { [Op.ne]: staffId },
                     is_active: true
                 }
             });
+
+            // 2. Cross-platform physical mobile device conflict detection (Mobile App <-> Mobile Web on the same phone)
+            if (!conflictDevice && isMobileDevice) {
+                const candidateDevices = await EmployeeDevice.findAll({
+                    where: {
+                        staff_id: { [Op.ne]: staffId },
+                        is_active: true
+                    }
+                });
+
+                if (candidateDevices.length > 0) {
+                    const clientModel = this.extractDeviceModel({ userAgent, deviceName, deviceId: cleanDeviceId });
+                    const isClientIos = /iPhone|iPad/i.test(userAgent || '') || /iPhone|iPad/i.test(deviceName || '');
+
+                    for (const candidate of candidateDevices) {
+                        const candidateUa = candidate.user_agent || '';
+                        const candidateDevName = candidate.device_name || '';
+                        const candidateDevId = candidate.device_id || '';
+                        const candidateModel = this.extractDeviceModel({ userAgent: candidateUa, deviceName: candidateDevName, deviceId: candidateDevId });
+
+                        let isModelMatch = false;
+                        if (clientModel && candidateModel && (
+                            clientModel.toLowerCase() === candidateModel.toLowerCase() ||
+                            candidateModel.toLowerCase().includes(clientModel.toLowerCase()) ||
+                            clientModel.toLowerCase().includes(candidateModel.toLowerCase())
+                        )) {
+                            isModelMatch = true;
+                        } else if (clientModel && (
+                            candidateDevName.toLowerCase().includes(clientModel.toLowerCase()) ||
+                            candidateDevId.toLowerCase().includes(clientModel.toLowerCase()) ||
+                            candidateUa.toLowerCase().includes(clientModel.toLowerCase())
+                        )) {
+                            isModelMatch = true;
+                        } else if (isClientIos && (/iPhone|iPad/i.test(candidateDevName) || /iPhone|iPad/i.test(candidateUa) || candidateDevId.includes('iOS') || candidateDevId.includes('iPhone'))) {
+                            isModelMatch = true;
+                        }
+
+                        // Verify same network IP
+                        const isIpMatch = Boolean(
+                            ipAddress && candidate.ip_address &&
+                            (ipAddress === candidate.ip_address || ipAddress === '127.0.0.1' || ipAddress === '::1' || candidate.ip_address === '127.0.0.1' || candidate.ip_address === '::1')
+                        );
+
+                        if (isModelMatch && isIpMatch) {
+                            conflictDevice = candidate;
+                            console.log(`[DeviceSecurityService] Cross-platform physical device match detected: Client model '${clientModel || 'iOS'}' on IP ${ipAddress} matches bound device #${candidate.id} (Staff ID: ${candidate.staff_id}).`);
+                            break;
+                        }
+                    }
+                }
+            }
 
             if (conflictDevice) {
                 // Fetch attempting user and original bound user details
