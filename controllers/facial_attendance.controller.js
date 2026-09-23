@@ -5,6 +5,7 @@ const EmployeeProfile = db.employee_profiles;
 const AttendanceLog = db.attendance_logs;
 const Approval = db.approvals;
 const Setting = db.settings;
+const EmployeeDevice = db.employee_devices;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const timezoneUtil = require("../utils/timezone.util");
 const bcrypt = require("bcryptjs");
@@ -495,19 +496,37 @@ exports.checkInOutWithFace = async (req, res) => {
 
         // Single Device Security & Proxy Attendance Prevention (Mobile Only for Check-In / Check-Out)
         const isMobileHeader = req.headers['x-is-mobile'];
+        const isMobileAppHeader = req.headers['x-is-mobile-app'];
         const userAgent = getUserAgent(req);
         const deviceId = req.headers['x-device-id'] || req.body.deviceId || req.body.device_id || req.query.deviceId;
         const deviceName = req.headers['x-device-name'] || req.body.deviceName || req.body.device_name || phone_model;
 
-        if (deviceId) {
+        const isMobileClient = deviceSecurity.isMobileClient({
+            userAgent,
+            isMobile: isMobileHeader,
+            isMobileApp: isMobileAppHeader,
+            deviceId
+        });
+
+        if (isMobileClient) {
+            if (!deviceId) {
+                return res.status(400).send({
+                    success: false,
+                    message: "Device identification is required for mobile attendance check-in/out."
+                });
+            }
+
             const clientIp = getClientIp(req);
+            const isMobileApp = (isMobileAppHeader === 'true' || isMobileAppHeader === true || deviceId.startsWith('wp-dev-app-'));
+
             const deviceCheck = await deviceSecurity.verifyAndBindDevice({
                 staffId: user.staffid,
                 deviceId,
                 deviceName,
                 userAgent,
                 ipAddress: clientIp,
-                isMobile: isMobileHeader !== undefined ? (isMobileHeader === 'true' || isMobileHeader === true) : undefined,
+                isMobile: true,
+                isMobileApp,
                 action: action === 'CHECK_IN' ? 'MOBILE_FACE_CHECK_IN' : 'MOBILE_FACE_CHECK_OUT'
             });
 
@@ -1209,9 +1228,33 @@ exports.getMyBadgeData = async (req, res) => {
 
         // Single Device Security & Proxy Attendance Prevention (Mobile Only for Badge Access)
         const isMobileHeader = req.headers['x-is-mobile'];
+        const isMobileAppHeader = req.headers['x-is-mobile-app'];
         const userAgent = getUserAgent(req);
         const deviceId = req.headers['x-device-id'] || req.query.deviceId || req.query.device_id;
         const deviceName = req.headers['x-device-name'] || req.query.deviceName || req.query.device_name;
+
+        const isMobile = deviceSecurity.isMobileClient({
+            userAgent,
+            isMobile: isMobileHeader,
+            isMobileApp: isMobileAppHeader,
+            deviceId
+        });
+
+        const isMobileApp = (
+            isMobileAppHeader === 'true' ||
+            isMobileAppHeader === true ||
+            (deviceId && typeof deviceId === 'string' && deviceId.startsWith('wp-dev-app-'))
+        );
+
+        // Security Policy: On mobile devices, attendance badges MUST be accessed via the official WorkPulse Mobile App.
+        // Mobile web browsers are strictly blocked from generating dynamic QR badges to prevent cross-account proxy attendance.
+        if (isMobile && !isMobileApp) {
+            return res.status(403).send({
+                success: false,
+                isMobileWebBlocked: true,
+                message: "Dynamic attendance badges on mobile devices must be accessed through the official WorkPulse Mobile App. Please open the WorkPulse Mobile App on your device."
+            });
+        }
 
         if (deviceId) {
             const clientIp = getClientIp(req);
@@ -1221,7 +1264,8 @@ exports.getMyBadgeData = async (req, res) => {
                 deviceName,
                 userAgent,
                 ipAddress: clientIp,
-                isMobile: isMobileHeader !== undefined ? (isMobileHeader === 'true' || isMobileHeader === true) : undefined,
+                isMobile: isMobile,
+                isMobileApp: isMobileApp,
                 action: 'SMART_BADGE_ACCESS'
             });
 
@@ -1288,7 +1332,9 @@ exports.getMyBadgeData = async (req, res) => {
         const badgeInfo = badgeSecurity.generateBadgeToken({
             staffId: user.staffid,
             email: user.email,
-            name: `${user.firstname} ${user.lastname}`
+            name: `${user.firstname} ${user.lastname}`,
+            deviceId: deviceId || null,
+            isMobileApp: isMobileApp === true
         });
 
         return res.status(200).send({
@@ -1478,7 +1524,27 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             });
         }
 
-        const { staffId, email } = verification.data;
+        const { staffId, email, deviceId: badgeDeviceId } = verification.data;
+
+        // Verify device integrity: If the badge was generated from a mobile device, ensure that device isn't registered to another employee
+        if (badgeDeviceId && typeof badgeDeviceId === 'string' && badgeDeviceId.startsWith('wp-dev-app-')) {
+            const conflictDevice = await EmployeeDevice.findOne({
+                where: {
+                    device_id: badgeDeviceId,
+                    staff_id: { [db.Sequelize.Op.ne]: staffId },
+                    is_active: true
+                }
+            });
+
+            if (conflictDevice) {
+                console.warn(`[SECURITY ALERT] Scanned QR badge generated on conflicting device ${badgeDeviceId} bound to staff #${conflictDevice.staff_id}, but presented for staff #${staffId}.`);
+                return res.status(403).send({
+                    success: false,
+                    deviceViolation: true,
+                    message: "Security Violation: This QR badge was generated on a mobile device registered to another employee. Attendance scan has been rejected."
+                });
+            }
+        }
 
         // 2. Fetch employee details
         const user = await User.findOne({

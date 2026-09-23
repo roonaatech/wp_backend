@@ -22,7 +22,7 @@ async function runTest() {
         await db.employee_devices.destroy({ where: { staff_id: [userA.staffid, userB.staffid] } });
         await db.device_violation_logs.destroy({ where: { attempted_staff_id: [userA.staffid, userB.staffid] } });
 
-        const sharedPhoneId = `wp-dev-test-mobile-phone-${Date.now()}`;
+        const sharedPhoneId = `wp-dev-app-test-mobile-phone-${Date.now()}`;
         const mobileUa = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
         const laptopUa = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -37,6 +37,7 @@ async function runTest() {
             userAgent: mobileUa,
             ipAddress: "192.168.1.100",
             isMobile: true,
+            isMobileApp: true,
             action: "SMART_BADGE_ACCESS"
         });
 

@@ -48,6 +48,8 @@ function generateBadgeToken(employeeData) {
         sid: employeeData.staffId,
         em: employeeData.email,
         nm: employeeData.name,
+        dev: employeeData.deviceId || null,
+        app: employeeData.isMobileApp === true,
         iat: now,
         exp: expiresAt,
         nc: nonce
@@ -164,6 +166,8 @@ function verifyBadgeToken(tokenString) {
             staffId: payload.sid,
             email: payload.em,
             name: payload.nm,
+            deviceId: payload.dev || null,
+            isMobileApp: payload.app === true,
             issuedAt: payload.iat,
             expiresAt: payload.exp
         }

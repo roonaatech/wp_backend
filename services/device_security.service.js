@@ -78,6 +78,16 @@ class DeviceSecurityService {
 
         const cleanDeviceId = deviceId.trim();
 
+        // Enforce that on mobile clients, dynamic attendance badges must be accessed via the official WorkPulse Mobile App
+        const isAppClient = isMobileApp === true || isMobileApp === 'true' || cleanDeviceId.startsWith('wp-dev-app-');
+        if (action === 'SMART_BADGE_ACCESS' && isMobileDevice && !isAppClient) {
+            return {
+                allowed: false,
+                isMobileWebBlocked: true,
+                error: "Dynamic attendance badges on mobile devices must be accessed through the official WorkPulse Mobile App."
+            };
+        }
+
         try {
             // 1. Check if this deviceId is actively registered to a DIFFERENT employee
             const conflictDevice = await EmployeeDevice.findOne({
