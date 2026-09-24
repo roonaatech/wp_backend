@@ -236,7 +236,8 @@ exports.signin = async (req, res) => {
             userRole = await Role.findByPk(userRoleId);
             if (userRole && req.body.is_mobile_app !== true && userRole.can_access_webapp != true) {
                 // Bypass web app check ONLY if they need first-time setup (password reset or declaration)
-                const mustChangePassword = isServiceAccount ? false : !user.last_login;
+                const isTempPwd = user.is_temporary_password === true || user.is_temporary_password === 1 || user.is_temporary_password === '1';
+                const mustChangePassword = isServiceAccount ? false : (!user.last_login || isTempPwd);
                 let mustCompleteDeclaration = false;
                 if (!isServiceAccount) {
                     const EmployeeProfile = db.employee_profiles;
