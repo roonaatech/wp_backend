@@ -37,6 +37,16 @@ const getAppTimezone = async () => {
     }
 };
 
+// Helper to get application time format (12h or 24h)
+const getAppTimeFormat = async () => {
+    try {
+        const fmtSetting = await Setting.findOne({ where: { key: 'application_time_format' } });
+        return fmtSetting ? fmtSetting.value : '12h';
+    } catch (e) {
+        return '12h';
+    }
+};
+
 // Calculate Euclidean distance between two descriptor arrays
 const getEuclideanDistance = (arr1, arr2) => {
     return faceBiometrics.getEuclideanDistance(arr1, arr2);
@@ -1374,10 +1384,17 @@ exports.scanQrBadgeAttendance = async (req, res) => {
 
     try {
         const tz = await getAppTimezone();
+        const timeFormat = await getAppTimeFormat();
         const now = new Date();
         const nowString = timezoneUtil.getNowStringInTimezone(tz);
         const todayDateOnly = nowString.split(' ')[0];
         const formattedNowTime = formatDateInTimezone(now, tz);
+        const displayTime = timezoneUtil.formatInTimezone(now, tz, {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: timeFormat !== '24h'
+        });
 
         // =========================================================================
         // CASE A: User clicked YES to confirm impending Check-In / Check-Out
@@ -1431,8 +1448,9 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                     employeeName: `${user.firstname} ${user.lastname}`,
                     email: user.email,
                     timestamp: formattedNowTime,
+                    time: displayTime,
                     avatarUrl: pending.avatarUrl,
-                    message: `Welcome, ${user.firstname}! Check-in recorded at ${formattedNowTime.split(' ')[1] || formattedNowTime}.`
+                    message: `Welcome, ${user.firstname}! Check-in recorded at ${displayTime}.`
                 });
             } else {
                 // Perform CHECK_OUT
@@ -1490,6 +1508,7 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                     employeeName: `${user.firstname} ${user.lastname}`,
                     email: user.email,
                     timestamp: formattedNowTime,
+                    time: displayTime,
                     avatarUrl: pending.avatarUrl,
                     duration: durationText,
                     message: `Goodbye, ${user.firstname}! Check-out recorded. Total time: ${durationText || 'completed'}.`
@@ -1636,6 +1655,7 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             employeeName: `${user.firstname} ${user.lastname}`,
             email: user.email,
             timestamp: formattedNowTime,
+            time: displayTime,
             avatarUrl,
             duration: durationText,
             message: `Do you want to ${actionType === 'CHECK_IN' ? 'Check In' : 'Check Out'} as ${user.firstname} ${user.lastname}?`
