@@ -225,6 +225,16 @@ async function seedSettings() {
             validation_rules: null,
             is_public: false,
             display_order: 40
+        },
+        {
+            key: 'attendance_compliance_hours',
+            value: '8',
+            description: 'Minimum required hours an employee must be in office per day for attendance compliance',
+            category: 'attendance',
+            data_type: 'number',
+            validation_rules: '{"min": 1, "max": 24, "step": 0.5, "required": true}',
+            is_public: true,
+            display_order: 1
         }
     ];
 
