@@ -33,6 +33,9 @@ exports.onboardEmployee = async (req, res) => {
         // User Credentials
         firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, abis_access, send_welcome_email,
         date_of_joining,
+        allocate_leaves,
+        casual_leave_days,
+        sick_leave_days,
         
         // Personal Details
         birthplace, height_weight, blood_group, date_of_birth, age, has_disability, disability_details,
@@ -261,17 +264,86 @@ exports.onboardEmployee = async (req, res) => {
             }
         }
 
+        // 5. Allocate casual and sick leave if requested
+        const allocatedLeavesSummary = [];
+        const shouldAllocateLeaves = allocate_leaves === true || allocate_leaves === 'true';
+        if (shouldAllocateLeaves) {
+            const casualDays = parseInt(casual_leave_days !== undefined && casual_leave_days !== '' ? casual_leave_days : 6);
+            const sickDays = parseInt(sick_leave_days !== undefined && sick_leave_days !== '' ? sick_leave_days : 6);
+
+            // 1. Allocate Casual Leave
+            if (!isNaN(casualDays) && casualDays > 0) {
+                const casualLeaveType = await LeaveType.findOne({
+                    where: {
+                        name: { [Op.like]: '%Casual%' },
+                        status: true
+                    },
+                    transaction
+                });
+
+                if (casualLeaveType) {
+                    const existingAssignment = await UserLeaveType.findOne({
+                        where: { user_id: user.staffid, leave_type_id: casualLeaveType.id },
+                        transaction
+                    });
+
+                    if (existingAssignment) {
+                        await existingAssignment.update({ days_allowed: casualDays }, { transaction });
+                    } else {
+                        await UserLeaveType.create({
+                            user_id: user.staffid,
+                            leave_type_id: casualLeaveType.id,
+                            days_allowed: casualDays,
+                            days_used: 0
+                        }, { transaction });
+                    }
+                    allocatedLeavesSummary.push(`${casualDays} days Casual Leave`);
+                }
+            }
+
+            // 2. Allocate Sick Leave
+            if (!isNaN(sickDays) && sickDays > 0) {
+                const sickLeaveType = await LeaveType.findOne({
+                    where: {
+                        name: { [Op.like]: '%Sick%' },
+                        status: true
+                    },
+                    transaction
+                });
+
+                if (sickLeaveType) {
+                    const existingAssignment = await UserLeaveType.findOne({
+                        where: { user_id: user.staffid, leave_type_id: sickLeaveType.id },
+                        transaction
+                    });
+
+                    if (existingAssignment) {
+                        await existingAssignment.update({ days_allowed: sickDays }, { transaction });
+                    } else {
+                        await UserLeaveType.create({
+                            user_id: user.staffid,
+                            leave_type_id: sickLeaveType.id,
+                            days_allowed: sickDays,
+                            days_used: 0
+                        }, { transaction });
+                    }
+                    allocatedLeavesSummary.push(`${sickDays} days Sick Leave`);
+                }
+            }
+        }
+
         // Commit transaction
         await transaction.commit();
 
         // Log administrative action
+        const leavesNote = allocatedLeavesSummary.length > 0 ? ` (${allocatedLeavesSummary.join(', ')} allocated)` : '';
         await logActivity({
             admin_id: req.userId,
             action: "CREATE",
             entity: "UserOnboarding",
             entity_id: user.staffid,
             affected_user_id: user.staffid,
-            description: `Onboarded new employee ${user.firstname} ${user.lastname} via Onboard Manually method`,
+            description: `Onboarded new employee ${user.firstname} ${user.lastname} via Onboard Manually method${leavesNote}`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
@@ -324,7 +396,7 @@ exports.onboardEmployee = async (req, res) => {
         }
 
         res.status(201).send({
-            message: "Employee successfully onboarded.",
+            message: `Employee successfully onboarded.${allocatedLeavesSummary.length > 0 ? ` Allocated ${allocatedLeavesSummary.join(' and ')}.` : ''}`,
             staffid: user.staffid,
             firstname: user.firstname,
             lastname: user.lastname,
@@ -1392,7 +1464,16 @@ exports.submitCandidateForm = async (req, res) => {
  */
 exports.approveCandidateOnboarding = async (req, res) => {
     const { id } = req.params;
-    const { email, role, approving_manager_id, abis_access, date_of_joining } = req.body;
+    const {
+        email,
+        role,
+        approving_manager_id,
+        abis_access,
+        date_of_joining,
+        allocate_leaves,
+        casual_leave_days,
+        sick_leave_days
+    } = req.body;
 
     if (!email || !role || !approving_manager_id || !date_of_joining) {
         return res.status(400).send({ message: "Official email, role, reporting manager assignment, and date of joining are required." });
@@ -1484,16 +1565,85 @@ exports.approveCandidateOnboarding = async (req, res) => {
             ...(approvedImagePath ? { image_path: approvedImagePath } : {})
         }, { transaction });
 
+        // Allocate casual and sick leave if requested
+        const allocatedLeavesSummary = [];
+        const shouldAllocateLeaves = allocate_leaves === true || allocate_leaves === 'true';
+        if (shouldAllocateLeaves) {
+            const casualDays = parseInt(casual_leave_days !== undefined ? casual_leave_days : 6);
+            const sickDays = parseInt(sick_leave_days !== undefined ? sick_leave_days : 6);
+
+            // 1. Allocate Casual Leave
+            if (!isNaN(casualDays) && casualDays > 0) {
+                const casualLeaveType = await LeaveType.findOne({
+                    where: {
+                        name: { [Op.like]: '%Casual%' },
+                        status: true
+                    },
+                    transaction
+                });
+
+                if (casualLeaveType) {
+                    const existingAssignment = await UserLeaveType.findOne({
+                        where: { user_id: id, leave_type_id: casualLeaveType.id },
+                        transaction
+                    });
+
+                    if (existingAssignment) {
+                        await existingAssignment.update({ days_allowed: casualDays }, { transaction });
+                    } else {
+                        await UserLeaveType.create({
+                            user_id: id,
+                            leave_type_id: casualLeaveType.id,
+                            days_allowed: casualDays,
+                            days_used: 0
+                        }, { transaction });
+                    }
+                    allocatedLeavesSummary.push(`${casualDays} days Casual Leave`);
+                }
+            }
+
+            // 2. Allocate Sick Leave
+            if (!isNaN(sickDays) && sickDays > 0) {
+                const sickLeaveType = await LeaveType.findOne({
+                    where: {
+                        name: { [Op.like]: '%Sick%' },
+                        status: true
+                    },
+                    transaction
+                });
+
+                if (sickLeaveType) {
+                    const existingAssignment = await UserLeaveType.findOne({
+                        where: { user_id: id, leave_type_id: sickLeaveType.id },
+                        transaction
+                    });
+
+                    if (existingAssignment) {
+                        await existingAssignment.update({ days_allowed: sickDays }, { transaction });
+                    } else {
+                        await UserLeaveType.create({
+                            user_id: id,
+                            leave_type_id: sickLeaveType.id,
+                            days_allowed: sickDays,
+                            days_used: 0
+                        }, { transaction });
+                    }
+                    allocatedLeavesSummary.push(`${sickDays} days Sick Leave`);
+                }
+            }
+        }
+
         await transaction.commit();
 
         // Log approval action
+        const leavesNote = allocatedLeavesSummary.length > 0 ? ` (${allocatedLeavesSummary.join(', ')} allocated)` : '';
         await logActivity({
             admin_id: req.userId,
             action: "APPROVE",
             entity: "UserOnboarding",
             entity_id: user.staffid,
             affected_user_id: user.staffid,
-            description: `Approved Self-service onboarding for employee ${user.firstname} ${user.lastname}`,
+            description: `Approved Self-service onboarding for employee ${user.firstname} ${user.lastname}${leavesNote}`,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
@@ -1544,7 +1694,9 @@ exports.approveCandidateOnboarding = async (req, res) => {
             console.error("Failed to send welcome email upon approval:", emailErr);
         }
 
-        res.status(200).send({ message: "Profile approved successfully. Welcome email sent." });
+        res.status(200).send({
+            message: `Profile approved successfully.${allocatedLeavesSummary.length > 0 ? ` Allocated ${allocatedLeavesSummary.join(' and ')}.` : ''} Welcome email sent.`
+        });
     } catch (err) {
         console.error("Error approving candidate onboarding:", err);
         await transaction.rollback();

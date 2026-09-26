@@ -182,6 +182,8 @@ const runBirthdayNotifications = async (tz) => {
 
             if (outcome.outcome === 'sent') {
                 wishesSent++;
+            } else if (outcome.outcome === 'inactive') {
+                console.log(`[CRON] Skipping birthday wish for ${person.name} — employee is inactive.`);
             } else if (outcome.outcome === 'no_email') {
                 console.warn(`[CRON] Skipping birthday wish for ${person.name} — no email on record.`);
             } else if (outcome.outcome === 'already_sent') {
@@ -300,6 +302,8 @@ const runAnniversaryNotifications = async (tz) => {
 
             if (outcome.outcome === 'sent') {
                 wishesSent++;
+            } else if (outcome.outcome === 'inactive') {
+                console.log(`[CRON] Skipping anniversary wish for ${person.name} — employee is inactive.`);
             } else if (outcome.outcome === 'no_email') {
                 console.warn(`[CRON] Skipping anniversary wish for ${person.name} — no email on record.`);
             } else if (outcome.outcome === 'already_sent') {

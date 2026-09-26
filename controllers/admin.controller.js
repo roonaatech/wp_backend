@@ -708,6 +708,8 @@ exports.getAllUsers = async (req, res) => {
                 { model: EmployeeProfile, as: 'profile_info', required: false, attributes: ['id', 'image_path', 'onboarding_status', 'consent_given', 'date_of_birth'] },
                 { model: db.employee_documents, as: 'documents', required: false, where: { document_type: 'photo' }, attributes: ['id', 'file_path', 'document_type'] }
             ],
+            distinct: true,
+            subQuery: false,
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         };
 
@@ -802,6 +804,9 @@ exports.sendBirthdayWishes = async (req, res) => {
         }
 
         const sent = results.filter(r => r.outcome === 'sent');
+        const inactive = results.filter(r => r.outcome === 'inactive');
+        const skipped = results.filter(r => r.outcome === 'already_sent');
+        const noEmail = results.filter(r => r.outcome === 'no_email');
         const failed = results.filter(r => r.outcome === 'failed');
 
         for (const r of sent) {
@@ -817,10 +822,11 @@ exports.sendBirthdayWishes = async (req, res) => {
         }
 
         res.status(failed.length > 0 && sent.length === 0 ? 502 : 200).send({
-            message: `${sent.length} birthday wish(es) sent.`,
+            message: `${sent.length} birthday wish(es) sent.${inactive.length > 0 ? ` ${inactive.length} skipped because employee is inactive.` : ''}`,
             sent: sent.length,
-            skipped: results.filter(r => r.outcome === 'already_sent').length,
-            no_email: results.filter(r => r.outcome === 'no_email').length,
+            inactive: inactive.length,
+            skipped: skipped.length,
+            no_email: noEmail.length,
             failed: failed.length,
             results
         });
@@ -889,6 +895,9 @@ exports.sendAnniversaryWishes = async (req, res) => {
         }
 
         const sent = results.filter(r => r.outcome === 'sent');
+        const inactive = results.filter(r => r.outcome === 'inactive');
+        const skipped = results.filter(r => r.outcome === 'already_sent');
+        const noEmail = results.filter(r => r.outcome === 'no_email');
         const failed = results.filter(r => r.outcome === 'failed');
 
         for (const r of sent) {
@@ -904,10 +913,11 @@ exports.sendAnniversaryWishes = async (req, res) => {
         }
 
         res.status(failed.length > 0 && sent.length === 0 ? 502 : 200).send({
-            message: `${sent.length} work anniversary wish(es) sent.`,
+            message: `${sent.length} work anniversary wish(es) sent.${inactive.length > 0 ? ` ${inactive.length} skipped because employee is inactive.` : ''}`,
             sent: sent.length,
-            skipped: results.filter(r => r.outcome === 'already_sent').length,
-            no_email: results.filter(r => r.outcome === 'no_email').length,
+            inactive: inactive.length,
+            skipped: skipped.length,
+            no_email: noEmail.length,
             failed: failed.length,
             results
         });
@@ -3139,17 +3149,18 @@ exports.createServiceAccount = async (req, res) => {
 
     if (!name || !email || !password || !role_id) {
         return res.status(400).send({
-            message: "All fields (name, email, password, role_id) are required."
+            message: "All fields (name, username, password, role_id) are required."
         });
     }
 
     try {
-        // Check if email already exists in users or service accounts to prevent duplication
-        const existingUser = await db.user.findOne({ where: { email: email } });
-        const existingSA = await db.service_accounts.findOne({ where: { email: email } });
+        const username = email.trim();
+        // Check if username/email already exists in users or service accounts to prevent duplication
+        const existingUser = await db.user.findOne({ where: { email: username } });
+        const existingSA = await db.service_accounts.findOne({ where: { email: username } });
         if (existingUser || existingSA) {
             return res.status(409).send({
-                message: "Email already exists in the system."
+                message: "Username / Email already exists in the system."
             });
         }
 
@@ -3161,8 +3172,8 @@ exports.createServiceAccount = async (req, res) => {
 
         const hashed = bcrypt.hashSync(password, 8);
         const newSA = await db.service_accounts.create({
-            name,
-            email,
+            name: name.trim(),
+            email: username,
             password: hashed,
             role_id,
             active: true
@@ -3199,19 +3210,20 @@ exports.updateServiceAccount = async (req, res) => {
             return res.status(404).send({ message: "Service account not found." });
         }
 
-        // If email changed, check uniqueness
-        if (email && email !== sa.email) {
-            const existingUser = await db.user.findOne({ where: { email: email } });
-            const existingSA = await db.service_accounts.findOne({ where: { email: email } });
+        // If username/email changed, check uniqueness
+        if (email && email.trim() !== sa.email) {
+            const username = email.trim();
+            const existingUser = await db.user.findOne({ where: { email: username } });
+            const existingSA = await db.service_accounts.findOne({ where: { email: username } });
             if (existingUser || existingSA) {
                 return res.status(409).send({
-                    message: "Email already exists in the system."
+                    message: "Username / Email already exists in the system."
                 });
             }
-            sa.email = email;
+            sa.email = username;
         }
 
-        if (name) sa.name = name;
+        if (name) sa.name = name.trim();
         if (role_id) {
             const role = await db.roles.findByPk(role_id);
             if (!role) {

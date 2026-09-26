@@ -70,6 +70,7 @@ const getTodaysAnniversaries = async (tz) => {
     const users = await Staff.findAll({
         where: {
             active: 1,
+            role: { [Op.and]: [{ [Op.ne]: null }, { [Op.gt]: 0 }] },
             [Op.or]: dateMatchers
         },
         attributes: ['staffid', 'firstname', 'lastname', 'email', 'secondary_email', 'gender'],
@@ -78,12 +79,16 @@ const getTodaysAnniversaries = async (tz) => {
                 model: EmployeeProfile,
                 as: 'profile_info',
                 required: true,
-                attributes: ['date_of_joining', 'image_path']
+                where: {
+                    onboarding_status: 'Completed'
+                },
+                attributes: ['date_of_joining', 'image_path', 'onboarding_status']
             },
             {
                 model: Role,
                 as: 'role_info',
-                required: false,
+                required: true,
+                where: { active: true },
                 attributes: ['id', 'name', 'display_name']
             }
         ],
@@ -164,6 +169,34 @@ const attachWishStatus = async (people, dateStr) => {
  * Send one work anniversary wish to both the official and personal address.
  */
 const sendAnniversaryWish = async (person, { dateStr, dateLabel, source = 'cron', triggeredBy = null }) => {
+    // Strictly verify the employee is active and fully onboarded before sending
+    const staff = await Staff.findByPk(person.staff_id, {
+        attributes: ['staffid', 'active', 'role'],
+        include: [
+            {
+                model: EmployeeProfile,
+                as: 'profile_info',
+                attributes: ['onboarding_status']
+            },
+            {
+                model: Role,
+                as: 'role_info',
+                attributes: ['id', 'active']
+            }
+        ]
+    });
+
+    if (
+        !staff ||
+        staff.active != 1 ||
+        !staff.role ||
+        (staff.role_info && !staff.role_info.active) ||
+        (staff.profile_info && staff.profile_info.onboarding_status !== 'Completed')
+    ) {
+        console.warn(`[AnniversaryWish] Skipping wish for staff ${person.staff_id} (${person.name}) — employee is inactive, unassigned, or onboarding not completed.`);
+        return { staff_id: person.staff_id, name: person.name, outcome: 'inactive' };
+    }
+
     const recipients = getWishRecipients(person);
 
     if (recipients.length === 0) {
@@ -224,15 +257,32 @@ const DIGEST_ROLES_SETTING_KEY = 'anniversary_digest_recipient_roles';
 const getStaffByRoleIds = async (roleIds) => {
     if (!roleIds || roleIds.length === 0) return [];
 
-    return await Staff.findAll({
+    const staffList = await Staff.findAll({
         where: {
             active: 1,
             role: { [Op.in]: roleIds },
             email: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] }
         },
+        include: [
+            {
+                model: Role,
+                as: 'role_info',
+                required: true,
+                where: { active: true },
+                attributes: ['id', 'name']
+            },
+            {
+                model: EmployeeProfile,
+                as: 'profile_info',
+                required: false,
+                attributes: ['onboarding_status']
+            }
+        ],
         attributes: ['staffid', 'firstname', 'lastname', 'email', 'secondary_email'],
         order: [['firstname', 'ASC'], ['lastname', 'ASC']]
     });
+
+    return staffList.filter(u => !u.profile_info || u.profile_info.onboarding_status === 'Completed');
 };
 
 /** Role ids holding the can_view_anniversaries permission. */

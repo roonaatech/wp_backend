@@ -69,17 +69,46 @@ exports.findAll = (req, res) => {
         });
 };
 
-// Get all leave types (including inactive) - for admin
-exports.findAllAdmin = (req, res) => {
-    LeaveType.findAll()
-        .then(data => {
-            res.send(data);
-        })
-        .catch(err => {
-            res.status(500).send({
-                message: err.message || "Some error occurred while retrieving leave types."
-            });
+// Get all leave types (including inactive) - for admin, with assigned employee info
+exports.findAllAdmin = async (req, res) => {
+    try {
+        const UserLeaveType = db.user_leave_types;
+        const User = db.user;
+
+        const leaveTypes = await LeaveType.findAll({
+            include: [{
+                model: UserLeaveType,
+                attributes: ['id', 'user_id', 'days_allowed', 'days_used'],
+                include: [{
+                    model: User,
+                    attributes: ['staffid', 'firstname', 'lastname', 'email', 'userid']
+                }]
+            }]
         });
+
+        const result = leaveTypes.map(lt => {
+            const json = lt.toJSON();
+            const assignments = json.user_leave_types || [];
+            return {
+                ...json,
+                assigned_count: assignments.length,
+                assigned_employees: assignments.map(a => ({
+                    id: a.user?.staffid || a.user_id,
+                    name: a.user ? `${a.user.firstname} ${a.user.lastname}` : 'Unknown',
+                    email: a.user?.email || '',
+                    employee_id: a.user?.userid || '',
+                    days_allowed: a.days_allowed,
+                    days_used: a.days_used
+                })).filter(Boolean)
+            };
+        });
+
+        res.send(result);
+    } catch (err) {
+        res.status(500).send({
+            message: err.message || "Some error occurred while retrieving leave types."
+        });
+    }
 };
 
 // Create new leave type
@@ -179,6 +208,50 @@ exports.update = async (req, res) => {
                     assignedEmployees: employeeList,
                     assignedCount: assignedUsers.length,
                     instruction: ""
+                });
+            }
+        }
+
+        // Check if editing leave type details (name, description, days_allowed, gender_restriction)
+        const isEditingDetails = (name !== undefined && name !== leaveType.name) ||
+            (description !== undefined && description !== leaveType.description) ||
+            (days_allowed !== undefined && days_allowed !== leaveType.days_allowed) ||
+            (gender_restriction !== undefined);
+
+        if (isEditingDetails) {
+            const UserLeaveType = db.user_leave_types;
+            const User = db.user;
+
+            const assignedUsers = await UserLeaveType.findAll({
+                where: { leave_type_id: id },
+                include: [{
+                    model: User,
+                    attributes: ['staffid', 'firstname', 'lastname', 'email', 'userid'],
+                    required: true
+                }],
+                attributes: ['id', 'user_id', 'days_allowed', 'days_used']
+            });
+
+            if (assignedUsers.length > 0) {
+                const employeeList = assignedUsers.map(assignment => ({
+                    id: assignment.user.staffid,
+                    name: `${assignment.user.firstname} ${assignment.user.lastname}`,
+                    email: assignment.user.email,
+                    employee_id: assignment.user.userid,
+                    days_allowed: assignment.days_allowed,
+                    days_used: assignment.days_used
+                }));
+
+                const message = assignedUsers.length === 1
+                    ? `Cannot edit leave type. It is currently assigned to 1 employee. Please remove this leave type from the employee before editing it.`
+                    : `Cannot edit leave type. It is currently assigned to ${assignedUsers.length} employees. Please remove this leave type from all employees before editing it.`;
+
+                return res.status(400).send({
+                    message: message,
+                    canEdit: false,
+                    assignedEmployees: employeeList,
+                    assignedCount: assignedUsers.length,
+                    instruction: "Only leave types not assigned to any employees can be edited."
                 });
             }
         }
