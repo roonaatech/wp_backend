@@ -121,8 +121,9 @@ const getNowStringInTimezone = (timezone = 'Asia/Kolkata') => {
     const parts = formatter.formatToParts(now);
     const p = {};
     parts.forEach(part => { p[part.type] = part.value; });
+    const safeHour = String(parseInt(p.hour, 10) % 24).padStart(2, '0');
 
-    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+    return `${p.year}-${p.month}-${p.day} ${safeHour}:${p.minute}:${p.second}`;
 };
 
 /**
@@ -166,9 +167,12 @@ const parseTimeInTimezone = (dateTimeStr, timezone = 'Asia/Kolkata') => {
     const p = {};
     parts.forEach(part => { p[part.type] = part.value; });
 
+    // Handle hour '24' that can be emitted by Intl for midnight to prevent day rolling forward
+    const renderedHour = parseInt(p.hour, 10) % 24;
+
     const renderedAsUTC = Date.UTC(
-        parseInt(p.year), parseInt(p.month) - 1, parseInt(p.day),
-        parseInt(p.hour), parseInt(p.minute), parseInt(p.second)
+        parseInt(p.year, 10), parseInt(p.month, 10) - 1, parseInt(p.day, 10),
+        renderedHour, parseInt(p.minute, 10), parseInt(p.second, 10)
     );
 
     const offset = renderedAsUTC - asUTC;

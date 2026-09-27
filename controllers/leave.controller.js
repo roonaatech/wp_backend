@@ -48,7 +48,8 @@ const formatDateInTimezone = (dateObj, tz) => {
         const parts = formatter.formatToParts(new Date(dateObj));
         const p = {};
         parts.forEach(part => { p[part.type] = part.value; });
-        return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+        const safeHour = String(parseInt(p.hour, 10) % 24).padStart(2, '0');
+        return `${p.year}-${p.month}-${p.day} ${safeHour}:${p.minute}:${p.second}`;
     } catch (e) {
         return String(dateObj);
     }
