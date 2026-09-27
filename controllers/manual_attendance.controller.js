@@ -217,6 +217,7 @@ exports.getMissedAttendance = async (req, res) => {
                             status: leave.status, // 'Approved' | 'Pending'
                             is_approved: isApproved,
                             is_pending: isPending,
+                            is_half_day: leave.is_half_day === true || leave.is_half_day === 1,
                             color: isPending ? '#f59e0b' : '#8b5cf6',
                             reason: leave.reason
                         };
@@ -279,6 +280,7 @@ exports.getMissedAttendance = async (req, res) => {
                             date: dateStr,
                             leave_id: leave.leave_id,
                             leave_type: leave.leave_type,
+                            is_half_day: leave.is_half_day,
                             reason: leave.reason
                         });
                     }
@@ -366,31 +368,59 @@ exports.regularizeAttendance = async (req, res) => {
                     continue;
                 }
 
-                // Verify employee is not on approved leave on this date
+                // Verify employee is not on full-day leave on this date (Approved or Pending)
                 const leaveOnDate = await LeaveRequest.findOne({
                     where: {
                         staff_id,
-                        status: 'Approved',
+                        status: { [Op.in]: ['Approved', 'Pending'] },
                         start_date: { [Op.lte]: date },
                         end_date: { [Op.gte]: date }
                     }
                 });
                 if (leaveOnDate) {
-                    errors.push({
-                        staff_id,
-                        date,
-                        message: `${staff.firstname} ${staff.lastname} is on approved leave (${leaveOnDate.leave_type || 'Leave'}) on ${date}. Regularization skipped.`
-                    });
+                    const isHalfDay = leaveOnDate.is_half_day === true || leaveOnDate.is_half_day === 1;
+                    if (!isHalfDay) {
+                        errors.push({
+                            staff_id,
+                            date,
+                            message: `${staff.firstname} ${staff.lastname} is on full-day leave (${leaveOnDate.leave_type || 'Leave'}, Status: ${leaveOnDate.status}) on ${date}. Attendance update is not allowed.`
+                        });
+                        continue;
+                    }
+                }
+
+                // Normalize in/out time to 24h format (handles 12h, AM/PM, and inferred PM)
+                const normalizeTimePart = (rawTime, refInHour = null) => {
+                    if (!rawTime) return null;
+                    const match = String(rawTime).trim().match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+                    if (!match) return null;
+                    let hh = parseInt(match[1], 10);
+                    const mm = match[2];
+                    const ss = match[3] || '00';
+                    const ampm = match[4]?.toUpperCase();
+                    if (ampm === 'PM' && hh < 12) hh += 12;
+                    else if (ampm === 'AM' && hh === 12) hh = 0;
+                    else if (!ampm && hh <= 12 && refInHour !== null) {
+                        if (refInHour >= 7 && hh < refInHour && hh + 12 < 24) {
+                            hh += 12;
+                        }
+                    }
+                    return {
+                        str: `${String(hh).padStart(2, '0')}:${mm}:${ss}`,
+                        hour: hh
+                    };
+                };
+
+                const normIn = normalizeTimePart(check_in_time);
+                const normOut = normalizeTimePart(check_out_time, normIn?.hour);
+
+                if (!normIn || !normOut) {
+                    errors.push({ staff_id, date, message: "Invalid time format." });
                     continue;
                 }
 
-                // Construct full timestamp strings in application timezone
-                // Format: "YYYY-MM-DD HH:mm:00"
-                const inTimePart = check_in_time.length === 5 ? `${check_in_time}:00` : check_in_time;
-                const outTimePart = check_out_time.length === 5 ? `${check_out_time}:00` : check_out_time;
-
-                const checkInStr = `${date} ${inTimePart}`;
-                const checkOutStr = `${date} ${outTimePart}`;
+                const checkInStr = `${date} ${normIn.str}`;
+                const checkOutStr = `${date} ${normOut.str}`;
 
                 const parsedInDate = timezoneUtil.parseTimeInTimezone(checkInStr, tz);
                 const parsedOutDate = timezoneUtil.parseTimeInTimezone(checkOutStr, tz);

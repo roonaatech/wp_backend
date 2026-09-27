@@ -936,14 +936,33 @@ exports.updateAttendanceLog = async (req, res) => {
         // to log.date (the attendance day).
         if (check_out_time) {
             const rawStr = String(check_out_time).trim();
-            const timeMatch = rawStr.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+            const timeMatch = rawStr.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
             if (!timeMatch) {
                 return res.status(400).send({ message: "Invalid check-out time format." });
             }
-            const hh = timeMatch[1].padStart(2, '0');
+            let hh = parseInt(timeMatch[1], 10);
             const mm = timeMatch[2];
             const ss = timeMatch[3] || '00';
-            const timePart = `${hh}:${mm}:${ss}`;
+            const ampm = timeMatch[4]?.toUpperCase();
+
+            if (ampm === 'PM' && hh < 12) {
+                hh += 12;
+            } else if (ampm === 'AM' && hh === 12) {
+                hh = 0;
+            } else if (!ampm && hh <= 12 && log.check_in_time) {
+                // If 12h without AM/PM: e.g. check-in is 09:30 and checkout entered as 06:30,
+                // auto-infer PM (18:30) if checkout hour is before morning check-in hour
+                const checkInFormatted = formatDateInTimezone(log.check_in_time, tz);
+                const inMatch = checkInFormatted?.match(/\s(\d{2}):(\d{2})/);
+                if (inMatch) {
+                    const inH = parseInt(inMatch[1], 10);
+                    if (inH >= 7 && hh < inH && hh + 12 < 24) {
+                        hh += 12;
+                    }
+                }
+            }
+
+            const timePart = `${String(hh).padStart(2, '0')}:${mm}:${ss}`;
 
             // Anchor to log.date
             const logDateStr = typeof log.date === 'string' ? log.date.split('T')[0] : formatDateInTimezone(log.date, tz).split(' ')[0];
