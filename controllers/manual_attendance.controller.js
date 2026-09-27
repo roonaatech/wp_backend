@@ -70,7 +70,8 @@ const formatTimeToHHMM = (dateObj, tz = 'Asia/Kolkata') => {
             hourCycle: 'h23'
         });
         const parts = formatter.formatToParts(d);
-        const hour = parts.find(p => p.type === 'hour')?.value || '00';
+        const rawHour = parts.find(p => p.type === 'hour')?.value || '00';
+        const hour = String(parseInt(rawHour, 10) % 24).padStart(2, '0');
         const minute = parts.find(p => p.type === 'minute')?.value || '00';
         return `${hour}:${minute}`;
     } catch (e) {
@@ -504,8 +505,8 @@ exports.regularizeAttendance = async (req, res) => {
                     new_values: {
                         staff_id,
                         date,
-                        check_in_time: inTimePart,
-                        check_out_time: outTimePart,
+                        check_in_time: normIn.str,
+                        check_out_time: normOut.str,
                         reason,
                         notes
                     },
