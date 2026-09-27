@@ -8,14 +8,27 @@ const Setting = db.settings;
  */
 const getAttendanceConfig = async () => {
     try {
-        const [compSetting, startSetting, endSetting] = await Promise.all([
+        const [compSetting, startSetting, endSetting, leaveSetting, timeOffSetting] = await Promise.all([
             Setting.findOne({ where: { key: 'attendance_compliance_hours' } }),
             Setting.findOne({ where: { key: 'office_start_time' } }),
-            Setting.findOne({ where: { key: 'office_end_time' } })
+            Setting.findOne({ where: { key: 'office_end_time' } }),
+            Setting.findOne({ where: { key: 'allowed_leave_per_month' } }),
+            Setting.findOne({ where: { key: 'allowed_time_off_per_month' } })
         ]);
 
         const startTime = startSetting?.value || '09:30';
         const endTime = endSetting?.value || '18:30';
+
+        // Allowed leave & time-off monthly configurations (defaults: 1 day, 2 hours)
+        let allowedLeavePerMonth = parseFloat(leaveSetting?.value);
+        if (isNaN(allowedLeavePerMonth) || allowedLeavePerMonth < 0) {
+            allowedLeavePerMonth = 1;
+        }
+
+        let allowedTimeOffPerMonth = parseFloat(timeOffSetting?.value);
+        if (isNaN(allowedTimeOffPerMonth) || allowedTimeOffPerMonth < 0) {
+            allowedTimeOffPerMonth = 2;
+        }
 
         // Attendance Configuration in System Settings defines office start and end times.
         // Daily compliance hours must be calculated from the difference between start and end times.
@@ -50,12 +63,16 @@ const getAttendanceConfig = async () => {
 
         return {
             complianceHours,
+            allowedLeavePerMonth,
+            allowedTimeOffPerMonth,
             startTime,
             endTime
         };
     } catch (e) {
         return {
             complianceHours: 9,
+            allowedLeavePerMonth: 1,
+            allowedTimeOffPerMonth: 2,
             startTime: '09:30',
             endTime: '18:30'
         };

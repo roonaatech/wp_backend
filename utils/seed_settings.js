@@ -37,6 +37,16 @@ async function seedSettings() {
             display_order: 1
         },
         {
+            key: 'allowed_time_off_per_month',
+            value: '2',
+            description: 'Allowed time-off hours per month credited towards daily attendance compliance for salary processing',
+            category: 'time_off',
+            data_type: 'number',
+            validation_rules: '{"min": 0, "max": 100, "step": 0.5, "required": true}',
+            is_public: true,
+            display_order: 2
+        },
+        {
             key: 'application_timezone',
             value: 'Asia/Kolkata',
             description: 'Timezone used for displaying dates and times throughout the application',
@@ -105,6 +115,16 @@ async function seedSettings() {
             validation_rules: '{"min": 0, "max": 365, "step": 1, "required": true}',
             is_public: false,
             display_order: 20
+        },
+        {
+            key: 'allowed_leave_per_month',
+            value: '1',
+            description: 'Allowed paid leave days per month for salary processing and compliance calculation',
+            category: 'leave',
+            data_type: 'number',
+            validation_rules: '{"min": 0, "max": 31, "step": 0.5, "required": true}',
+            is_public: true,
+            display_order: 21
         },
         {
             key: 'enable_pending_request_reminders',

@@ -1667,6 +1667,9 @@ exports.getMonthlySummary = async (req, res) => {
                     onduty_minutes: 0,
                     attendance_dates: new Set(),
                     attendance_records: [],
+                    leave_days_list: [],
+                    timeoff_records: [],
+                    onduty_records: [],
                     records: []
                 };
             }
@@ -1767,6 +1770,15 @@ exports.getMonthlySummary = async (req, res) => {
                 while (current <= endLimit) {
                     if (current.getDay() !== 0) { // Not Sunday
                         actualDays++;
+                        const yyyy = current.getFullYear();
+                        const mm = String(current.getMonth() + 1).padStart(2, '0');
+                        const dd = String(current.getDate()).padStart(2, '0');
+                        staffMap[sid].leave_days_list.push({
+                            date: `${yyyy}-${mm}-${dd}`,
+                            days: leave.is_half_day ? 0.5 : 1.0,
+                            leave_type: leave.leave_type || 'Leave',
+                            reason: leave.reason || 'N/A'
+                        });
                     }
                     current.setDate(current.getDate() + 1);
                 }
@@ -1808,6 +1820,13 @@ exports.getMonthlySummary = async (req, res) => {
                     const mins = (eh * 60 + em) - (sh * 60 + sm);
                     if (mins > 0) {
                         staffMap[sid].timeoff_minutes += mins;
+                        staffMap[sid].timeoff_records.push({
+                            date: to.date,
+                            minutes: mins,
+                            start_time: to.start_time,
+                            end_time: to.end_time,
+                            reason: to.reason || 'N/A'
+                        });
                         const formatMins = (m) => {
                             const h = Math.floor(m / 60); const min = m % 60;
                             if (h > 0 && min > 0) return `${h}h ${min}m`;
@@ -1845,13 +1864,22 @@ exports.getMonthlySummary = async (req, res) => {
                     const mins = Math.floor(diffMs / 60000);
                     if (mins > 0) {
                         staffMap[sid].onduty_minutes += mins;
+                        const dStr = getDateInTimezone(od.start_time, reportTz);
+                        staffMap[sid].onduty_records.push({
+                            date: dStr,
+                            minutes: mins,
+                            start_time: od.start_time,
+                            end_time: od.end_time,
+                            client_name: od.client_name,
+                            location: od.location,
+                            end_location: od.end_location
+                        });
                         const formatMins = (m) => {
                             const h = Math.floor(m / 60); const min = m % 60;
                             if (h > 0 && min > 0) return `${h}h ${min}m`;
                             if (h > 0) return `${h}h`;
                             return `${min}m`;
                         };
-                        const dStr = getDateInTimezone(od.start_time, reportTz);
                         let timeStr = "";
                         try {
                            const d1 = new Date(od.start_time);
@@ -1882,6 +1910,10 @@ exports.getMonthlySummary = async (req, res) => {
             }
         });
 
+        const { getAttendanceConfig } = require('../utils/attendanceConfig');
+        const { calculateMonthlyCompliance } = require('../utils/salaryCompliance.util');
+        const attConfig = await getAttendanceConfig();
+
         // Convert to array and format hours
         const summary = Object.values(staffMap).map(s => {
             const presentDays = s.attendance_dates ? s.attendance_dates.size : 0;
@@ -1894,6 +1926,20 @@ exports.getMonthlySummary = async (req, res) => {
                 const ta = a.check_in_time ? new Date(a.check_in_time).getTime() : 0;
                 const tb = b.check_in_time ? new Date(b.check_in_time).getTime() : 0;
                 return ta - tb;
+            });
+
+            // Calculate Salary Compliance (Compliant Days) and Day-by-Day Breakdown
+            const compliance = calculateMonthlyCompliance({
+                attendanceRecords: s.attendance_records,
+                leaveDays: s.leave_days_list,
+                timeoffRecords: s.timeoff_records,
+                ondutyRecords: s.onduty_records
+            }, {
+                complianceHours: attConfig.complianceHours,
+                allowedLeavePerMonth: attConfig.allowedLeavePerMonth,
+                allowedTimeOffPerMonth: attConfig.allowedTimeOffPerMonth,
+                month: m,
+                year: y
             });
 
             // Build records list for the employee with a single grouped Attendance row at the top
@@ -1947,6 +1993,10 @@ exports.getMonthlySummary = async (req, res) => {
                 timeoff_minutes: s.timeoff_minutes,
                 onduty_hours: parseFloat((s.onduty_minutes / 60).toFixed(1)),
                 onduty_minutes: s.onduty_minutes,
+                compliant_days: compliance.compliant_days,
+                non_compliant_days: compliance.non_compliant_days,
+                quota_summary: compliance.quota_summary,
+                daily_breakdown: compliance.daily_breakdown,
                 attendance_records: s.attendance_records,
                 records: recordsList
             };
@@ -1955,14 +2005,13 @@ exports.getMonthlySummary = async (req, res) => {
         // Sort by name
         summary.sort((a, b) => `${a.firstname} ${a.lastname}`.localeCompare(`${b.firstname} ${b.lastname}`));
 
-        const { getAttendanceConfig } = require('../utils/attendanceConfig');
-        const attConfig = await getAttendanceConfig();
-
         res.send({
             month: m,
             year: y,
             period: `${startDate} to ${endDate}`,
             compliance_hours: attConfig.complianceHours,
+            allowed_leave_per_month: attConfig.allowedLeavePerMonth,
+            allowed_time_off_per_month: attConfig.allowedTimeOffPerMonth,
             office_start_time: attConfig.startTime,
             office_end_time: attConfig.endTime,
             summary
