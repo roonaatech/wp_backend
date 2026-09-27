@@ -931,11 +931,33 @@ exports.updateAttendanceLog = async (req, res) => {
         const updateData = {};
 
         // Parse the checkout string if provided. It represents wall-clock
-        // time in the app's configured timezone, not the server's local
-        // timezone, so it must be converted explicitly rather than passed
-        // through `new Date(str)` (which parses using the server's local tz).
+        // time in the app's configured timezone. To eliminate any client date shift
+        // or UTC offset discrepancies, extract the time portion and anchor it strictly
+        // to log.date (the attendance day).
         if (check_out_time) {
-            updateData.check_out_time = timezoneUtil.parseTimeInTimezone(check_out_time, tz);
+            const rawStr = String(check_out_time).trim();
+            const timeMatch = rawStr.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+            if (!timeMatch) {
+                return res.status(400).send({ message: "Invalid check-out time format." });
+            }
+            const hh = timeMatch[1].padStart(2, '0');
+            const mm = timeMatch[2];
+            const ss = timeMatch[3] || '00';
+            const timePart = `${hh}:${mm}:${ss}`;
+
+            // Anchor to log.date
+            const logDateStr = typeof log.date === 'string' ? log.date.split('T')[0] : formatDateInTimezone(log.date, tz).split(' ')[0];
+            const normalizedDateTimeStr = `${logDateStr} ${timePart}`;
+
+            updateData.check_out_time = timezoneUtil.parseTimeInTimezone(normalizedDateTimeStr, tz);
+
+            // Reject check-out times that are before or equal to check-in time
+            if (log.check_in_time) {
+                const checkInDate = new Date(log.check_in_time);
+                if (updateData.check_out_time.getTime() <= checkInDate.getTime()) {
+                    return res.status(400).send({ message: "Check-out time must be after check-in time." });
+                }
+            }
         } else if (check_out_time === null || check_out_time === "") {
             updateData.check_out_time = null;
         }
