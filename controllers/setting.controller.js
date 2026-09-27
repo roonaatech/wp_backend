@@ -180,6 +180,40 @@ exports.updateSetting = async (req, res) => {
             await setting.save();
         }
 
+        // Auto-sync attendance_compliance_hours when office start or end time is updated
+        if (key === 'office_start_time' || key === 'office_end_time') {
+            try {
+                const otherKey = key === 'office_start_time' ? 'office_end_time' : 'office_start_time';
+                const otherSetting = await Setting.findOne({ where: { key: otherKey } });
+                const startTime = key === 'office_start_time' ? value : otherSetting?.value;
+                const endTime = key === 'office_end_time' ? value : otherSetting?.value;
+                if (startTime && endTime) {
+                    const [sh, sm] = startTime.split(':').map(Number);
+                    const [eh, em] = endTime.split(':').map(Number);
+                    const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+                    if (diff > 0) {
+                        const complianceHrs = String(Math.round((diff / 60) * 100) / 100);
+                        const [compSetting] = await Setting.findOrCreate({
+                            where: { key: 'attendance_compliance_hours' },
+                            defaults: {
+                                value: complianceHrs,
+                                category: 'attendance',
+                                data_type: 'number',
+                                is_public: true,
+                                display_order: 1,
+                                updated_by: req.userId
+                            }
+                        });
+                        compSetting.value = complianceHrs;
+                        compSetting.updated_by = req.userId;
+                        await compSetting.save();
+                    }
+                }
+            } catch (syncErr) {
+                console.error("Failed to auto-sync attendance_compliance_hours:", syncErr);
+            }
+        }
+
         // Schedule-related settings are read when a cron job is registered, so
         // re-register the affected jobs instead of waiting for a restart.
         if (process.env.NODE_ENV !== 'test') {
@@ -199,7 +233,7 @@ exports.updateSetting = async (req, res) => {
             old_values: existingSetting ? { value: existingSetting.value } : null,
             new_values: { value: value },
             ip_address: req.ip || req.connection?.remoteAddress,
-            user_agent: req.headers['user-agent']
+            user_agent: req.headers ? req.headers['user-agent'] : null
         });
 
         res.status(200).send({ message: "Setting updated successfully.", setting: setting });

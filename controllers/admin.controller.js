@@ -1954,10 +1954,16 @@ exports.getMonthlySummary = async (req, res) => {
         // Sort by name
         summary.sort((a, b) => `${a.firstname} ${a.lastname}`.localeCompare(`${b.firstname} ${b.lastname}`));
 
+        const { getAttendanceConfig } = require('../utils/attendanceConfig');
+        const attConfig = await getAttendanceConfig();
+
         res.send({
             month: m,
             year: y,
             period: `${startDate} to ${endDate}`,
+            compliance_hours: attConfig.complianceHours,
+            office_start_time: attConfig.startTime,
+            office_end_time: attConfig.endTime,
             summary
         });
 

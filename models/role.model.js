@@ -114,6 +114,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage onboarding processes'
         },
+        can_manage_manual_attendance: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can add manual attendance for employees working from home or missed check-in/out'
+        },
         can_view_birthdays: {
             type: Sequelize.BOOLEAN,
             allowNull: false,

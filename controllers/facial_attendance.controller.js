@@ -882,10 +882,16 @@ exports.getAttendanceLogsReport = async (req, res) => {
             return plain;
         });
 
+        const { getAttendanceConfig } = require('../utils/attendanceConfig');
+        const attConfig = await getAttendanceConfig();
+
         res.status(200).send({
             totalItems: count,
             totalPages: Math.ceil(count / limitVal),
             currentPage: parseInt(page),
+            compliance_hours: attConfig.complianceHours,
+            office_start_time: attConfig.startTime,
+            office_end_time: attConfig.endTime,
             reports: reportsList
         });
 

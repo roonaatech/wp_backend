@@ -228,13 +228,33 @@ async function seedSettings() {
         },
         {
             key: 'attendance_compliance_hours',
-            value: '8',
+            value: '9',
             description: 'Minimum required hours an employee must be in office per day for attendance compliance',
             category: 'attendance',
             data_type: 'number',
             validation_rules: '{"min": 1, "max": 24, "step": 0.5, "required": true}',
             is_public: true,
             display_order: 1
+        },
+        {
+            key: 'office_start_time',
+            value: '09:30',
+            description: 'Default office start time for manual attendance regularization and compliance calculation',
+            category: 'attendance',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: true,
+            display_order: 2
+        },
+        {
+            key: 'office_end_time',
+            value: '18:30',
+            description: 'Default office end time for manual attendance regularization and compliance calculation',
+            category: 'attendance',
+            data_type: 'string',
+            validation_rules: null,
+            is_public: true,
+            display_order: 3
         }
     ];
 

@@ -374,6 +374,29 @@ const canManageOnboarding = async (req, res, next) => {
     }
 };
 
+const canManageManualAttendance = async (req, res, next) => {
+    try {
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
+        }
+
+        if (role.can_manage_manual_attendance === true || role.hierarchy_level <= 1) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage manual attendance!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 /**
  * Middleware to check if user can view users (read-only access)
  * Allows access if user has can_view_users OR can_manage_users permission
@@ -718,6 +741,7 @@ const authJwt = {
     canManageUsers: canManageUsers,
     canManageServiceAccounts: canManageServiceAccounts,
     canManageOnboarding: canManageOnboarding,
+    canManageManualAttendance: canManageManualAttendance,
     canViewUsers: canViewUsers,
     canViewReports: canViewReports,
     canManageActiveOnDuty: canManageActiveOnDuty,
