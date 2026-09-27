@@ -6,6 +6,7 @@ const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const emailService = require("../utils/email.service");
 const hierarchyUtil = require("../utils/hierarchy.util");
+const { getAttendanceConfig } = require("../utils/attendanceConfig");
 
 // Helper to calculate hours difference
 const calculateHours = (start, end) => {
@@ -15,15 +16,66 @@ const calculateHours = (start, end) => {
     return (eTime - sTime) / (1000 * 60 * 60);
 };
 
+// Helper to convert time string (HH:MM or HH:MM:SS) to total seconds
+const toSeconds = (timeStr) => {
+    if (!timeStr) return 0;
+    const parts = String(timeStr).split(':').map(Number);
+    return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
+};
+
+// Helper to format time string into 12-hour format with AM/PM
+const formatTime12h = (timeStr) => {
+    if (!timeStr) return '';
+    const parts = String(timeStr).split(':');
+    let h = parseInt(parts[0], 10);
+    const m = parts[1] ? parts[1].padStart(2, '0') : '00';
+    if (isNaN(h)) return timeStr;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+};
+
 // Internal validation function for time-off hours
 const validateTimeOffHours = async (staff_id, date, start_time, end_time, excludeId = null) => {
-    const maxTimeOffSetting = await Setting.findOne({ where: { key: 'max_time_off_hours' } });
+    const [attConfig, maxTimeOffSetting] = await Promise.all([
+        getAttendanceConfig(),
+        Setting.findOne({ where: { key: 'max_time_off_hours' } })
+    ]);
+
     const maxHours = maxTimeOffSetting ? parseFloat(maxTimeOffSetting.value) : 4;
+    const officeStartTime = attConfig?.startTime || '09:30';
+    const officeEndTime = attConfig?.endTime || '18:30';
 
     const durationHours = calculateHours(start_time, end_time);
 
     if (durationHours <= 0) {
         return { valid: false, message: "End time must be after start time." };
+    }
+
+    // Ensure time-off request is strictly within configured office hours
+    const startSec = toSeconds(start_time);
+    const endSec = toSeconds(end_time);
+    const officeStartSec = toSeconds(officeStartTime);
+    const officeEndSec = toSeconds(officeEndTime);
+
+    const officeStartFmt = formatTime12h(officeStartTime);
+    const officeEndFmt = formatTime12h(officeEndTime);
+    const reqStartFmt = formatTime12h(start_time);
+    const reqEndFmt = formatTime12h(end_time);
+
+    if (officeEndSec > officeStartSec) {
+        if (startSec < officeStartSec || startSec >= officeEndSec) {
+            return {
+                valid: false,
+                message: `Time-off start time (${reqStartFmt}) must be within configured office hours (${officeStartFmt} - ${officeEndFmt}). Requests outside office hours are not allowed.`
+            };
+        }
+        if (endSec <= officeStartSec || endSec > officeEndSec) {
+            return {
+                valid: false,
+                message: `Time-off end time (${reqEndFmt}) must be within configured office hours (${officeStartFmt} - ${officeEndFmt}). Requests outside office hours are not allowed.`
+            };
+        }
     }
 
     if (durationHours > maxHours) {
@@ -59,7 +111,7 @@ const validateTimeOffHours = async (staff_id, date, start_time, end_time, exclud
         };
     }
 
-    return { valid: true, durationHours, maxHours };
+    return { valid: true, durationHours, maxHours, officeStartTime, officeEndTime };
 };
 
 // Apply for Time Off
