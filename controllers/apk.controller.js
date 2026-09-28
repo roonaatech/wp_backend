@@ -104,25 +104,6 @@ exports.uploadApk = async (req, res) => {
         });
 
         if (latestApk) {
-            const parseBuildNumber = (v) => {
-                const parts = String(v).split('+');
-                return parts[1] ? parseInt(parts[1], 10) : 0;
-            };
-
-            const newBuild = parseBuildNumber(version);
-            const latestBuild = parseBuildNumber(latestApk.version);
-
-            if (newBuild > 0 && latestBuild > 0 && newBuild <= latestBuild) {
-                if (req.file.path && fs.existsSync(req.file.path)) {
-                    fs.unlinkSync(req.file.path);
-                }
-                return res.status(400).send({
-                    message: `Build number (+${newBuild}) must be strictly higher than the current latest build number (+${latestBuild}). Android does not allow versionCode downgrades and will fail to install over existing apps.`,
-                    errorType: 'LOWER_VERSION',
-                    currentLatest: latestApk.version
-                });
-            }
-
             const comparison = compareVersions(version, latestApk.version);
             if (comparison < 0) {
                 // New version is lower than current latest
@@ -390,12 +371,13 @@ exports.updateReleaseNotes = async (req, res) => {
 // Helper function to compare version strings (e.g., "1.0.0+1" vs "1.0.1+2")
 // Supports formats: "1.0.0", "1.0.0+7", "1.3.0+8"
 const compareVersions = (v1, v2) => {
+    if (!v1 || !v2) return 0;
     // Parse version and build number (e.g., "1.3.0+7" -> { version: "1.3.0", build: 7 })
     const parseVersion = (v) => {
-        const [versionPart, buildPart] = v.split('+');
+        const [versionPart, buildPart] = String(v).trim().split('+');
         return {
-            version: versionPart,
-            build: buildPart ? parseInt(buildPart, 10) : 0
+            version: (versionPart || '0').trim(),
+            build: buildPart ? parseInt(buildPart.trim(), 10) : 0
         };
     };
     
@@ -403,8 +385,8 @@ const compareVersions = (v1, v2) => {
     const parsed2 = parseVersion(v2);
     
     // Compare semantic version parts first
-    const parts1 = parsed1.version.split('.').map(Number);
-    const parts2 = parsed2.version.split('.').map(Number);
+    const parts1 = parsed1.version.split('.').map(n => parseInt(n, 10) || 0);
+    const parts2 = parsed2.version.split('.').map(n => parseInt(n, 10) || 0);
     
     // Ensure both arrays have the same length
     const maxLength = Math.max(parts1.length, parts2.length);
