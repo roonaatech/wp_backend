@@ -104,6 +104,25 @@ exports.uploadApk = async (req, res) => {
         });
 
         if (latestApk) {
+            const parseBuildNumber = (v) => {
+                const parts = String(v).split('+');
+                return parts[1] ? parseInt(parts[1], 10) : 0;
+            };
+
+            const newBuild = parseBuildNumber(version);
+            const latestBuild = parseBuildNumber(latestApk.version);
+
+            if (newBuild > 0 && latestBuild > 0 && newBuild <= latestBuild) {
+                if (req.file.path && fs.existsSync(req.file.path)) {
+                    fs.unlinkSync(req.file.path);
+                }
+                return res.status(400).send({
+                    message: `Build number (+${newBuild}) must be strictly higher than the current latest build number (+${latestBuild}). Android does not allow versionCode downgrades and will fail to install over existing apps.`,
+                    errorType: 'LOWER_VERSION',
+                    currentLatest: latestApk.version
+                });
+            }
+
             const comparison = compareVersions(version, latestApk.version);
             if (comparison < 0) {
                 // New version is lower than current latest
