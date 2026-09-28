@@ -31,6 +31,24 @@ exports.checkIn = async (req, res) => {
     const nowString = timezoneUtil.getNowStringInTimezone(tz);
     const todayDateOnly = nowString.split(' ')[0];
 
+    // Verify employee is not on approved full-day leave today
+    const LeaveRequest = db.leave_requests;
+    const Op = db.Sequelize.Op;
+    const approvedFullDayLeave = await LeaveRequest.findOne({
+        where: {
+            staff_id: req.userId,
+            status: 'Approved',
+            start_date: { [Op.lte]: todayDateOnly },
+            end_date: { [Op.gte]: todayDateOnly }
+        }
+    });
+
+    if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+        return res.status(400).send({
+            message: "You are on approved leave for today. Attendance check-in is not allowed."
+        });
+    }
+
     const attendance = {
         staff_id: req.userId,
         check_in_time: now,

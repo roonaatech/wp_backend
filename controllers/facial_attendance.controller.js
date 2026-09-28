@@ -6,6 +6,8 @@ const AttendanceLog = db.attendance_logs;
 const Approval = db.approvals;
 const Setting = db.settings;
 const EmployeeDevice = db.employee_devices;
+const LeaveRequest = db.leave_requests;
+const Op = db.Sequelize.Op;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const timezoneUtil = require("../utils/timezone.util");
 const bcrypt = require("bcryptjs");
@@ -430,11 +432,127 @@ exports.getAttendanceStatus = async (req, res) => {
             return res.status(200).send({ status: 'COMPLETED', employeeName: `${user.firstname} ${user.lastname}` });
         }
 
+        // Check if employee is on approved full-day leave today
+        const approvedFullDayLeave = await LeaveRequest.findOne({
+            where: {
+                staff_id: user.staffid,
+                status: 'Approved',
+                start_date: { [Op.lte]: todayDateOnly },
+                end_date: { [Op.gte]: todayDateOnly }
+            }
+        });
+
+        if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+            return res.status(200).send({
+                status: 'ON_LEAVE',
+                employeeName: `${user.firstname} ${user.lastname}`,
+                leaveType: approvedFullDayLeave.leave_type || 'Leave'
+            });
+        }
+
         return res.status(200).send({ status: 'NOT_CHECKED_IN', employeeName: `${user.firstname} ${user.lastname}` });
 
     } catch (err) {
         console.error("Error checking attendance status:", err);
         res.status(500).send({ message: err.message || "Error checking attendance status." });
+    }
+};
+
+/**
+ * Current employee's attendance status today
+ * GET /api/attendance/today
+ */
+exports.getMyTodayAttendance = async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).send({ message: "Employee not found." });
+        }
+
+        const tz = await getAppTimezone();
+        const nowString = timezoneUtil.getNowStringInTimezone(tz);
+        const todayDateOnly = nowString.split(' ')[0];
+
+        // 1. Check for open check-in today
+        const openLog = await AttendanceLog.findOne({
+            where: {
+                staff_id: user.staffid,
+                date: todayDateOnly,
+                check_out_time: null,
+                check_in_time: { [Op.ne]: null }
+            }
+        });
+
+        // 2. Check for completed session today
+        const completedLog = await AttendanceLog.findOne({
+            where: {
+                staff_id: user.staffid,
+                date: todayDateOnly,
+                check_out_time: { [Op.ne]: null },
+                check_in_time: { [Op.ne]: null }
+            }
+        });
+
+        // 3. Check for approved full-day leave today
+        const approvedLeave = await LeaveRequest.findOne({
+            where: {
+                staff_id: user.staffid,
+                status: 'Approved',
+                start_date: { [Op.lte]: todayDateOnly },
+                end_date: { [Op.gte]: todayDateOnly }
+            }
+        });
+
+        let status = 'NOT_CHECKED_IN';
+        if (openLog) status = 'CHECKED_IN';
+        else if (completedLog) status = 'COMPLETED';
+        else if (approvedLeave && !approvedLeave.is_half_day) status = 'ON_LEAVE';
+
+        return res.status(200).send({
+            date: todayDateOnly,
+            status,
+            checkedIn: Boolean(openLog), // Currently checked in and NOT yet checked out
+            hasCheckIn: Boolean(openLog || completedLog),
+            hasCheckOut: Boolean(completedLog),
+            checkInTime: openLog?.check_in_time || completedLog?.check_in_time || null,
+            checkOutTime: completedLog?.check_out_time || null,
+            leaveType: approvedLeave ? approvedLeave.leave_type : null
+        });
+    } catch (err) {
+        console.error("Error fetching today attendance:", err);
+        res.status(500).send({ message: err.message || "Error fetching today attendance." });
+    }
+};
+
+/**
+ * Current employee's dates with recorded attendance check-ins
+ * GET /api/attendance/my-attended-dates
+ */
+exports.getMyAttendedDates = async (req, res) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).send({ message: "Employee not found." });
+        }
+
+        const logs = await AttendanceLog.findAll({
+            where: {
+                staff_id: user.staffid,
+                check_in_time: { [Op.ne]: null }
+            },
+            attributes: ['date', 'check_in_time', 'check_out_time'],
+            order: [['date', 'DESC']],
+            limit: 200
+        });
+
+        const attendedDates = [...new Set(logs.map(l => l.date).filter(Boolean))];
+        return res.status(200).send({
+            attendedDates,
+            logs
+        });
+    } catch (err) {
+        console.error("Error fetching attended dates:", err);
+        res.status(500).send({ message: err.message || "Error fetching attended dates." });
     }
 };
 
@@ -495,6 +613,27 @@ exports.checkInOutWithFace = async (req, res) => {
 
         if (user.active == 0 || user.active === false || user.active === '0') {
             return res.status(403).send({ message: "Account is inactive. Please contact administrator." });
+        }
+
+        if (action === 'CHECK_IN') {
+            const tz = await getAppTimezone();
+            const nowString = timezoneUtil.getNowStringInTimezone(tz);
+            const todayDateOnly = nowString.split(' ')[0];
+            const approvedFullDayLeave = await LeaveRequest.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    status: 'Approved',
+                    start_date: { [Op.lte]: todayDateOnly },
+                    end_date: { [Op.gte]: todayDateOnly }
+                }
+            });
+
+            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+                return res.status(400).send({
+                    success: false,
+                    message: "You are on approved leave for today. Attendance check-in is not allowed."
+                });
+            }
         }
 
         if (!livenessVerified) {
@@ -639,6 +778,23 @@ exports.checkInOutWithFace = async (req, res) => {
         let logDetails = null;
 
         if (action === 'CHECK_IN') {
+            // Verify employee is not on approved full-day leave today
+            const approvedFullDayLeave = await LeaveRequest.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    status: 'Approved',
+                    start_date: { [Op.lte]: todayDateOnly },
+                    end_date: { [Op.gte]: todayDateOnly }
+                }
+            });
+
+            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+                return res.status(400).send({
+                    success: false,
+                    message: "You are on approved leave for today. Attendance check-in is not allowed."
+                });
+            }
+
             // Verify employee is NOT already checked in today
             const existingOpenLog = await AttendanceLog.findOne({
                 where: {
@@ -1157,6 +1313,23 @@ exports.recordKioskAttendance = async (req, res) => {
         const formattedNowTime = formatDateInTimezone(now, tz);
 
         if (action === 'CHECK_IN') {
+            // Verify employee is not on approved full-day leave today
+            const approvedFullDayLeave = await LeaveRequest.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    status: 'Approved',
+                    start_date: { [Op.lte]: todayDateOnly },
+                    end_date: { [Op.gte]: todayDateOnly }
+                }
+            });
+
+            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+                return res.status(400).send({
+                    success: false,
+                    message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not allowed.`
+                });
+            }
+
             // Verify employee is NOT already checked in today
             const existingOpenLog = await AttendanceLog.findOne({
                 where: {
@@ -1398,6 +1571,20 @@ exports.getMyBadgeData = async (req, res) => {
             }
         }
 
+        // Check if employee is on approved full-day leave today
+        const approvedBadgeLeave = await LeaveRequest.findOne({
+            where: {
+                staff_id: user.staffid,
+                status: 'Approved',
+                start_date: { [Op.lte]: todayDateOnly },
+                end_date: { [Op.gte]: todayDateOnly }
+            }
+        });
+
+        if (approvedBadgeLeave && !approvedBadgeLeave.is_half_day && todayStatus === 'NOT_CHECKED_IN') {
+            todayStatus = 'ON_LEAVE';
+        }
+
         // Generate HMAC-SHA256 signed dynamic badge token
         const badgeInfo = badgeSecurity.generateBadgeToken({
             staffId: user.staffid,
@@ -1487,6 +1674,22 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             }
 
             if (pending.action === 'CHECK_IN') {
+                const approvedFullDayLeave = await LeaveRequest.findOne({
+                    where: {
+                        staff_id: user.staffid,
+                        status: 'Approved',
+                        start_date: { [Op.lte]: todayDateOnly },
+                        end_date: { [Op.gte]: todayDateOnly }
+                    }
+                });
+
+                if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+                    return res.status(400).send({
+                        success: false,
+                        message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not allowed.`
+                    });
+                }
+
                 const attendance = {
                     staff_id: user.staffid,
                     check_in_time: now,
@@ -1672,6 +1875,23 @@ exports.scanQrBadgeAttendance = async (req, res) => {
         let durationText = '';
 
         if (!existingOpenLog) {
+            // Check if employee is on approved full-day leave today
+            const approvedFullDayLeave = await LeaveRequest.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    status: 'Approved',
+                    start_date: { [Op.lte]: todayDateOnly },
+                    end_date: { [Op.gte]: todayDateOnly }
+                }
+            });
+
+            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+                return res.status(400).send({
+                    success: false,
+                    message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not allowed.`
+                });
+            }
+
             // Check if already completed today
             const completedLog = await AttendanceLog.findOne({
                 where: {

@@ -3,6 +3,7 @@ const LeaveRequest = db.leave_requests;
 const LeaveType = db.leave_types;
 const OnDutyLog = db.on_duty_logs;
 const TimeOffRequest = db.time_off_requests; // Add this
+const AttendanceLog = db.attendance_logs;
 const Staff = db.user;
 const { Op } = require("sequelize");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
@@ -199,6 +200,31 @@ exports.applyLeave = async (req, res) => {
         }
         // -----------------------------
 
+
+        // Check if attendance check-in has already been recorded on any of the selected dates
+        const startDateOnly = String(start_date).split('T')[0].split(' ')[0];
+        const endDateOnly = String(end_date).split('T')[0].split(' ')[0];
+        const minDate = startDateOnly <= endDateOnly ? startDateOnly : endDateOnly;
+        const maxDate = startDateOnly <= endDateOnly ? endDateOnly : startDateOnly;
+
+        const attendedLog = await AttendanceLog.findOne({
+            where: {
+                staff_id: req.userId,
+                date: {
+                    [Op.between]: [minDate, maxDate]
+                },
+                check_in_time: {
+                    [Op.ne]: null
+                }
+            },
+            order: [['date', 'ASC']]
+        });
+
+        if (attendedLog) {
+            return res.status(400).send({
+                message: `Attendance check-in has already been recorded on ${attendedLog.date}. Leave cannot be applied for days on which attendance has been recorded.`
+            });
+        }
 
         // Check for overlapping leaves (Pending, Approved, or Active)
         const overlappingLeave = await LeaveRequest.findOne({
@@ -1113,8 +1139,30 @@ exports.updateLeaveDetails = async (req, res) => {
             }
         }
         if (start_date || end_date) {
-            const checkStartDate = start_date || leave.start_date;
-            const checkEndDate = end_date || leave.end_date;
+            const checkStartDate = String(start_date || leave.start_date).split('T')[0].split(' ')[0];
+            const checkEndDate = String(end_date || leave.end_date).split('T')[0].split(' ')[0];
+            const minEditDate = checkStartDate <= checkEndDate ? checkStartDate : checkEndDate;
+            const maxEditDate = checkStartDate <= checkEndDate ? checkEndDate : checkStartDate;
+
+            // Check if attendance check-in has already been recorded on any of the target dates
+            const attendedLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: req.userId,
+                    date: {
+                        [Op.between]: [minEditDate, maxEditDate]
+                    },
+                    check_in_time: {
+                        [Op.ne]: null
+                    }
+                },
+                order: [['date', 'ASC']]
+            });
+
+            if (attendedLog) {
+                return res.status(400).send({
+                    message: `Attendance check-in has already been recorded on ${attendedLog.date}. Leave cannot be applied for days on which attendance has been recorded.`
+                });
+            }
 
             const overlappingLeave = await LeaveRequest.findOne({
                 where: {

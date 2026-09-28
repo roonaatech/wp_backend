@@ -57,11 +57,25 @@ module.exports = function (app) {
         controller.getStaffList
     );
 
-    // Check employee attendance status for today (used by the portal/kiosk to show correct button)
+    // Check employee attendance status for today (used by portal/kiosk and mobile app)
     app.get(
         "/api/attendance/status/:email",
-        [verifyToken, canAccessAttendancePortal],
+        [verifyToken],
         controller.getAttendanceStatus
+    );
+
+    // Current employee's attendance status today (web and mobile app)
+    app.get(
+        "/api/attendance/today",
+        [verifyToken],
+        controller.getMyTodayAttendance
+    );
+
+    // Current employee's dates with recorded attendance check-ins
+    app.get(
+        "/api/attendance/my-attended-dates",
+        [verifyToken],
+        controller.getMyAttendedDates
     );
 
     // Identify employee by face descriptor (auto-fill email in the portal)

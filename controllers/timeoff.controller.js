@@ -1,5 +1,6 @@
 const db = require("../models");
 const TimeOffRequest = db.time_off_requests;
+const AttendanceLog = db.attendance_logs;
 const Staff = db.user;
 const Setting = db.settings;
 const { Op } = require("sequelize");
@@ -147,6 +148,23 @@ exports.applyTimeOff = async (req, res) => {
             return res.status(400).send({ message: validation.message });
         }
 
+        // If user is currently checked in, they cannot apply for time-off until check-out
+        const dateOnly = String(date).split('T')[0].split(' ')[0];
+        const activeCheckIn = await AttendanceLog.findOne({
+            where: {
+                staff_id: req.userId,
+                date: dateOnly,
+                check_in_time: { [Op.ne]: null },
+                check_out_time: null
+            }
+        });
+
+        if (activeCheckIn) {
+            return res.status(400).send({
+                message: "You are currently checked in. Time-off can only be applied after checking out for the day."
+            });
+        }
+
         // Check for overlapping Time-Off requests
         const overlappingRequest = await TimeOffRequest.findOne({
             where: {
@@ -280,6 +298,22 @@ exports.updateTimeOffDetails = async (req, res) => {
         const newEnd = end_time || timeOff.end_time;
 
         if (date || start_time || end_time) {
+            const checkDate = String(newDate).split('T')[0].split(' ')[0];
+            const activeCheckIn = await AttendanceLog.findOne({
+                where: {
+                    staff_id: req.userId,
+                    date: checkDate,
+                    check_in_time: { [Op.ne]: null },
+                    check_out_time: null
+                }
+            });
+
+            if (activeCheckIn) {
+                return res.status(400).send({
+                    message: "You are currently checked in. Time-off can only be applied after checking out for the day."
+                });
+            }
+
             const validation = await validateTimeOffHours(req.userId, newDate, newStart, newEnd, id);
             if (!validation.valid) {
                 return res.status(400).send({ message: validation.message });

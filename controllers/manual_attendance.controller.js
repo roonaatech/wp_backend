@@ -369,25 +369,22 @@ exports.regularizeAttendance = async (req, res) => {
                     continue;
                 }
 
-                // Verify employee is not on full-day leave on this date (Approved or Pending)
+                // Verify employee is not on approved full-day leave on this date
                 const leaveOnDate = await LeaveRequest.findOne({
                     where: {
                         staff_id,
-                        status: { [Op.in]: ['Approved', 'Pending'] },
+                        status: 'Approved',
                         start_date: { [Op.lte]: date },
                         end_date: { [Op.gte]: date }
                     }
                 });
-                if (leaveOnDate) {
-                    const isHalfDay = leaveOnDate.is_half_day === true || leaveOnDate.is_half_day === 1;
-                    if (!isHalfDay) {
-                        errors.push({
-                            staff_id,
-                            date,
-                            message: `${staff.firstname} ${staff.lastname} is on full-day leave (${leaveOnDate.leave_type || 'Leave'}, Status: ${leaveOnDate.status}) on ${date}. Attendance update is not allowed.`
-                        });
-                        continue;
-                    }
+                if (leaveOnDate && !leaveOnDate.is_half_day) {
+                    errors.push({
+                        staff_id,
+                        date,
+                        message: `${staff.firstname} ${staff.lastname} is on approved full-day leave (${leaveOnDate.leave_type || 'Leave'}) on ${date}. Attendance update is not allowed.`
+                    });
+                    continue;
                 }
 
                 // Normalize in/out time to 24h format (handles 12h, AM/PM, and inferred PM)
