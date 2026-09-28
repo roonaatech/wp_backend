@@ -923,6 +923,16 @@ exports.updateAttendanceLog = async (req, res) => {
             return res.status(404).send({ message: "Attendance log not found." });
         }
 
+        // Subordinate scope check
+        if (req.attendanceEditScope === 'subordinates') {
+            const targetUser = log.user || await User.findByPk(log.staff_id);
+            if (!targetUser || parseInt(targetUser.approving_manager_id) !== parseInt(req.userId)) {
+                return res.status(403).send({
+                    message: "You can only edit attendance records for your direct subordinates."
+                });
+            }
+        }
+
         const oldValues = {
             check_out_time: log.check_out_time
         };
@@ -1030,6 +1040,16 @@ exports.deleteAttendanceLog = async (req, res) => {
 
         if (!log) {
             return res.status(404).send({ message: "Attendance log not found." });
+        }
+
+        // Subordinate scope check
+        if (req.attendanceDeleteScope === 'subordinates') {
+            const targetUser = log.user || await User.findByPk(log.staff_id);
+            if (!targetUser || parseInt(targetUser.approving_manager_id) !== parseInt(req.userId)) {
+                return res.status(403).send({
+                    message: "You can only delete attendance records for your direct subordinates."
+                });
+            }
         }
 
         // Snapshot the record before deletion so the audit trail preserves what was removed

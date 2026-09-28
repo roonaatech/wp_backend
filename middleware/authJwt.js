@@ -596,8 +596,21 @@ const canEditAttendance = async (req, res, next) => {
             return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        if (role.can_edit_attendance === 'all' || role.can_edit_attendance === 'subordinates' ||
-            role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+        // Check explicit can_edit_attendance first if defined
+        if (role.can_edit_attendance !== undefined && role.can_edit_attendance !== null) {
+            if (role.can_edit_attendance === 'all' || role.can_edit_attendance === 'subordinates') {
+                req.attendanceEditScope = role.can_edit_attendance;
+                next();
+                return;
+            }
+            return res.status(403).send({
+                message: "You don't have permission to edit attendance records!"
+            });
+        }
+
+        // Legacy fallback only if can_edit_attendance is unconfigured
+        if (role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+            req.attendanceEditScope = role.can_manage_attendance;
             next();
             return;
         }
@@ -619,8 +632,21 @@ const canDeleteAttendance = async (req, res, next) => {
             return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        if (role.can_delete_attendance === 'all' || role.can_delete_attendance === 'subordinates' ||
-            role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+        // Check explicit can_delete_attendance first if defined
+        if (role.can_delete_attendance !== undefined && role.can_delete_attendance !== null) {
+            if (role.can_delete_attendance === 'all' || role.can_delete_attendance === 'subordinates') {
+                req.attendanceDeleteScope = role.can_delete_attendance;
+                next();
+                return;
+            }
+            return res.status(403).send({
+                message: "You don't have permission to delete attendance records!"
+            });
+        }
+
+        // Legacy fallback only if can_delete_attendance is unconfigured
+        if (role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+            req.attendanceDeleteScope = role.can_manage_attendance;
             next();
             return;
         }
@@ -642,9 +668,18 @@ const canManageAttendance = async (req, res, next) => {
             return res.status(403).send({ message: "User or Role not found or account is inactive." });
         }
 
-        if (role.can_edit_attendance === 'all' || role.can_edit_attendance === 'subordinates' ||
-            role.can_delete_attendance === 'all' || role.can_delete_attendance === 'subordinates' ||
-            role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates') {
+        const hasEdit = role.can_edit_attendance === 'all' || role.can_edit_attendance === 'subordinates';
+        const hasDelete = role.can_delete_attendance === 'all' || role.can_delete_attendance === 'subordinates';
+        const explicitConfigured = (role.can_edit_attendance !== undefined && role.can_edit_attendance !== null) ||
+                                   (role.can_delete_attendance !== undefined && role.can_delete_attendance !== null);
+
+        if (hasEdit || hasDelete) {
+            next();
+            return;
+        }
+
+        // Only fall back to legacy if neither edit nor delete was explicitly defined
+        if (!explicitConfigured && (role.can_manage_attendance === 'all' || role.can_manage_attendance === 'subordinates')) {
             next();
             return;
         }
