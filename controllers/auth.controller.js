@@ -396,6 +396,8 @@ exports.signin = async (req, res) => {
             role: userRoleId,
             can_access_attendance_portal: userRole ? (userRole.can_access_attendance_portal == true) : false,
             gender: isServiceAccount ? null : user.gender,
+            work_mode: isServiceAccount ? 'Regular' : (user.work_mode || 'Regular'),
+            hybrid_office_days: isServiceAccount ? null : (user.hybrid_office_days || []),
             isFirstLogin: isNewUser,
             mustChangePassword,
             isTemporaryPassword,

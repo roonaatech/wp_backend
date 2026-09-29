@@ -32,6 +32,7 @@ exports.onboardEmployee = async (req, res) => {
     const {
         // User Credentials
         firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, abis_access, send_welcome_email,
+        work_mode, hybrid_office_days,
         date_of_joining,
         allocate_leaves,
         casual_leave_days,
@@ -108,6 +109,27 @@ exports.onboardEmployee = async (req, res) => {
         }
         const hashedPassword = bcrypt.hashSync(tempPassword, 8);
 
+        // Format work mode and hybrid in-office days
+        const validModes = ['Regular', 'Work from home', 'Hybrid'];
+        const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+        let validHybridDays = null;
+        if (selectedWorkMode === 'Hybrid') {
+            const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            let rawDays = hybrid_office_days;
+            if (typeof rawDays === 'string') {
+                try {
+                    rawDays = JSON.parse(rawDays);
+                } catch {
+                    rawDays = rawDays.split(',').map(s => s.trim());
+                }
+            }
+            if (Array.isArray(rawDays)) {
+                validHybridDays = rawDays.filter(d => allowedDays.includes(d));
+            } else {
+                validHybridDays = [];
+            }
+        }
+
         // Create basic user
         const user = await User.create({
             firstname,
@@ -119,6 +141,8 @@ exports.onboardEmployee = async (req, res) => {
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
             gender: gender,
             abis_access: abis_access === 'true' || abis_access === true,
+            work_mode: selectedWorkMode,
+            hybrid_office_days: validHybridDays,
             active: 1
         }, { transaction });
 
@@ -421,7 +445,7 @@ exports.getEmployeeExtendedProfile = async (req, res) => {
 
     try {
         const user = await User.findByPk(id, {
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access', 'face_image_path', 'face_registered_at'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access', 'face_image_path', 'face_registered_at', 'work_mode', 'hybrid_office_days'],
             include: [
                 { model: EmployeeProfile, as: 'profile_info' },
                 { model: EmployeeEducation, as: 'educations' },
@@ -487,6 +511,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
     const {
         // User Credentials
         firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, active, abis_access,
+        work_mode, hybrid_office_days,
         date_of_joining,
         
         // Personal Details
@@ -573,6 +598,31 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
             abis_access: abis_access !== undefined ? (abis_access === 'true' || abis_access === true) : user.abis_access,
             active: active !== undefined ? parseInt(active) : user.active
         };
+
+        if (work_mode !== undefined) {
+            const validModes = ['Regular', 'Work from home', 'Hybrid'];
+            const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+            updateUserData.work_mode = selectedWorkMode;
+
+            if (selectedWorkMode === 'Hybrid') {
+                const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                let rawDays = hybrid_office_days !== undefined ? hybrid_office_days : user.hybrid_office_days;
+                if (typeof rawDays === 'string') {
+                    try {
+                        rawDays = JSON.parse(rawDays);
+                    } catch {
+                        rawDays = rawDays.split(',').map(s => s.trim());
+                    }
+                }
+                if (Array.isArray(rawDays)) {
+                    updateUserData.hybrid_office_days = rawDays.filter(d => allowedDays.includes(d));
+                } else {
+                    updateUserData.hybrid_office_days = [];
+                }
+            } else {
+                updateUserData.hybrid_office_days = null;
+            }
+        }
 
         if (password) {
             updateUserData.password = bcrypt.hashSync(password, 8);
@@ -1472,7 +1522,9 @@ exports.approveCandidateOnboarding = async (req, res) => {
         date_of_joining,
         allocate_leaves,
         casual_leave_days,
-        sick_leave_days
+        sick_leave_days,
+        work_mode,
+        hybrid_office_days
     } = req.body;
 
     if (!email || !role || !approving_manager_id || !date_of_joining) {
@@ -1528,6 +1580,25 @@ exports.approveCandidateOnboarding = async (req, res) => {
             });
         }
 
+        // Format work mode and hybrid office days
+        const validModes = ['Regular', 'Work from home', 'Hybrid'];
+        const selectedWorkMode = validModes.includes(work_mode) ? work_mode : (user.work_mode || 'Regular');
+        let validHybridDays = null;
+        if (selectedWorkMode === 'Hybrid') {
+            const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            let rawDays = hybrid_office_days !== undefined ? hybrid_office_days : user.hybrid_office_days;
+            if (typeof rawDays === 'string') {
+                try {
+                    rawDays = JSON.parse(rawDays);
+                } catch {
+                    rawDays = rawDays.split(',').map(s => s.trim());
+                }
+            }
+            if (Array.isArray(rawDays)) {
+                validHybridDays = rawDays.filter(d => allowedDays.includes(d));
+            }
+        }
+
         // Generate random temporary password for real login
         const tempPassword = require('crypto').randomBytes(4).toString('hex'); // 8 characters
         const hashedPassword = bcrypt.hashSync(tempPassword, 8);
@@ -1542,6 +1613,8 @@ exports.approveCandidateOnboarding = async (req, res) => {
             role: roleInt,
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
             abis_access: abis_access === 'true' || abis_access === true,
+            work_mode: selectedWorkMode,
+            hybrid_office_days: validHybridDays,
             password: hashedPassword,
             last_login: null
         }, { transaction });

@@ -114,7 +114,7 @@ exports.getIncompleteProfiles = async (req, res) => {
 };
 
 exports.createUser = async (req, res) => {
-    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
+    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, work_mode, hybrid_office_days } = req.body;
 
     // Validate input
     if (!firstname || !lastname || !email || !password || !role || !gender || !approving_manager_id) {
@@ -170,6 +170,27 @@ exports.createUser = async (req, res) => {
             });
         }
 
+        // Parse work mode and hybrid days
+        const validModes = ['Regular', 'Work from home', 'Hybrid'];
+        const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+        let validHybridDays = null;
+        if (selectedWorkMode === 'Hybrid') {
+            const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            let rawDays = hybrid_office_days;
+            if (typeof rawDays === 'string') {
+                try {
+                    rawDays = JSON.parse(rawDays);
+                } catch {
+                    rawDays = rawDays.split(',').map(s => s.trim());
+                }
+            }
+            if (Array.isArray(rawDays)) {
+                validHybridDays = rawDays.filter(d => allowedDays.includes(d));
+            } else {
+                validHybridDays = [];
+            }
+        }
+
         // Hash password
         const hashedPassword = bcrypt.hashSync(password, 8);
 
@@ -183,6 +204,8 @@ exports.createUser = async (req, res) => {
             role: roleInt,
             approving_manager_id: approving_manager_id ? parseInt(approving_manager_id) : null,
             gender: gender,
+            work_mode: selectedWorkMode,
+            hybrid_office_days: validHybridDays,
             active: 1
         });
 
@@ -222,6 +245,8 @@ exports.createUser = async (req, res) => {
                 userid: newUser.userid,
                 approving_manager_id: newUser.approving_manager_id,
                 gender: newUser.gender,
+                work_mode: newUser.work_mode,
+                hybrid_office_days: newUser.hybrid_office_days,
                 active: newUser.active
             }
         });
@@ -234,7 +259,7 @@ exports.createUser = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
     const { id } = req.params;
-    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender } = req.body;
+    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, work_mode, hybrid_office_days } = req.body;
 
     const isDeactivating = req.body.active === 0 || req.body.active === false || req.body.active === '0';
 
@@ -349,6 +374,44 @@ exports.updateUser = async (req, res) => {
             active: req.body.active !== undefined ? req.body.active : targetUser.active
         };
 
+        if (work_mode !== undefined) {
+            const validModes = ['Regular', 'Work from home', 'Hybrid'];
+            const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+            updateData.work_mode = selectedWorkMode;
+
+            if (selectedWorkMode === 'Hybrid') {
+                const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                let rawDays = hybrid_office_days !== undefined ? hybrid_office_days : targetUser.hybrid_office_days;
+                if (typeof rawDays === 'string') {
+                    try {
+                        rawDays = JSON.parse(rawDays);
+                    } catch {
+                        rawDays = rawDays.split(',').map(s => s.trim());
+                    }
+                }
+                if (Array.isArray(rawDays)) {
+                    updateData.hybrid_office_days = rawDays.filter(d => allowedDays.includes(d));
+                } else {
+                    updateData.hybrid_office_days = [];
+                }
+            } else {
+                updateData.hybrid_office_days = null;
+            }
+        } else if (hybrid_office_days !== undefined && targetUser.work_mode === 'Hybrid') {
+            const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            let rawDays = hybrid_office_days;
+            if (typeof rawDays === 'string') {
+                try {
+                    rawDays = JSON.parse(rawDays);
+                } catch {
+                    rawDays = rawDays.split(',').map(s => s.trim());
+                }
+            }
+            if (Array.isArray(rawDays)) {
+                updateData.hybrid_office_days = rawDays.filter(d => allowedDays.includes(d));
+            }
+        }
+
         // Only update password if provided
         if (password) {
             updateData.password = bcrypt.hashSync(password, 8);
@@ -381,6 +444,8 @@ exports.updateUser = async (req, res) => {
                 userid: updatedUser.userid,
                 approving_manager_id: updatedUser.approving_manager_id,
                 gender: updatedUser.gender,
+                work_mode: updatedUser.work_mode,
+                hybrid_office_days: updatedUser.hybrid_office_days,
                 active: updatedUser.active
             }
         });
@@ -704,7 +769,7 @@ exports.getAllUsers = async (req, res) => {
 
         const queryOptions = {
             where: whereClause,
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login', 'face_image_path', 'face_registered_at'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login', 'face_image_path', 'face_registered_at', 'work_mode', 'hybrid_office_days'],
             include: [
                 { model: EmployeeProfile, as: 'profile_info', required: false, attributes: ['id', 'image_path', 'onboarding_status', 'consent_given', 'date_of_birth'] },
                 { model: db.employee_documents, as: 'documents', required: false, where: { document_type: 'photo' }, attributes: ['id', 'file_path', 'document_type'] }

@@ -99,6 +99,17 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: false,
             defaultValue: false,
             comment: 'Whether the current password is a temporary generated password'
+        },
+        work_mode: {
+            type: Sequelize.ENUM('Regular', 'Work from home', 'Hybrid'),
+            allowNull: false,
+            defaultValue: 'Regular',
+            comment: 'Work mode: Regular (office), Work from home (remote), or Hybrid'
+        },
+        hybrid_office_days: {
+            type: Sequelize.JSON,
+            allowNull: true,
+            comment: 'JSON array of days in week (e.g. ["Monday","Wednesday"]) employee attends office when work_mode is Hybrid'
         }
     }, {
         tableName: 'users',
