@@ -2475,11 +2475,20 @@ exports.wfhPunch = async (req, res) => {
             const parsedLat = (latitude !== undefined && latitude !== null && latitude !== '') ? parseFloat(latitude) : null;
             const parsedLng = (longitude !== undefined && longitude !== null && longitude !== '') ? parseFloat(longitude) : null;
 
+            // Strict Geolocation Enforcement: Check-out is NOT allowed without valid captured GPS coordinates
+            if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng) || (parsedLat === 0 && parsedLng === 0)) {
+                return res.status(400).send({
+                    success: false,
+                    locationRequired: true,
+                    message: "Location service must be enabled to check out. GPS coordinates are strictly required for Work From Home attendance."
+                });
+            }
+
             await activeLog.update({
                 check_out_time: now,
                 notes: combinedNotes,
-                latitude: Number.isFinite(parsedLat) ? parsedLat : activeLog.latitude,
-                longitude: Number.isFinite(parsedLng) ? parsedLng : activeLog.longitude
+                latitude: parsedLat,
+                longitude: parsedLng
             });
 
             // Trigger manager checkout approval if applicable
