@@ -1670,7 +1670,6 @@ exports.getMyBadgeData = async (req, res) => {
         }
 
         // Determine if employee is authorized for WFH today
-        const clientTz = req.headers['x-client-timezone'] || req.query?.clientTimezone || req.query?.timezone;
         const wfhCheck = checkUserWfhToday(user, tz, clientTz);
 
         let parsedHybridOfficeDays = user.hybrid_office_days;
