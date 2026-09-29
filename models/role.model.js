@@ -90,6 +90,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can access the web application dashboard'
         },
+        can_view_dashboard: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Allows users with this role to view dashboard items (metrics, charts, approvals, activity). If false, a blank dashboard is shown.'
+        },
         can_manage_roles: {
             type: Sequelize.BOOLEAN,
             allowNull: false,

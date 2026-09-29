@@ -57,7 +57,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized - Invalid or missing token
      */
-    app.get("/api/admin/dashboard/stats", [verifyToken, authJwt.canAccessWebApp], controller.getDashboardStats);
+    app.get("/api/admin/dashboard/stats", [verifyToken, authJwt.canAccessWebApp, authJwt.canViewDashboard], controller.getDashboardStats);
 
     /**
      * @swagger
@@ -94,7 +94,7 @@ module.exports = function (app) {
      *       401:
      *         description: Unauthorized - Invalid or missing token
      */
-    app.get("/api/admin/dashboard/daily-trend", [verifyToken, authJwt.canAccessWebApp], controller.getDailyTrendData);
+    app.get("/api/admin/dashboard/daily-trend", [verifyToken, authJwt.canAccessWebApp, authJwt.canViewDashboard], controller.getDailyTrendData);
 
     /**
      * @swagger
