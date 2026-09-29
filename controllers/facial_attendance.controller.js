@@ -1599,6 +1599,14 @@ exports.getMyBadgeData = async (req, res) => {
 
         // Get today's attendance status
         const tz = await getAppTimezone();
+        const clientTz = req.headers['x-client-timezone'] || req.query?.clientTimezone || req.query?.timezone;
+        let displayTz = tz;
+        if (clientTz && typeof clientTz === 'string') {
+            try {
+                Intl.DateTimeFormat(undefined, { timeZone: clientTz });
+                displayTz = clientTz;
+            } catch (_) {}
+        }
         const nowString = timezoneUtil.getNowStringInTimezone(tz);
         const todayDateOnly = nowString.split(' ')[0];
 
@@ -1607,7 +1615,7 @@ exports.getMyBadgeData = async (req, res) => {
         let checkOutTime = null;
         let checkInIso = null;
 
-        const openLog = await AttendanceLog.findOne({
+        let openLog = await AttendanceLog.findOne({
             where: {
                 staff_id: user.staffid,
                 date: todayDateOnly,
@@ -1615,10 +1623,20 @@ exports.getMyBadgeData = async (req, res) => {
             },
             order: [['check_in_time', 'DESC']]
         });
+        if (!openLog) {
+            // Robust fallback across day/timezone boundaries: find any active unclosed punch for this user
+            openLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    check_out_time: null
+                },
+                order: [['check_in_time', 'DESC']]
+            });
+        }
 
         if (openLog) {
             todayStatus = 'CHECKED_IN';
-            checkInTime = formatDateInTimezone(openLog.check_in_time, tz);
+            checkInTime = formatDateInTimezone(openLog.check_in_time, displayTz);
             checkInIso = openLog.check_in_time;
         } else {
             const completedLog = await AttendanceLog.findOne({
@@ -1631,8 +1649,8 @@ exports.getMyBadgeData = async (req, res) => {
             });
             if (completedLog) {
                 todayStatus = 'COMPLETED';
-                checkInTime = formatDateInTimezone(completedLog.check_in_time, tz);
-                checkOutTime = formatDateInTimezone(completedLog.check_out_time, tz);
+                checkInTime = formatDateInTimezone(completedLog.check_in_time, displayTz);
+                checkOutTime = formatDateInTimezone(completedLog.check_out_time, displayTz);
                 checkInIso = completedLog.check_in_time;
             }
         }
@@ -2285,17 +2303,24 @@ exports.wfhPunch = async (req, res) => {
         const tz = await getAppTimezone();
         const timeFormat = await getAppTimeFormat();
         const now = new Date();
+        const clientTz = req.headers['x-client-timezone'] || req.body?.clientTimezone || req.query?.clientTimezone;
+        let displayTz = tz;
+        if (clientTz && typeof clientTz === 'string') {
+            try {
+                Intl.DateTimeFormat(undefined, { timeZone: clientTz });
+                displayTz = clientTz;
+            } catch (_) {}
+        }
         const nowString = timezoneUtil.getNowStringInTimezone(tz);
         const todayDateOnly = nowString.split(' ')[0];
-        const formattedNowTime = formatDateInTimezone(now, tz);
-        const displayTime = timezoneUtil.formatInTimezone(now, tz, {
+        const formattedNowTime = formatDateInTimezone(now, displayTz);
+        const displayTime = timezoneUtil.formatInTimezone(now, displayTz, {
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit',
             hour12: timeFormat !== '24h'
         });
 
-        const clientTz = req.headers['x-client-timezone'] || req.body?.clientTimezone || req.query?.clientTimezone;
         const wfhCheck = checkUserWfhToday(user, tz, clientTz);
         if (!wfhCheck.is_wfh_day && !wfhCheck.can_punch_wfh) {
             return res.status(403).send({
@@ -2450,7 +2475,7 @@ exports.wfhPunch = async (req, res) => {
 
         } else {
             // CHECK_OUT
-            const activeLog = await AttendanceLog.findOne({
+            let activeLog = await AttendanceLog.findOne({
                 where: {
                     staff_id: user.staffid,
                     date: todayDateOnly,
@@ -2458,6 +2483,17 @@ exports.wfhPunch = async (req, res) => {
                 },
                 order: [['check_in_time', 'DESC']]
             });
+
+            if (!activeLog) {
+                // Fallback across day boundaries: check for any active unclosed punch for this user
+                activeLog = await AttendanceLog.findOne({
+                    where: {
+                        staff_id: user.staffid,
+                        check_out_time: null
+                    },
+                    order: [['check_in_time', 'DESC']]
+                });
+            }
 
             if (!activeLog) {
                 return res.status(400).send({
