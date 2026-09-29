@@ -15,6 +15,7 @@ const EmployeeExperience = db.employee_experiences;
 const EmployeeFamilyMember = db.employee_family_members;
 const EmployeeDocument = db.employee_documents;
 const Op = db.Sequelize.Op;
+const { normalizeWorkMode } = require("../utils/workmode.util");
 
 // Helper to get error message
 const getErrorMessage = (err) => {
@@ -110,8 +111,7 @@ exports.onboardEmployee = async (req, res) => {
         const hashedPassword = bcrypt.hashSync(tempPassword, 8);
 
         // Format work mode and hybrid in-office days
-        const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
-        const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
+        const selectedWorkMode = normalizeWorkMode(work_mode);
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -600,8 +600,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
         };
 
         if (work_mode !== undefined) {
-            const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
-            const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
+            const selectedWorkMode = normalizeWorkMode(work_mode);
             updateUserData.work_mode = selectedWorkMode;
 
             if (selectedWorkMode === 'Hybrid') {
@@ -1581,8 +1580,7 @@ exports.approveCandidateOnboarding = async (req, res) => {
         }
 
         // Format work mode and hybrid office days
-        const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
-        const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : (user.work_mode === 'Regular' ? 'Office' : user.work_mode || 'Office');
+        const selectedWorkMode = work_mode !== undefined ? normalizeWorkMode(work_mode) : normalizeWorkMode(user.work_mode);
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

@@ -11,6 +11,7 @@ const emailService = require("../utils/email.service");
 const birthdayUtil = require("../utils/birthday.util");
 const anniversaryUtil = require("../utils/anniversary.util");
 const deviceSecurity = require("../services/device_security.service");
+const { normalizeWorkMode } = require("../utils/workmode.util");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -171,8 +172,7 @@ exports.createUser = async (req, res) => {
         }
 
         // Parse work mode and hybrid days
-        const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
-        const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
+        const selectedWorkMode = normalizeWorkMode(work_mode);
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -375,8 +375,7 @@ exports.updateUser = async (req, res) => {
         };
 
         if (work_mode !== undefined) {
-            const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
-            const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
+            const selectedWorkMode = normalizeWorkMode(work_mode);
             updateData.work_mode = selectedWorkMode;
 
             if (selectedWorkMode === 'Hybrid') {

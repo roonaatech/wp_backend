@@ -8,6 +8,7 @@ const { logActivity, getClientIp, getUserAgent, getClientDevice } = require("../
 const apkController = require("./apk.controller");
 const emailService = require("../utils/email.service");
 const deviceSecurity = require("../services/device_security.service");
+const { normalizeWorkMode } = require("../utils/workmode.util");
 
 const PHP_AUTH_BASE_URL = process.env.PHP_AUTH_BASE_URL || 'http://dev-abis.roonaa.in:8553';
 const USE_EXTERNAL_AUTH = process.env.USE_EXTERNAL_AUTH === 'true'; // Feature Flag for External Auth
@@ -396,7 +397,7 @@ exports.signin = async (req, res) => {
             role: userRoleId,
             can_access_attendance_portal: userRole ? (userRole.can_access_attendance_portal == true) : false,
             gender: isServiceAccount ? null : user.gender,
-            work_mode: isServiceAccount ? 'Office' : ((user.work_mode === 'Regular' ? 'Office' : user.work_mode) || 'Office'),
+            work_mode: isServiceAccount ? 'Office' : normalizeWorkMode(user.work_mode),
             hybrid_office_days: isServiceAccount ? null : (user.hybrid_office_days || []),
             isFirstLogin: isNewUser,
             mustChangePassword,
@@ -772,7 +773,7 @@ exports.exchangeQRToken = async (req, res) => {
             email: user.email,
             role: user.role,
             can_access_attendance_portal: userRole ? (userRole.can_access_attendance_portal === true) : false,
-            work_mode: (user.work_mode === 'Regular' ? 'Office' : user.work_mode) || 'Office',
+            work_mode: normalizeWorkMode(user.work_mode),
             hybrid_office_days: user.hybrid_office_days || [],
             mustChangePassword,
             mustCompleteDeclaration

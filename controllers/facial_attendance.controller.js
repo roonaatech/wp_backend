@@ -17,6 +17,7 @@ const crypto = require("crypto");
 const faceBiometrics = require("../services/face_biometrics.service");
 const badgeSecurity = require("../services/badge_security.service");
 const deviceSecurity = require("../services/device_security.service");
+const { normalizeWorkMode } = require("../utils/workmode.util");
 
 // Cache of pending QR badge attendance confirmations (expires in 60 seconds)
 const pendingQrConfirmations = new Map();
@@ -53,11 +54,17 @@ const getAppTimeFormat = async () => {
  * Determine whether today is a Work From Home day for an employee based on their work_mode and hybrid schedule.
  * Returns: { work_mode, today_day_of_week, is_wfh_day, scheduled_office_today, can_punch_wfh }
  */
-const checkUserWfhToday = (user, tz) => {
-    const rawMode = (user.work_mode === 'Regular' ? 'Office' : user.work_mode) || 'Office';
+const checkUserWfhToday = (user, tz, clientTimezone) => {
+    const rawMode = normalizeWorkMode(user?.work_mode);
+    const effectiveTz = clientTimezone || tz || 'Asia/Kolkata';
     const now = new Date();
-    // Weekday name in target timezone, e.g. "Monday", "Tuesday", etc.
-    const todayDayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: tz || 'Asia/Kolkata' }).format(now);
+    // Weekday name in effective timezone, e.g. "Monday", "Tuesday", etc.
+    let todayDayOfWeek;
+    try {
+        todayDayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: effectiveTz }).format(now);
+    } catch (_) {
+        todayDayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: tz || 'Asia/Kolkata' }).format(now);
+    }
 
     let isWfhDay = false;
     let scheduledOfficeToday = false;
@@ -66,7 +73,7 @@ const checkUserWfhToday = (user, tz) => {
         isWfhDay = true;
         scheduledOfficeToday = false;
     } else if (rawMode === 'Hybrid') {
-        let officeDays = user.hybrid_office_days;
+        let officeDays = user?.hybrid_office_days;
         if (typeof officeDays === 'string') {
             try { officeDays = JSON.parse(officeDays); } catch (_) { officeDays = []; }
         }
@@ -1645,7 +1652,8 @@ exports.getMyBadgeData = async (req, res) => {
         }
 
         // Determine if employee is authorized for WFH today
-        const wfhCheck = checkUserWfhToday(user, tz);
+        const clientTz = req.headers['x-client-timezone'] || req.query?.clientTimezone || req.query?.timezone;
+        const wfhCheck = checkUserWfhToday(user, tz, clientTz);
 
         let parsedHybridOfficeDays = user.hybrid_office_days;
         if (typeof parsedHybridOfficeDays === 'string') {
@@ -2123,7 +2131,8 @@ exports.getWfhAttendanceStatus = async (req, res) => {
         const nowString = timezoneUtil.getNowStringInTimezone(tz);
         const todayDateOnly = nowString.split(' ')[0];
 
-        const wfhCheck = checkUserWfhToday(user, tz);
+        const clientTz = req.headers['x-client-timezone'] || req.query?.clientTimezone || req.query?.timezone;
+        const wfhCheck = checkUserWfhToday(user, tz, clientTz);
 
         // Fetch today's active open log
         let activeLog = await AttendanceLog.findOne({
@@ -2286,8 +2295,8 @@ exports.wfhPunch = async (req, res) => {
             hour12: timeFormat !== '24h'
         });
 
-        // 1. Verify WFH Eligibility for Today
-        const wfhCheck = checkUserWfhToday(user, tz);
+        const clientTz = req.headers['x-client-timezone'] || req.body?.clientTimezone || req.query?.clientTimezone;
+        const wfhCheck = checkUserWfhToday(user, tz, clientTz);
         if (!wfhCheck.is_wfh_day && !wfhCheck.can_punch_wfh) {
             return res.status(403).send({
                 success: false,
