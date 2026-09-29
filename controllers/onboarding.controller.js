@@ -110,8 +110,8 @@ exports.onboardEmployee = async (req, res) => {
         const hashedPassword = bcrypt.hashSync(tempPassword, 8);
 
         // Format work mode and hybrid in-office days
-        const validModes = ['Regular', 'Work from home', 'Hybrid'];
-        const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+        const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
+        const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -600,8 +600,8 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
         };
 
         if (work_mode !== undefined) {
-            const validModes = ['Regular', 'Work from home', 'Hybrid'];
-            const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+            const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
+            const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
             updateUserData.work_mode = selectedWorkMode;
 
             if (selectedWorkMode === 'Hybrid') {
@@ -1581,8 +1581,8 @@ exports.approveCandidateOnboarding = async (req, res) => {
         }
 
         // Format work mode and hybrid office days
-        const validModes = ['Regular', 'Work from home', 'Hybrid'];
-        const selectedWorkMode = validModes.includes(work_mode) ? work_mode : (user.work_mode || 'Regular');
+        const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
+        const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : (user.work_mode === 'Regular' ? 'Office' : user.work_mode || 'Office');
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

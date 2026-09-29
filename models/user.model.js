@@ -101,10 +101,10 @@ module.exports = (sequelize, Sequelize) => {
             comment: 'Whether the current password is a temporary generated password'
         },
         work_mode: {
-            type: Sequelize.ENUM('Regular', 'Work from home', 'Hybrid'),
+            type: Sequelize.ENUM('Office', 'Regular', 'Work from home', 'Hybrid'),
             allowNull: false,
-            defaultValue: 'Regular',
-            comment: 'Work mode: Regular (office), Work from home (remote), or Hybrid'
+            defaultValue: 'Office',
+            comment: 'Work mode: Office, Work from home (remote), or Hybrid'
         },
         hybrid_office_days: {
             type: Sequelize.JSON,

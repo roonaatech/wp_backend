@@ -171,8 +171,8 @@ exports.createUser = async (req, res) => {
         }
 
         // Parse work mode and hybrid days
-        const validModes = ['Regular', 'Work from home', 'Hybrid'];
-        const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+        const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
+        const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -375,8 +375,8 @@ exports.updateUser = async (req, res) => {
         };
 
         if (work_mode !== undefined) {
-            const validModes = ['Regular', 'Work from home', 'Hybrid'];
-            const selectedWorkMode = validModes.includes(work_mode) ? work_mode : 'Regular';
+            const validModes = ['Office', 'Regular', 'Work from home', 'Hybrid'];
+            const selectedWorkMode = validModes.includes(work_mode) ? (work_mode === 'Regular' ? 'Office' : work_mode) : 'Office';
             updateData.work_mode = selectedWorkMode;
 
             if (selectedWorkMode === 'Hybrid') {
