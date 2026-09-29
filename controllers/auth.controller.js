@@ -772,6 +772,8 @@ exports.exchangeQRToken = async (req, res) => {
             email: user.email,
             role: user.role,
             can_access_attendance_portal: userRole ? (userRole.can_access_attendance_portal === true) : false,
+            work_mode: (user.work_mode === 'Regular' ? 'Office' : user.work_mode) || 'Office',
+            hybrid_office_days: user.hybrid_office_days || [],
             mustChangePassword,
             mustCompleteDeclaration
         });

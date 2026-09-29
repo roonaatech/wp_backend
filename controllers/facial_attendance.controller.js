@@ -49,6 +49,53 @@ const getAppTimeFormat = async () => {
     }
 };
 
+/**
+ * Determine whether today is a Work From Home day for an employee based on their work_mode and hybrid schedule.
+ * Returns: { work_mode, today_day_of_week, is_wfh_day, scheduled_office_today, can_punch_wfh }
+ */
+const checkUserWfhToday = (user, tz) => {
+    const rawMode = (user.work_mode === 'Regular' ? 'Office' : user.work_mode) || 'Office';
+    const now = new Date();
+    // Weekday name in target timezone, e.g. "Monday", "Tuesday", etc.
+    const todayDayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: tz || 'Asia/Kolkata' }).format(now);
+
+    let isWfhDay = false;
+    let scheduledOfficeToday = false;
+
+    if (rawMode === 'Work from home') {
+        isWfhDay = true;
+        scheduledOfficeToday = false;
+    } else if (rawMode === 'Hybrid') {
+        let officeDays = user.hybrid_office_days;
+        if (typeof officeDays === 'string') {
+            try { officeDays = JSON.parse(officeDays); } catch (_) { officeDays = []; }
+        }
+        if (Array.isArray(officeDays) && officeDays.length > 0) {
+            const normalizedOfficeDays = officeDays.map(d => String(d).trim().toLowerCase());
+            const todayLower = todayDayOfWeek.toLowerCase();
+            const todayShort = todayLower.slice(0, 3); // "mon", "tue", "wed", etc.
+
+            scheduledOfficeToday = normalizedOfficeDays.includes(todayLower) ||
+                normalizedOfficeDays.some(d => d.startsWith(todayShort) || todayLower.startsWith(d));
+        }
+
+        // Hybrid mode: In-office days require kiosk badge scan; remote days allow WFH punch
+        isWfhDay = !scheduledOfficeToday;
+    } else {
+        // Office or others
+        isWfhDay = false;
+        scheduledOfficeToday = true;
+    }
+
+    return {
+        work_mode: rawMode,
+        today_day_of_week: todayDayOfWeek,
+        is_wfh_day: isWfhDay,
+        scheduled_office_today: scheduledOfficeToday,
+        can_punch_wfh: isWfhDay
+    };
+};
+
 // Calculate Euclidean distance between two descriptor arrays
 const getEuclideanDistance = (arr1, arr2) => {
     return faceBiometrics.getEuclideanDistance(arr1, arr2);
@@ -958,11 +1005,15 @@ exports.getAttendanceLogsReport = async (req, res) => {
         }
 
         // 2. Query filters
-        const { page = 1, limit = 10, userId, startDate, endDate, status } = req.query;
+        const { page = 1, limit = 10, userId, startDate, endDate, status, punchSource } = req.query;
         const limitVal = parseInt(limit);
         const offsetVal = (parseInt(page) - 1) * limitVal;
 
         const whereClause = {};
+
+        if (punchSource && punchSource !== 'all') {
+            whereClause.punch_source = punchSource;
+        }
 
         // Scope filter
         if (!canViewAllReports) {
@@ -1466,7 +1517,7 @@ exports.recordKioskAttendance = async (req, res) => {
 exports.getMyBadgeData = async (req, res) => {
     try {
         const user = await User.findByPk(req.userId, {
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'face_image_path']
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'active', 'face_image_path', 'work_mode', 'hybrid_office_days']
         });
 
         if (!user) {
@@ -1481,9 +1532,9 @@ exports.getMyBadgeData = async (req, res) => {
         const isMobileHeader = req.headers['x-is-mobile'];
         const isMobileAppHeader = req.headers['x-is-mobile-app'];
         const userAgent = getUserAgent(req);
-        const deviceId = req.headers['x-device-id'] || req.query.deviceId || req.query.device_id;
-        const deviceName = req.headers['x-device-name'] || req.query.deviceName || req.query.device_name;
-        const deviceModel = req.headers['x-device-model'] || req.query.deviceModel || req.query.device_model;
+        const deviceId = req.headers['x-device-id'] || req.query?.deviceId || req.query?.device_id;
+        const deviceName = req.headers['x-device-name'] || req.query?.deviceName || req.query?.device_name;
+        const deviceModel = req.headers['x-device-model'] || req.query?.deviceModel || req.query?.device_model;
 
         const isMobile = deviceSecurity.isMobileClient({
             userAgent,
@@ -1546,28 +1597,36 @@ exports.getMyBadgeData = async (req, res) => {
 
         let todayStatus = 'NOT_CHECKED_IN';
         let checkInTime = null;
+        let checkOutTime = null;
+        let checkInIso = null;
 
         const openLog = await AttendanceLog.findOne({
             where: {
                 staff_id: user.staffid,
                 date: todayDateOnly,
                 check_out_time: null
-            }
+            },
+            order: [['check_in_time', 'DESC']]
         });
 
         if (openLog) {
             todayStatus = 'CHECKED_IN';
             checkInTime = formatDateInTimezone(openLog.check_in_time, tz);
+            checkInIso = openLog.check_in_time;
         } else {
             const completedLog = await AttendanceLog.findOne({
                 where: {
                     staff_id: user.staffid,
                     date: todayDateOnly,
                     check_out_time: { [db.Sequelize.Op.ne]: null }
-                }
+                },
+                order: [['check_out_time', 'DESC']]
             });
             if (completedLog) {
                 todayStatus = 'COMPLETED';
+                checkInTime = formatDateInTimezone(completedLog.check_in_time, tz);
+                checkOutTime = formatDateInTimezone(completedLog.check_out_time, tz);
+                checkInIso = completedLog.check_in_time;
             }
         }
 
@@ -1585,20 +1644,100 @@ exports.getMyBadgeData = async (req, res) => {
             todayStatus = 'ON_LEAVE';
         }
 
-        // Generate HMAC-SHA256 signed dynamic badge token
-        const badgeInfo = badgeSecurity.generateBadgeToken({
-            staffId: user.staffid,
-            email: user.email,
-            name: `${user.firstname} ${user.lastname}`,
-            deviceId: deviceId || null,
-            isMobileApp: isMobileApp === true
-        });
+        // Determine if employee is authorized for WFH today
+        const wfhCheck = checkUserWfhToday(user, tz);
+
+        let parsedHybridOfficeDays = user.hybrid_office_days;
+        if (typeof parsedHybridOfficeDays === 'string') {
+            try { parsedHybridOfficeDays = JSON.parse(parsedHybridOfficeDays); } catch (_) { parsedHybridOfficeDays = []; }
+        }
+        if (!Array.isArray(parsedHybridOfficeDays)) parsedHybridOfficeDays = [];
+
+        // Generate HMAC-SHA256 signed dynamic badge token (Office days only)
+        let badgeInfo = null;
+        if (!wfhCheck.is_wfh_day) {
+            badgeInfo = badgeSecurity.generateBadgeToken({
+                staffId: user.staffid,
+                email: user.email,
+                name: `${user.firstname} ${user.lastname}`,
+                deviceId: deviceId || null,
+                isMobileApp: isMobileApp === true
+            });
+        }
+
+        // If today is a Work From Home day (Full WFH or Hybrid remote day):
+        if (wfhCheck.is_wfh_day) {
+            return res.status(200).send({
+                success: true,
+                isWfhDay: true,
+                workMode: wfhCheck.work_mode,
+                todayDayOfWeek: wfhCheck.today_day_of_week,
+                canPunchWfh: true,
+                scheduledOfficeToday: wfhCheck.scheduled_office_today,
+                qrPayload: null, // No QR badge on WFH days
+                expiresAt: null,
+                ttlSeconds: 5,
+                hybridOfficeDays: parsedHybridOfficeDays,
+                message: wfhCheck.work_mode === 'Hybrid'
+                    ? `Hybrid remote day (${wfhCheck.today_day_of_week}). WFH remote attendance punch enabled.`
+                    : "Remote WFH attendance enabled for today. Kiosk QR badge is hidden.",
+                badge: {
+                    staffId: user.staffid,
+                    name: `${user.firstname} ${user.lastname}`,
+                    email: user.email,
+                    role: roleName,
+                    department,
+                    avatarUrl: profileImage,
+                    qrPayload: null,
+                    expiresAt: null,
+                    ttlSeconds: 5,
+                    isWfhDay: true,
+                    workMode: wfhCheck.work_mode,
+                    todayDayOfWeek: wfhCheck.today_day_of_week,
+                    scheduledOfficeToday: wfhCheck.scheduled_office_today,
+                    hybridOfficeDays: parsedHybridOfficeDays,
+                    todayStatus,
+                    checkInTime,
+                    checkOutTime,
+                    checkInIso
+                },
+                employee: {
+                    staffId: user.staffid,
+                    name: `${user.firstname} ${user.lastname}`,
+                    email: user.email,
+                    role: roleName,
+                    department,
+                    avatarUrl: profileImage
+                },
+                todayStatus,
+                checkInTime,
+                checkOutTime,
+                checkInIso
+            });
+        }
+
+        // Generate HMAC-SHA256 signed dynamic badge token (Office days only)
+        if (!badgeInfo) {
+            badgeInfo = badgeSecurity.generateBadgeToken({
+                staffId: user.staffid,
+                email: user.email,
+                name: `${user.firstname} ${user.lastname}`,
+                deviceId: deviceId || null,
+                isMobileApp: isMobileApp === true
+            });
+        }
 
         return res.status(200).send({
             success: true,
+            isWfhDay: false,
+            workMode: wfhCheck.work_mode,
+            todayDayOfWeek: wfhCheck.today_day_of_week,
+            canPunchWfh: false,
+            scheduledOfficeToday: wfhCheck.scheduled_office_today,
             qrPayload: badgeInfo.token,
             expiresAt: badgeInfo.expiresAt,
             ttlSeconds: badgeInfo.ttlSeconds,
+            hybridOfficeDays: parsedHybridOfficeDays,
             badge: {
                 staffId: user.staffid,
                 name: `${user.firstname} ${user.lastname}`,
@@ -1609,8 +1748,15 @@ exports.getMyBadgeData = async (req, res) => {
                 qrPayload: badgeInfo.token,
                 expiresAt: badgeInfo.expiresAt,
                 ttlSeconds: badgeInfo.ttlSeconds,
+                isWfhDay: false,
+                workMode: wfhCheck.work_mode,
+                todayDayOfWeek: wfhCheck.today_day_of_week,
+                scheduledOfficeToday: wfhCheck.scheduled_office_today,
+                hybridOfficeDays: parsedHybridOfficeDays,
                 todayStatus,
-                checkInTime
+                checkInTime,
+                checkOutTime,
+                checkInIso
             },
             employee: {
                 staffId: user.staffid,
@@ -1621,7 +1767,9 @@ exports.getMyBadgeData = async (req, res) => {
                 avatarUrl: profileImage
             },
             todayStatus,
-            checkInTime
+            checkInTime,
+            checkOutTime,
+            checkInIso
         });
 
     } catch (err) {
@@ -1957,3 +2105,423 @@ exports.scanQrBadgeAttendance = async (req, res) => {
         });
     }
 };
+
+/**
+ * Get current employee's WFH attendance status, work mode configuration, and today's log.
+ * GET /api/attendance/wfh-status
+ */
+exports.getWfhAttendanceStatus = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const user = await User.findByPk(userId);
+        if (!user || user.active == 0 || user.active === false || user.active === '0') {
+            return res.status(403).send({ success: false, message: "Account inactive or not found." });
+        }
+
+        const tz = await getAppTimezone();
+        const timeFormat = await getAppTimeFormat();
+        const nowString = timezoneUtil.getNowStringInTimezone(tz);
+        const todayDateOnly = nowString.split(' ')[0];
+
+        const wfhCheck = checkUserWfhToday(user, tz);
+
+        // Fetch today's active open log
+        let activeLog = await AttendanceLog.findOne({
+            where: {
+                staff_id: user.staffid,
+                date: todayDateOnly,
+                check_out_time: null
+            },
+            order: [['check_in_time', 'DESC']]
+        });
+
+        // Fetch completed log if not currently open
+        let completedLog = null;
+        if (!activeLog) {
+            completedLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    date: todayDateOnly,
+                    check_out_time: { [Op.ne]: null }
+                },
+                order: [['check_out_time', 'DESC']]
+            });
+        }
+
+        let todayStatus = 'NOT_CHECKED_IN';
+        let checkInTime = null;
+        let checkOutTime = null;
+        let durationText = null;
+        let todayLog = null;
+
+        if (activeLog) {
+            todayStatus = 'CHECKED_IN';
+            todayLog = activeLog;
+            checkInTime = formatDateInTimezone(activeLog.check_in_time, tz);
+        } else if (completedLog) {
+            todayStatus = 'COMPLETED';
+            todayLog = completedLog;
+            checkInTime = formatDateInTimezone(completedLog.check_in_time, tz);
+            checkOutTime = formatDateInTimezone(completedLog.check_out_time, tz);
+
+            if (completedLog.check_in_time && completedLog.check_out_time) {
+                const diffMs = new Date(completedLog.check_out_time).getTime() - new Date(completedLog.check_in_time).getTime();
+                const totalMinutes = Math.floor(diffMs / 60000);
+                const hrs = Math.floor(totalMinutes / 60);
+                const mins = totalMinutes % 60;
+                durationText = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} mins`;
+            }
+        } else {
+            // Check if on approved full-day leave
+            const approvedLeave = await LeaveRequest.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    status: 'Approved',
+                    start_date: { [Op.lte]: todayDateOnly },
+                    end_date: { [Op.gte]: todayDateOnly }
+                }
+            });
+            if (approvedLeave && !approvedLeave.is_half_day) {
+                todayStatus = 'ON_LEAVE';
+            }
+        }
+
+        // Fetch role and profile details
+        let roleName = 'Staff';
+        if (user.role) {
+            const roleObj = await Role.findByPk(user.role);
+            if (roleObj) roleName = roleObj.display_name || roleObj.name;
+        }
+
+        let profileImage = user.face_image_path ? user.face_image_path.replace(/\\/g, '/') : null;
+        let department = null;
+        try {
+            const empProfile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
+            if (empProfile) {
+                if (empProfile.image_path) profileImage = empProfile.image_path.replace(/\\/g, '/');
+                if (empProfile.department) department = empProfile.department;
+            }
+        } catch (_) {}
+
+        // Fetch system configured office hours
+        const { getAttendanceConfig } = require('../utils/attendanceConfig');
+        const attConfig = await getAttendanceConfig();
+
+        return res.status(200).send({
+            success: true,
+            work_mode: wfhCheck.work_mode,
+            workMode: wfhCheck.work_mode,
+            hybrid_office_days: user.hybrid_office_days || [],
+            hybridOfficeDays: user.hybrid_office_days || [],
+            today_day_of_week: wfhCheck.today_day_of_week,
+            todayDayOfWeek: wfhCheck.today_day_of_week,
+            is_wfh_day: wfhCheck.is_wfh_day,
+            isWfhDay: wfhCheck.is_wfh_day,
+            scheduled_office_today: wfhCheck.scheduled_office_today,
+            scheduledOfficeToday: wfhCheck.scheduled_office_today,
+            can_punch_wfh: wfhCheck.can_punch_wfh,
+            canPunchWfh: wfhCheck.can_punch_wfh,
+            todayStatus,
+            checkInTime,
+            checkOutTime,
+            duration: durationText,
+            todayLog,
+            employee: {
+                staffId: user.staffid,
+                name: `${user.firstname} ${user.lastname}`,
+                email: user.email,
+                role: roleName,
+                department,
+                avatarUrl: profileImage
+            },
+            officeHours: {
+                start: attConfig.startTime || '09:30',
+                end: attConfig.endTime || '18:30',
+                complianceHours: attConfig.complianceHours || 8
+            },
+            serverTime: nowString
+        });
+
+    } catch (err) {
+        console.error("Error in getWfhAttendanceStatus:", err);
+        return res.status(500).send({ success: false, message: err.message || "Failed to get WFH status." });
+    }
+};
+
+/**
+ * Record Mobile or Web WFH Attendance Punch (Check-In or Check-Out)
+ * POST /api/attendance/wfh-punch
+ * Body: { action: 'CHECK_IN' | 'CHECK_OUT', latitude, longitude, notes }
+ */
+exports.wfhPunch = async (req, res) => {
+    const { action, latitude, longitude, notes } = req.body;
+    const userId = req.userId;
+
+    if (!['CHECK_IN', 'CHECK_OUT'].includes(action)) {
+        return res.status(400).send({
+            success: false,
+            message: "Invalid action. Must be 'CHECK_IN' or 'CHECK_OUT'."
+        });
+    }
+
+    try {
+        const user = await User.findByPk(userId);
+        if (!user || user.active == 0 || user.active === false || user.active === '0') {
+            return res.status(403).send({
+                success: false,
+                message: "Employee account inactive or not found."
+            });
+        }
+
+        const tz = await getAppTimezone();
+        const timeFormat = await getAppTimeFormat();
+        const now = new Date();
+        const nowString = timezoneUtil.getNowStringInTimezone(tz);
+        const todayDateOnly = nowString.split(' ')[0];
+        const formattedNowTime = formatDateInTimezone(now, tz);
+        const displayTime = timezoneUtil.formatInTimezone(now, tz, {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: timeFormat !== '24h'
+        });
+
+        // 1. Verify WFH Eligibility for Today
+        const wfhCheck = checkUserWfhToday(user, tz);
+        if (!wfhCheck.is_wfh_day && !wfhCheck.can_punch_wfh) {
+            return res.status(403).send({
+                success: false,
+                message: wfhCheck.work_mode === 'Hybrid'
+                    ? `Today (${wfhCheck.today_day_of_week}) is your scheduled in-office day. Please scan your badge at the office kiosk.`
+                    : "Remote attendance punch is only available on Work From Home days. Please scan your badge at the office kiosk."
+            });
+        }
+
+        // 2. Single-Device Security Binding Enforcement (Mobile App & Mobile Web)
+        const isMobileHeader = req.headers['x-is-mobile'];
+        const isMobileAppHeader = req.headers['x-is-mobile-app'];
+        const userAgent = getUserAgent(req);
+        const deviceId = req.headers['x-device-id'] || req.body.deviceId;
+        const deviceName = req.headers['x-device-name'] || req.body.deviceName;
+        const deviceModel = req.headers['x-device-model'] || req.body.deviceModel;
+
+        const isMobileDevice = deviceSecurity.isMobileClient({
+            userAgent,
+            isMobile: isMobileHeader || req.body.is_mobile || (req.body.client_type === 'mobile_browser'),
+            isMobileApp: isMobileAppHeader || req.body.is_mobile_app || (req.body.client_type === 'mobile_app'),
+            deviceId
+        });
+
+        if (isMobileDevice) {
+            const clientIp = getClientIp(req);
+            const isMobileApp = (
+                isMobileAppHeader === 'true' ||
+                isMobileAppHeader === true ||
+                req.body.is_mobile_app === true ||
+                (deviceId && typeof deviceId === 'string' && deviceId.startsWith('wp-dev-app-'))
+            );
+
+            let effectiveDeviceId = (deviceId && typeof deviceId === 'string' && deviceId.trim()) ? deviceId.trim() : null;
+            if (!effectiveDeviceId) {
+                const model = deviceSecurity.extractDeviceModel({ userAgent, deviceName, deviceModel }) || 'phone';
+                effectiveDeviceId = isMobileApp
+                    ? `wp-dev-app-${model}-${user.staffid}`
+                    : `wp-dev-browser-${model}-${user.staffid}`;
+            }
+
+            const deviceCheck = await deviceSecurity.verifyAndBindDevice({
+                staffId: user.staffid,
+                deviceId: effectiveDeviceId,
+                deviceName,
+                deviceModel,
+                userAgent,
+                ipAddress: clientIp,
+                isMobile: true,
+                isMobileApp,
+                action: 'WFH_ATTENDANCE_PUNCH'
+            });
+
+            if (!deviceCheck.allowed) {
+                return res.status(403).send({
+                    success: false,
+                    deviceViolation: true,
+                    message: deviceCheck.error || "Security Violation: This mobile device is registered to another employee. Attendance punch rejected."
+                });
+            }
+        }
+
+        // 3. Validate Approved Leave Status
+        if (action === 'CHECK_IN') {
+            const approvedFullDayLeave = await LeaveRequest.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    status: 'Approved',
+                    start_date: { [Op.lte]: todayDateOnly },
+                    end_date: { [Op.gte]: todayDateOnly }
+                }
+            });
+
+            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+                return res.status(400).send({
+                    success: false,
+                    message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not permitted.`
+                });
+            }
+        }
+
+        // 4. Process Action: CHECK_IN or CHECK_OUT
+        const clientIp = getClientIp(req);
+        const punchSource = isMobileDevice ? 'MOBILE_WFH' : 'WEB_WFH';
+        const clientDeviceModel = deviceName || deviceModel || (isMobileDevice ? 'Mobile WFH Client' : 'Web Browser');
+
+        if (action === 'CHECK_IN') {
+            const parsedLat = (latitude !== undefined && latitude !== null && latitude !== '') ? parseFloat(latitude) : null;
+            const parsedLng = (longitude !== undefined && longitude !== null && longitude !== '') ? parseFloat(longitude) : null;
+
+            // Strict Geolocation Enforcement: Check-in is NOT allowed without valid captured GPS coordinates
+            if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng) || (parsedLat === 0 && parsedLng === 0)) {
+                return res.status(400).send({
+                    success: false,
+                    locationRequired: true,
+                    message: "Location service must be enabled to check in. GPS coordinates are strictly required for Work From Home attendance."
+                });
+            }
+
+            const existingLog = await AttendanceLog.findOne({
+                where: { staff_id: user.staffid, date: todayDateOnly }
+            });
+
+            if (existingLog) {
+                if (existingLog.check_out_time) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "You have already completed attendance for today."
+                    });
+                }
+                return res.status(400).send({
+                    success: false,
+                    message: `You are already checked in today at ${formatDateInTimezone(existingLog.check_in_time, tz)}.`
+                });
+            }
+
+            const newLog = await AttendanceLog.create({
+                staff_id: user.staffid,
+                check_in_time: now,
+                date: todayDateOnly,
+                phone_model: clientDeviceModel,
+                ip_address: clientIp,
+                latitude: Number.isFinite(parsedLat) ? parsedLat : null,
+                longitude: Number.isFinite(parsedLng) ? parsedLng : null,
+                punch_source: punchSource,
+                notes: notes ? String(notes).trim() : null
+            });
+
+            await logActivity({
+                admin_id: user.staffid,
+                action: 'WFH_CHECK_IN',
+                entity: 'AttendanceLog',
+                entity_id: newLog.id,
+                affected_user_id: user.staffid,
+                description: `Remote WFH Check-In by ${user.firstname} ${user.lastname} (${punchSource})`,
+                ip_address: clientIp,
+                user_agent: userAgent
+            });
+
+            return res.status(200).send({
+                success: true,
+                type: 'CHECK_IN',
+                todayStatus: 'CHECKED_IN',
+                message: `WFH Check-In recorded successfully at ${displayTime}.`,
+                timestamp: formattedNowTime,
+                time: displayTime,
+                checkInTime: displayTime,
+                checkInIso: newLog.check_in_time,
+                log: newLog
+            });
+
+        } else {
+            // CHECK_OUT
+            const activeLog = await AttendanceLog.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    date: todayDateOnly,
+                    check_out_time: null
+                },
+                order: [['check_in_time', 'DESC']]
+            });
+
+            if (!activeLog) {
+                return res.status(400).send({
+                    success: false,
+                    message: "No active check-in found for today to check out."
+                });
+            }
+
+            let durationText = '';
+            if (activeLog.check_in_time) {
+                const diffMs = now.getTime() - new Date(activeLog.check_in_time).getTime();
+                const totalMinutes = Math.floor(diffMs / 60000);
+                const hrs = Math.floor(totalMinutes / 60);
+                const mins = totalMinutes % 60;
+                durationText = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} mins`;
+            }
+
+            const cleanNotes = notes ? String(notes).trim() : '';
+            let combinedNotes = activeLog.notes;
+            if (cleanNotes) {
+                combinedNotes = combinedNotes ? `${combinedNotes} | Checkout: ${cleanNotes}` : `Checkout: ${cleanNotes}`;
+            }
+
+            const parsedLat = (latitude !== undefined && latitude !== null && latitude !== '') ? parseFloat(latitude) : null;
+            const parsedLng = (longitude !== undefined && longitude !== null && longitude !== '') ? parseFloat(longitude) : null;
+
+            await activeLog.update({
+                check_out_time: now,
+                notes: combinedNotes,
+                latitude: Number.isFinite(parsedLat) ? parsedLat : activeLog.latitude,
+                longitude: Number.isFinite(parsedLng) ? parsedLng : activeLog.longitude
+            });
+
+            // Trigger manager checkout approval if applicable
+            if (user.approving_manager_id) {
+                await Approval.create({
+                    attendance_log_id: activeLog.id,
+                    manager_id: user.approving_manager_id,
+                    status: 'pending'
+                });
+            }
+
+            await logActivity({
+                admin_id: user.staffid,
+                action: 'WFH_CHECK_OUT',
+                entity: 'AttendanceLog',
+                entity_id: activeLog.id,
+                affected_user_id: user.staffid,
+                description: `Remote WFH Check-Out by ${user.firstname} ${user.lastname} (${durationText || 'completed'})`,
+                ip_address: clientIp,
+                user_agent: userAgent
+            });
+
+            return res.status(200).send({
+                success: true,
+                type: 'CHECK_OUT',
+                todayStatus: 'COMPLETED',
+                message: `WFH Check-Out recorded successfully. Total time: ${durationText || 'completed'}.`,
+                timestamp: formattedNowTime,
+                time: displayTime,
+                checkOutTime: displayTime,
+                duration: durationText,
+                log: activeLog
+            });
+        }
+
+    } catch (err) {
+        console.error("Error in wfhPunch:", err);
+        return res.status(500).send({
+            success: false,
+            message: err.message || "Failed to process WFH attendance punch."
+        });
+    }
+};
+
+exports.checkUserWfhToday = checkUserWfhToday;

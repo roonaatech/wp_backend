@@ -43,6 +43,20 @@ module.exports = function (app) {
         controller.getMyBadgeData
     );
 
+    // WFH Remote Attendance: Get current user's WFH status and today's log
+    app.get(
+        "/api/attendance/wfh-status",
+        [verifyToken],
+        controller.getWfhAttendanceStatus
+    );
+
+    // WFH Remote Attendance: Self-service Check-In / Check-Out punch with GPS & Device Binding
+    app.post(
+        "/api/attendance/wfh-punch",
+        [verifyToken],
+        controller.wfhPunch
+    );
+
     // Kiosk Attendance Terminal: Scan dynamic QR badge to record check-in / check-out
     app.post(
         "/api/attendance/scan-qr-badge",

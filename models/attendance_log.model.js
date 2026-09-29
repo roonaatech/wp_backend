@@ -30,6 +30,15 @@ module.exports = (sequelize, Sequelize) => {
         },
         longitude: {
             type: Sequelize.DECIMAL(11, 8)
+        },
+        punch_source: {
+            type: Sequelize.STRING(32),
+            allowNull: false,
+            defaultValue: 'KIOSK_QR'
+        },
+        notes: {
+            type: Sequelize.TEXT,
+            allowNull: true
         }
     });
 
