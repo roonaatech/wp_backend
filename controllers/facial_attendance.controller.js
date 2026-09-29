@@ -1625,10 +1625,13 @@ exports.getMyBadgeData = async (req, res) => {
         });
         if (!openLog) {
             // Robust fallback across day/timezone boundaries: find any active unclosed punch for this user
+            // Restrict to the last 36 hours to avoid picking up stale months-old unclosed records
+            const cutoff36h = new Date(Date.now() - 36 * 60 * 60 * 1000);
             openLog = await AttendanceLog.findOne({
                 where: {
                     staff_id: user.staffid,
-                    check_out_time: null
+                    check_out_time: null,
+                    check_in_time: { [db.Sequelize.Op.gte]: cutoff36h }
                 },
                 order: [['check_in_time', 'DESC']]
             });
