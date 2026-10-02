@@ -3103,10 +3103,18 @@ exports.getUserAttendanceHistory = async (req, res) => {
             if (dateStr.startsWith(year.toString())) excusedSet.add(dateStr);
         });
 
+        // Holidays for the year so they are excused and can be ignored in duration chart
+        const { getActiveHolidaysMap } = require('../utils/holiday.helper');
+        const holidaysMap = await getActiveHolidaysMap(firstDayStr, lastDayStr);
+        const holidays = Array.from(holidaysMap.keys());
+        holidays.forEach(hDate => {
+            excusedSet.add(hDate);
+        });
+
         // Today (in app timezone) so the frontend does not flag future days as absent
         const todayStr = getDateInTimezone(new Date(), calTz);
 
-        res.send({ present, excused: Array.from(excusedSet), today: todayStr });
+        res.send({ present, excused: Array.from(excusedSet), holidays, today: todayStr });
     } catch (error) {
         console.error('Error fetching attendance history:', error);
         res.status(500).send({ message: "Error fetching attendance history." });
