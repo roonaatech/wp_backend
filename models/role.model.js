@@ -84,6 +84,12 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: false,
             defaultValue: false
         },
+        can_manage_holidays: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can view and manage company holidays'
+        },
         can_access_webapp: {
             type: Sequelize.BOOLEAN,
             allowNull: false,

@@ -138,5 +138,10 @@ db.device_violation_logs.belongsTo(db.user, { foreignKey: 'attempted_staff_id', 
 db.device_violation_logs.belongsTo(db.user, { foreignKey: 'bound_staff_id', as: 'bound_user' });
 db.device_violation_logs.belongsTo(db.user, { foreignKey: 'resolved_by', as: 'resolver' });
 
+// Holiday Model
+db.holidays = require("./holiday.model.js")(sequelize, Sequelize);
+db.holidays.belongsTo(db.user, { foreignKey: 'user_added', as: 'creator' });
+db.holidays.belongsTo(db.user, { foreignKey: 'user_updated', as: 'updater' });
+
 module.exports = db;
 

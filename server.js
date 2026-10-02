@@ -53,6 +53,7 @@ app.get('/', (req, res) => {
 require('./routes/auth.routes')(app);
 require('./routes/role.routes')(app);
 require("./routes/leavetype.routes")(app);
+require("./routes/holiday.routes")(app);
 require('./routes/leave.routes')(app);
 require('./routes/userleavetype.routes')(app);
 require('./routes/onduty.routes')(app);

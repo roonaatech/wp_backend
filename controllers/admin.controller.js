@@ -12,6 +12,7 @@ const birthdayUtil = require("../utils/birthday.util");
 const anniversaryUtil = require("../utils/anniversary.util");
 const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
+const { getActiveHolidaysSetForYear, toDateString } = require("../utils/holiday.helper");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -2605,13 +2606,18 @@ exports.getCalendarEvents = async (req, res) => {
         // Process leave requests and create events for each day
         const events = [];
 
+        const holidaySet = await getActiveHolidaysSetForYear(year);
+
         leaveRequests.forEach(leave => {
             const startDate = new Date(leave.start_date);
             const endDate = new Date(leave.end_date);
 
-            // For each day in the leave period, create an event
+            // For each day in the leave period, create an event (skip Sundays and company holidays)
             for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
                 const dateStr = d.toISOString().split('T')[0];
+                if (d.getDay() === 0 || holidaySet.has(dateStr)) {
+                    continue;
+                }
                 const staffName = `${leave.user.firstname} ${leave.user.lastname}`;
 
                 events.push({
@@ -2628,6 +2634,32 @@ exports.getCalendarEvents = async (req, res) => {
                 });
             }
         });
+
+        // Add active company holidays for the month to calendar events
+        try {
+            const monthHolidays = await db.holidays.findAll({
+                where: {
+                    holiday_date: {
+                        [Op.between]: [firstDayStr, lastDayStr]
+                    },
+                    status: 1
+                },
+                raw: true
+            });
+
+            monthHolidays.forEach(h => {
+                events.push({
+                    date: toDateString(h.holiday_date),
+                    type: 'holiday',
+                    staff_name: 'Company Holiday',
+                    title: h.holiday_name,
+                    reason: h.description || 'Public / Company Holiday',
+                    status: 'Approved'
+                });
+            });
+        } catch (hErr) {
+            console.error("Error fetching holidays for calendar:", hErr);
+        }
 
         // Process on-duty logs
         onDutyLogs.forEach(onDuty => {

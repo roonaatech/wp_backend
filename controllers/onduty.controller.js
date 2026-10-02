@@ -7,6 +7,7 @@ const emailService = require("../utils/email.service");
 const hierarchyUtil = require("../utils/hierarchy.util");
 const timezoneUtil = require("../utils/timezone.util");
 const Setting = db.settings;
+const { isDateHoliday, toDateString } = require("../utils/holiday.helper");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -41,6 +42,19 @@ exports.startOnDuty = async (req, res) => {
     // Validate required fields
     if (!client_name || !location || !purpose) {
         return res.status(400).send({ message: "Client name, location, and purpose are required" });
+    }
+
+    // Check if today is a company holiday
+    try {
+        const tz = await getAppTimezone();
+        const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+        const todayStr = formatter.format(new Date());
+        const holiday = await isDateHoliday(todayStr);
+        if (holiday.isHoliday) {
+            return res.status(400).send({ message: `On-duty cannot be started on a company holiday (${holiday.holidayName}).` });
+        }
+    } catch (e) {
+        console.error("Error checking holiday for on-duty:", e);
     }
 
     // Store actual UTC timestamp (Date object), NOT a formatted string

@@ -184,6 +184,9 @@ const options = {
             can_manage_leave_types: {
               type: 'boolean'
             },
+            can_manage_holidays: {
+              type: 'boolean'
+            },
             can_view_reports: {
               type: 'boolean'
             },

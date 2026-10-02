@@ -10,6 +10,13 @@ const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.lo
 const emailService = require("../utils/email.service");
 const hierarchyUtil = require("../utils/hierarchy.util");
 const Setting = db.settings;
+const {
+    isDateHoliday,
+    getActiveHolidaysMap,
+    getActiveHolidaysSetForYear,
+    calculateWorkingDays,
+    toDateString
+} = require("../utils/holiday.helper");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -57,36 +64,9 @@ const formatDateInTimezone = (dateObj, tz) => {
 };
 
 
-// Helper to calculate days excluding Sundays
-const calculateLeaveDays = (startDate, endDate) => {
-    // Parse YYYY-MM-DD manually to avoid UTC timezone shift issues
-    const parseDate = (dateStr) => {
-        if (typeof dateStr !== 'string') return new Date(dateStr);
-        const parts = String(dateStr).split('T')[0].split('-');
-        if (parts.length === 3) {
-            return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-        }
-        return new Date(dateStr);
-    };
-
-    const start = parseDate(startDate);
-    const end = parseDate(endDate);
-    let count = 0;
-    const current = new Date(start);
-
-    // Validate dates
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
-        return 0;
-    }
-
-    while (current <= end) {
-        // Exclude Sunday (0)
-        if (current.getDay() !== 0) {
-            count++;
-        }
-        current.setDate(current.getDate() + 1);
-    }
-    return count;
+// Helper to calculate days excluding Sundays and active company holidays
+const calculateLeaveDays = (startDate, endDate, holidaysSetOrMap = new Set()) => {
+    return calculateWorkingDays(startDate, endDate, holidaysSetOrMap);
 };
 
 // Apply for a Leave
@@ -98,6 +78,9 @@ exports.applyLeave = async (req, res) => {
             return res.status(400).send({ message: "Leave type, start date, and end date are required!" });
         }
 
+        const startDateStr = toDateString(start_date);
+        const endDateStr = toDateString(end_date);
+
         // Validate that start/end dates do not fall on a Sunday
         const parseDateParts = (d) => { const p = String(d).split('T')[0].split('-'); return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2])); };
         const startDay = parseDateParts(start_date);
@@ -107,6 +90,16 @@ exports.applyLeave = async (req, res) => {
         }
         if (endDay.getDay() === 0) {
             return res.status(400).send({ message: "End date cannot be a Sunday." });
+        }
+
+        // Validate that start/end dates do not fall on an active company holiday
+        const startHoliday = await isDateHoliday(startDateStr);
+        if (startHoliday.isHoliday) {
+            return res.status(400).send({ message: `Start date cannot be a company holiday (${startHoliday.holidayName}).` });
+        }
+        const endHoliday = await isDateHoliday(endDateStr);
+        if (endHoliday.isHoliday) {
+            return res.status(400).send({ message: `End date cannot be a company holiday (${endHoliday.holidayName}).` });
         }
 
         // Validate past date restriction for leave applications
@@ -126,7 +119,6 @@ exports.applyLeave = async (req, res) => {
             if (cursor.getDay() !== 0) workingDaysBack++;
         }
         const minDateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
-        const startDateStr = String(start_date).split('T')[0];
         if (startDateStr < minDateStr) {
             return res.status(400).send({ message: `Leave cannot be applied for dates more than ${pastDaysAllowed} working day(s) in the past.` });
         }
@@ -147,13 +139,21 @@ exports.applyLeave = async (req, res) => {
                 return res.status(400).send({ message: `Leave type '${leave_type}' is not assigned to you. Please contact admin.` });
             }
             const allowedDays = userLeaveType.days_allowed || 0;
-            let requestedDays = calculateLeaveDays(start_date, end_date);
+            const holidaysMap = await getActiveHolidaysMap(start_date, end_date);
+            let requestedDays = calculateLeaveDays(start_date, end_date, holidaysMap);
             if (is_half_day && requestedDays > 0) {
                 requestedDays -= 0.5;
             }
 
+            if (requestedDays <= 0) {
+                return res.status(400).send({
+                    message: "Selected dates consist only of holidays and/or Sundays. No leave days to deduct."
+                });
+            }
+
             // 2. Get already used/pending days for this year
             const year = new Date(start_date).getFullYear();
+            const yearHolidays = await getActiveHolidaysSetForYear(year);
             const usedLeaves = await LeaveRequest.findAll({
                 where: {
                     staff_id: req.userId,
@@ -168,7 +168,7 @@ exports.applyLeave = async (req, res) => {
 
             let usedDaysCount = 0;
             usedLeaves.forEach(leave => {
-                let days = calculateLeaveDays(leave.start_date, leave.end_date);
+                let days = calculateLeaveDays(leave.start_date, leave.end_date, yearHolidays);
                 if (leave.is_half_day && days > 0) {
                     days -= 0.5;
                 }
@@ -1128,14 +1128,28 @@ exports.updateLeaveDetails = async (req, res) => {
             return res.status(403).send({ message: "Unauthorized to edit this request." });
         }
 
-        // Validate that updated dates do not fall on a Sunday
+        // Validate that updated dates do not fall on a Sunday or company holiday
         if (start_date || end_date) {
             const parseDateParts = (d) => { const p = String(d).split('T')[0].split('-'); return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2])); };
-            if (start_date && parseDateParts(start_date).getDay() === 0) {
-                return res.status(400).send({ message: "Start date cannot be a Sunday." });
+            if (start_date) {
+                if (parseDateParts(start_date).getDay() === 0) {
+                    return res.status(400).send({ message: "Start date cannot be a Sunday." });
+                }
+                const startDateStr = toDateString(start_date);
+                const holiday = await isDateHoliday(startDateStr);
+                if (holiday.isHoliday) {
+                    return res.status(400).send({ message: `Start date cannot fall on a company holiday (${holiday.holidayName}).` });
+                }
             }
-            if (end_date && parseDateParts(end_date).getDay() === 0) {
-                return res.status(400).send({ message: "End date cannot be a Sunday." });
+            if (end_date) {
+                if (parseDateParts(end_date).getDay() === 0) {
+                    return res.status(400).send({ message: "End date cannot be a Sunday." });
+                }
+                const endDateStr = toDateString(end_date);
+                const holiday = await isDateHoliday(endDateStr);
+                if (holiday.isHoliday) {
+                    return res.status(400).send({ message: `End date cannot fall on a company holiday (${holiday.holidayName}).` });
+                }
             }
         }
         if (start_date || end_date) {
@@ -1198,6 +1212,20 @@ exports.updateLeaveDetails = async (req, res) => {
                         end_date: overlappingLeave.end_date,
                         status: overlappingLeave.status
                     }
+                });
+            }
+
+            const finalStartStr = toDateString(checkStartDate);
+            const finalEndStr = toDateString(checkEndDate);
+            const holidaysMap = await getActiveHolidaysMap(finalStartStr, finalEndStr);
+            let requestedDays = calculateLeaveDays(finalStartStr, finalEndStr, holidaysMap);
+            const effectiveHalfDay = is_half_day !== undefined ? is_half_day : leave.is_half_day;
+            if (effectiveHalfDay && requestedDays > 0) {
+                requestedDays -= 0.5;
+            }
+            if (requestedDays <= 0) {
+                return res.status(400).send({
+                    message: "Selected dates consist only of holidays and/or Sundays. No leave days to deduct."
                 });
             }
         }
@@ -1549,6 +1577,7 @@ exports.getUserLeaveBalance = async (req, res) => {
             include: [{ model: LeaveType, as: 'leave_type', where: { status: true } }]
         });
 
+        const yearHolidays = await getActiveHolidaysSetForYear(currentYear);
         const balances = [];
         for (const ult of assignedLeaveTypes) {
             const leaveType = ult.leave_type;
@@ -1574,9 +1603,10 @@ exports.getUserLeaveBalance = async (req, res) => {
 
             let daysUsed = 0;
             usedLeaves.forEach(leave => {
-                const start = new Date(leave.start_date);
-                const end = new Date(leave.end_date);
-                const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                let days = calculateLeaveDays(leave.start_date, leave.end_date, yearHolidays);
+                if (leave.is_half_day && days > 0) {
+                    days -= 0.5;
+                }
                 daysUsed += days;
             });
 
@@ -1790,6 +1820,7 @@ exports.getMyLeaveBalance = async (req, res) => {
             include: [{ model: LeaveType, as: 'leave_type', where: { status: true } }]
         });
 
+        const yearHolidays = await getActiveHolidaysSetForYear(currentYear);
         const balanceMap = {};
         for (const ult of assignedLeaveTypes) {
             const leaveType = ult.leave_type;
@@ -1812,9 +1843,10 @@ exports.getMyLeaveBalance = async (req, res) => {
             // Calculate total days used
             let daysUsed = 0;
             usedLeaves.forEach(leave => {
-                const start = new Date(leave.start_date);
-                const end = new Date(leave.end_date);
-                const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                let days = calculateLeaveDays(leave.start_date, leave.end_date, yearHolidays);
+                if (leave.is_half_day && days > 0) {
+                    days -= 0.5;
+                }
                 daysUsed += days;
             });
             const balance = Math.max(0, ult.days_allowed - daysUsed);

@@ -147,6 +147,8 @@ module.exports = function (app) {
      *                 type: boolean
      *               can_manage_leave_types:
      *                 type: boolean
+     *               can_manage_holidays:
+     *                 type: boolean
      *               can_view_reports:
      *                 type: boolean
      *     responses:
@@ -208,6 +210,8 @@ module.exports = function (app) {
      *               can_manage_users:
      *                 type: boolean
      *               can_manage_leave_types:
+     *                 type: boolean
+     *               can_manage_holidays:
      *                 type: boolean
      *               can_view_reports:
      *                 type: boolean

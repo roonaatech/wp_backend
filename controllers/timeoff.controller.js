@@ -8,6 +8,7 @@ const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.lo
 const emailService = require("../utils/email.service");
 const hierarchyUtil = require("../utils/hierarchy.util");
 const { getAttendanceConfig } = require("../utils/attendanceConfig");
+const { isDateHoliday, toDateString } = require("../utils/holiday.helper");
 
 // Helper to calculate hours difference
 const calculateHours = (start, end) => {
@@ -129,6 +130,13 @@ exports.applyTimeOff = async (req, res) => {
         const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
         if (dateObj.getDay() === 0) {
             return res.status(400).send({ message: "Time-off requests cannot be submitted for Sundays." });
+        }
+
+        // Validate that date is not a company holiday
+        const dateOnlyStr = toDateString(date);
+        const holiday = await isDateHoliday(dateOnlyStr);
+        if (holiday.isHoliday) {
+            return res.status(400).send({ message: `Time-off cannot be requested on a company holiday (${holiday.holidayName}).` });
         }
 
         // Validate time format (HH:MM or HH:MM:SS)
@@ -270,12 +278,17 @@ exports.updateTimeOffDetails = async (req, res) => {
             return res.status(400).send({ message: "Cannot update a request that has already been processed." });
         }
 
-        // Validate that updated date is not a Sunday
+        // Validate that updated date is not a Sunday or company holiday
         if (date) {
             const dateParts = String(date).split('T')[0].split('-');
             const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
             if (dateObj.getDay() === 0) {
                 return res.status(400).send({ message: "Time-off requests cannot be submitted for Sundays." });
+            }
+            const dateOnlyStr = toDateString(date);
+            const holiday = await isDateHoliday(dateOnlyStr);
+            if (holiday.isHoliday) {
+                return res.status(400).send({ message: `Time-off cannot be requested on a company holiday (${holiday.holidayName}).` });
             }
         }
 

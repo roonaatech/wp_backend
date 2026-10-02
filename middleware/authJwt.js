@@ -280,6 +280,32 @@ const canManageLeaveTypes = async (req, res, next) => {
 };
 
 /**
+ * Middleware to check if user can manage holidays
+ */
+const canManageHolidays = async (req, res, next) => {
+    try {
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
+        }
+
+        if (role.can_manage_holidays == true) {
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to manage holidays!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
+/**
  * Middleware to check if user can view activities
  * Stores the permission level in req.activityPermission for use in controller
  * NOTE: Legacy admin flag has been deprecated - all permissions are now role-based
@@ -797,6 +823,7 @@ const authJwt = {
     canAccessWebApp: canAccessWebApp,
     canViewDashboard: canViewDashboard,
     canManageLeaveTypes: canManageLeaveTypes,
+    canManageHolidays: canManageHolidays,
     canViewActivities: canViewActivities,
     canManageRoles: canManageRoles,
     canManageEmailSettings: canManageEmailSettings,
