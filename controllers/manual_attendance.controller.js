@@ -40,18 +40,18 @@ const getOfficeTimings = async () => {
 
 /**
  * Helper to calculate checkout time string given checkin time string and compliance hours
- * e.g. ("09:30", 8) => "17:30"
+ * e.g. ("09:30", 9) => "18:30"
  */
-const calculateCheckoutTime = (checkInStr, hours) => {
+const calculateCheckoutTime = (checkInStr, hours, fallbackEndTime = '18:30') => {
     try {
-        if (!checkInStr) return '17:30';
+        if (!checkInStr) return fallbackEndTime;
         const [h, m] = checkInStr.split(':').map(Number);
         const totalMinutes = h * 60 + (m || 0) + Math.round(hours * 60);
         const endH = Math.floor(totalMinutes / 60) % 24;
         const endM = totalMinutes % 60;
         return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
     } catch (e) {
-        return '17:30';
+        return fallbackEndTime;
     }
 };
 
@@ -274,7 +274,7 @@ exports.getMissedAttendance = async (req, res) => {
 
                 // Suggested check-in and check-out values
                 const suggestedCheckIn = existingCheckInStr || defaultCheckIn;
-                const suggestedCheckOut = existingCheckInStr ? calculateCheckoutTime(suggestedCheckIn, complianceHours) : defaultCheckOut;
+                const suggestedCheckOut = existingCheckInStr ? calculateCheckoutTime(suggestedCheckIn, complianceHours, defaultCheckOut) : defaultCheckOut;
 
                 const empName = `${staff.firstname || ''} ${staff.lastname || ''}`.trim();
                 let finalMissedType = missedType;
