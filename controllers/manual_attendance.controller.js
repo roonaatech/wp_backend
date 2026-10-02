@@ -11,6 +11,7 @@ const Setting = db.settings;
 const EmployeeProfile = db.employee_profiles;
 const timezoneUtil = require('../utils/timezone.util');
 const { logActivity, getClientIp, getUserAgent } = require('../utils/activity.logger');
+const { isDateHoliday, getActiveHolidaysMap } = require('../utils/holiday.helper');
 
 /**
  * Helper to get the configured application timezone from database settings
@@ -232,11 +233,19 @@ exports.getMissedAttendance = async (req, res) => {
         const defaultCheckIn = officeTimes.startTime;
         const defaultCheckOut = officeTimes.endTime;
 
+        // Fetch company holidays in date range to exclude from missed attendance
+        const holidaysMap = await getActiveHolidaysMap(startDate, endDate);
+
         // Build list of missed attendance records
         const missedItems = [];
         const pendingLeavesList = [];
 
         datesList.forEach(dateStr => {
+            // Do not report missed attendance on company holidays
+            if (holidaysMap.has(dateStr)) {
+                return;
+            }
+
             filteredStaff.forEach(staff => {
                 const key = `${staff.staffid}_${dateStr}`;
                 const logs = logsMap[key] || [];
@@ -314,6 +323,7 @@ exports.getMissedAttendance = async (req, res) => {
             default_check_out: defaultCheckOut,
             timezone: tz,
             total_missed: missedItems.length,
+            holidays: Array.from(holidaysMap.entries()).map(([d, name]) => ({ date: d, name })),
             items: missedItems,
             pending_leaves: pendingLeavesList
         });
@@ -366,6 +376,17 @@ exports.regularizeAttendance = async (req, res) => {
                 }
                 if (staff.active != 1) {
                     errors.push({ staff_id, date, message: `Staff member ${staff.firstname} ${staff.lastname} is inactive. Only active employees can be regularized.` });
+                    continue;
+                }
+
+                // Verify date is not an active company holiday
+                const holidayCheck = await isDateHoliday(date);
+                if (holidayCheck.isHoliday) {
+                    errors.push({
+                        staff_id,
+                        date,
+                        message: `${date} is a company holiday (${holidayCheck.holidayName}). Attendance entry is not allowed.`
+                    });
                     continue;
                 }
 

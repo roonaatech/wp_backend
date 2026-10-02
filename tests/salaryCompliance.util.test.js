@@ -110,4 +110,49 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
         expect(result.compliant_days).toBe(1); // 0.5 leave credited + 4h work (>= 4h target) = 1 day
         expect(result.non_compliant_days).toBe(0);
     });
+
+    test('Company holidays are included in monthly breakdown and marked as compliant (paid)', () => {
+        const config = {
+            complianceHours: 9,
+            allowedLeavePerMonth: 1,
+            allowedTimeOffPerMonth: 2,
+            holidays: [
+                { holiday_date: '2026-10-02', holiday_name: 'Gandhi Jayanthi' },
+                { holiday_date: '2026-10-20', holiday_name: 'VIJAYADHASAMI' }
+            ]
+        };
+
+        const employeeRecords = {
+            attendanceRecords: [
+                { date: '2026-10-01', work_minutes: 9 * 60 } // Compliant working day
+            ],
+            leaveDays: [],
+            timeoffRecords: [],
+            ondutyRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+
+        // 1 worked day + 2 holiday days = 3 compliant days
+        expect(result.compliant_days).toBe(3);
+        expect(result.non_compliant_days).toBe(0);
+        expect(result.holidays_count).toBe(2);
+
+        // Verify holiday breakdown rows
+        const h1 = result.daily_breakdown.find(d => d.date === '2026-10-02');
+        expect(h1).toBeDefined();
+        expect(h1.type).toBe('Holiday');
+        expect(h1.is_compliant).toBe(true);
+        expect(h1.compliant_day_value).toBe(1);
+        expect(h1.holiday_name).toBe('Gandhi Jayanthi');
+        expect(h1.remarks).toContain('Gandhi Jayanthi');
+
+        const h2 = result.daily_breakdown.find(d => d.date === '2026-10-20');
+        expect(h2).toBeDefined();
+        expect(h2.type).toBe('Holiday');
+        expect(h2.is_compliant).toBe(true);
+        expect(h2.compliant_day_value).toBe(1);
+        expect(h2.holiday_name).toBe('VIJAYADHASAMI');
+    });
 });
+

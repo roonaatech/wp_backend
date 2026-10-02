@@ -1977,7 +1977,18 @@ exports.getMonthlySummary = async (req, res) => {
 
         const { getAttendanceConfig } = require('../utils/attendanceConfig');
         const { calculateMonthlyCompliance } = require('../utils/salaryCompliance.util');
+        const { getActiveHolidaysMap } = require('../utils/holiday.helper');
         const attConfig = await getAttendanceConfig();
+
+        // Fetch active company holidays in date range
+        const holidaysMap = await getActiveHolidaysMap(startDate, endDate);
+        const holidaysList = [];
+        holidaysMap.forEach((name, date) => {
+            holidaysList.push({
+                holiday_date: date,
+                holiday_name: name
+            });
+        });
 
         // Convert to array and format hours
         const summary = Object.values(staffMap).map(s => {
@@ -2003,12 +2014,24 @@ exports.getMonthlySummary = async (req, res) => {
                 complianceHours: attConfig.complianceHours,
                 allowedLeavePerMonth: attConfig.allowedLeavePerMonth,
                 allowedTimeOffPerMonth: attConfig.allowedTimeOffPerMonth,
+                holidays: holidaysList,
                 month: m,
                 year: y
             });
 
             // Build records list for the employee with a single grouped Attendance row at the top
             const recordsList = [...s.records];
+
+            // Add active company holidays to records list
+            holidaysList.forEach(h => {
+                recordsList.push({
+                    type: 'Holiday',
+                    date: h.holiday_date,
+                    duration: '1 day',
+                    detail: h.holiday_name
+                });
+            });
+
             if (s.attendance_records.length > 0) {
                 const attDates = Array.from(s.attendance_dates).sort();
                 const minDate = attDates[0];
@@ -2058,6 +2081,8 @@ exports.getMonthlySummary = async (req, res) => {
                 timeoff_minutes: s.timeoff_minutes,
                 onduty_hours: parseFloat((s.onduty_minutes / 60).toFixed(1)),
                 onduty_minutes: s.onduty_minutes,
+                holidays_count: holidaysList.length,
+                holidays: holidaysList,
                 compliant_days: compliance.compliant_days,
                 non_compliant_days: compliance.non_compliant_days,
                 quota_summary: compliance.quota_summary,
@@ -2079,6 +2104,8 @@ exports.getMonthlySummary = async (req, res) => {
             allowed_time_off_per_month: attConfig.allowedTimeOffPerMonth,
             office_start_time: attConfig.startTime,
             office_end_time: attConfig.endTime,
+            holidays: holidaysList,
+            holidays_count: holidaysList.length,
             summary
         });
 

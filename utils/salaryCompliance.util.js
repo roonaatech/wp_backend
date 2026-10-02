@@ -68,6 +68,21 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
     const timeoffList = employeeRecords.timeoffRecords || [];
     const ondutyList = employeeRecords.ondutyRecords || [];
 
+    const holidaysMap = new Map();
+    if (config.holidays) {
+        if (config.holidays instanceof Map) {
+            config.holidays.forEach((val, key) => holidaysMap.set(key, val));
+        } else if (Array.isArray(config.holidays)) {
+            config.holidays.forEach(h => {
+                const d = h.holiday_date || h.date;
+                const name = h.holiday_name || h.name || 'Holiday';
+                if (d) holidaysMap.set(String(d).split('T')[0], name);
+            });
+        } else if (typeof config.holidays === 'object') {
+            Object.entries(config.holidays).forEach(([k, v]) => holidaysMap.set(k, v));
+        }
+    }
+
     // Group activity by date
     const dailyMap = {};
 
@@ -83,11 +98,22 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
                 timeOffRequestedMins: 0,
                 timeOffRecords: [],
                 leaveDays: 0,
-                leaveRecords: []
+                leaveRecords: [],
+                isHoliday: false,
+                holidayName: null
             };
         }
         return dailyMap[dStr];
     };
+
+    // Ensure all company holidays are registered in dailyMap
+    holidaysMap.forEach((holidayName, holidayDate) => {
+        const entry = ensureDate(holidayDate);
+        if (entry) {
+            entry.isHoliday = true;
+            entry.holidayName = holidayName;
+        }
+    });
 
     // 1. Attendance Sessions
     attendanceList.forEach(att => {
@@ -155,7 +181,9 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
         const hasTimeOff = day.timeOffRequestedMins > 0;
         const hasLeave = day.leaveDays > 0;
 
-        if (hasLeave && (hasWork || hasTimeOff)) {
+        if (day.isHoliday) {
+            dayType = 'Holiday';
+        } else if (hasLeave && (hasWork || hasTimeOff)) {
             dayType = 'Combined';
         } else if (hasLeave) {
             dayType = 'Leave';
@@ -168,7 +196,7 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
         // --- Process Leave for this date ---
         let creditedLeave = 0;
         let excessLeave = 0;
-        if (hasLeave) {
+        if (hasLeave && !day.isHoliday) {
             usedLeaveDays += day.leaveDays;
             creditedLeave = Math.min(day.leaveDays, remainingLeaveQuota);
             remainingLeaveQuota = Math.max(0, remainingLeaveQuota - creditedLeave);
@@ -179,7 +207,7 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
         // --- Process Time-Off for this date ---
         let creditedTimeOffMins = 0;
         let excessTimeOffMins = 0;
-        if (hasTimeOff) {
+        if (hasTimeOff && !day.isHoliday) {
             usedTimeOffMins += day.timeOffRequestedMins;
             creditedTimeOffMins = Math.min(day.timeOffRequestedMins, remainingTimeOffMins);
             remainingTimeOffMins = Math.max(0, remainingTimeOffMins - creditedTimeOffMins);
@@ -195,7 +223,12 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
         let compliantDayValue = 0.0;
         let remarks = '';
 
-        if (dayType === 'Leave') {
+        if (day.isHoliday) {
+            // Company Holiday - fully compliant paid day
+            isCompliant = true;
+            compliantDayValue = 1.0;
+            remarks = `Company Holiday: ${day.holidayName || 'Holiday'} (Compliant)`;
+        } else if (dayType === 'Leave') {
             // Pure leave day
             if (creditedLeave >= 1.0) {
                 isCompliant = true;
@@ -293,13 +326,15 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             is_compliant: isCompliant,
             compliant_day_value: Math.round(compliantDayValue * 10) / 10,
             status_label: compliantDayValue >= 1.0 ? 'Compliant' : (compliantDayValue > 0 ? 'Partial' : 'Non-Compliant'),
-            remarks: remarks
+            remarks: remarks,
+            holiday_name: day.holidayName || null
         });
     }
 
     return {
         compliant_days: Math.round(totalCompliantDays * 10) / 10,
         non_compliant_days: Math.round(totalNonCompliantDays * 10) / 10,
+        holidays_count: holidaysMap.size,
         quota_summary: {
             allowed_leave_days: allowedLeaveDays,
             used_leave_days: Math.round(usedLeaveDays * 10) / 10,

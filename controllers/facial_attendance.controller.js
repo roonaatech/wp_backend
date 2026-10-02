@@ -18,6 +18,7 @@ const faceBiometrics = require("../services/face_biometrics.service");
 const badgeSecurity = require("../services/badge_security.service");
 const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
+const { isDateHoliday } = require("../utils/holiday.helper");
 
 // Cache of pending QR badge attendance confirmations (expires in 60 seconds)
 const pendingQrConfirmations = new Map();
@@ -486,6 +487,17 @@ exports.getAttendanceStatus = async (req, res) => {
             return res.status(200).send({ status: 'COMPLETED', employeeName: `${user.firstname} ${user.lastname}` });
         }
 
+        // Check if today is a company holiday
+        const holidayCheck = await isDateHoliday(todayDateOnly);
+        if (holidayCheck.isHoliday) {
+            return res.status(200).send({
+                status: 'HOLIDAY',
+                employeeName: `${user.firstname} ${user.lastname}`,
+                holidayName: holidayCheck.holidayName,
+                isHoliday: true
+            });
+        }
+
         // Check if employee is on approved full-day leave today
         const approvedFullDayLeave = await LeaveRequest.findOne({
             where: {
@@ -557,10 +569,14 @@ exports.getMyTodayAttendance = async (req, res) => {
             }
         });
 
+        // 4. Check if today is a company holiday
+        const holidayCheck = await isDateHoliday(todayDateOnly);
+
         let status = 'NOT_CHECKED_IN';
         if (openLog) status = 'CHECKED_IN';
         else if (completedLog) status = 'COMPLETED';
         else if (approvedLeave && !approvedLeave.is_half_day) status = 'ON_LEAVE';
+        else if (holidayCheck.isHoliday) status = 'HOLIDAY';
 
         return res.status(200).send({
             date: todayDateOnly,
@@ -570,7 +586,9 @@ exports.getMyTodayAttendance = async (req, res) => {
             hasCheckOut: Boolean(completedLog),
             checkInTime: openLog?.check_in_time || completedLog?.check_in_time || null,
             checkOutTime: completedLog?.check_out_time || null,
-            leaveType: approvedLeave ? approvedLeave.leave_type : null
+            leaveType: approvedLeave ? approvedLeave.leave_type : null,
+            isHoliday: holidayCheck.isHoliday,
+            holidayName: holidayCheck.holidayName
         });
     } catch (err) {
         console.error("Error fetching today attendance:", err);
@@ -673,6 +691,15 @@ exports.checkInOutWithFace = async (req, res) => {
             const tz = await getAppTimezone();
             const nowString = timezoneUtil.getNowStringInTimezone(tz);
             const todayDateOnly = nowString.split(' ')[0];
+
+            const holidayCheck = await isDateHoliday(todayDateOnly);
+            if (holidayCheck.isHoliday) {
+                return res.status(400).send({
+                    success: false,
+                    message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
+                });
+            }
+
             const approvedFullDayLeave = await LeaveRequest.findOne({
                 where: {
                     staff_id: user.staffid,
@@ -832,6 +859,14 @@ exports.checkInOutWithFace = async (req, res) => {
         let logDetails = null;
 
         if (action === 'CHECK_IN') {
+            const holidayCheck = await isDateHoliday(todayDateOnly);
+            if (holidayCheck.isHoliday) {
+                return res.status(400).send({
+                    success: false,
+                    message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
+                });
+            }
+
             // Verify employee is not on approved full-day leave today
             const approvedFullDayLeave = await LeaveRequest.findOne({
                 where: {
@@ -1371,6 +1406,14 @@ exports.recordKioskAttendance = async (req, res) => {
         const formattedNowTime = formatDateInTimezone(now, tz);
 
         if (action === 'CHECK_IN') {
+            const holidayCheck = await isDateHoliday(todayDateOnly);
+            if (holidayCheck.isHoliday) {
+                return res.status(400).send({
+                    success: false,
+                    message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
+                });
+            }
+
             // Verify employee is not on approved full-day leave today
             const approvedFullDayLeave = await LeaveRequest.findOne({
                 where: {
@@ -1668,8 +1711,12 @@ exports.getMyBadgeData = async (req, res) => {
             }
         });
 
+        const holidayCheck = await isDateHoliday(todayDateOnly);
+
         if (approvedBadgeLeave && !approvedBadgeLeave.is_half_day && todayStatus === 'NOT_CHECKED_IN') {
             todayStatus = 'ON_LEAVE';
+        } else if (holidayCheck.isHoliday && todayStatus === 'NOT_CHECKED_IN') {
+            todayStatus = 'HOLIDAY';
         }
 
         // Determine if employee is authorized for WFH today
@@ -1850,6 +1897,14 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             }
 
             if (pending.action === 'CHECK_IN') {
+                const holidayCheck = await isDateHoliday(todayDateOnly);
+                if (holidayCheck.isHoliday) {
+                    return res.status(400).send({
+                        success: false,
+                        message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
+                    });
+                }
+
                 const approvedFullDayLeave = await LeaveRequest.findOne({
                     where: {
                         staff_id: user.staffid,
@@ -2051,6 +2106,14 @@ exports.scanQrBadgeAttendance = async (req, res) => {
         let durationText = '';
 
         if (!existingOpenLog) {
+            const holidayCheck = await isDateHoliday(todayDateOnly);
+            if (holidayCheck.isHoliday) {
+                return res.status(400).send({
+                    success: false,
+                    message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
+                });
+            }
+
             // Check if employee is on approved full-day leave today
             const approvedFullDayLeave = await LeaveRequest.findOne({
                 where: {
@@ -2210,8 +2273,11 @@ exports.getWfhAttendanceStatus = async (req, res) => {
                     end_date: { [Op.gte]: todayDateOnly }
                 }
             });
+            const holidayCheck = await isDateHoliday(todayDateOnly);
             if (approvedLeave && !approvedLeave.is_half_day) {
                 todayStatus = 'ON_LEAVE';
+            } else if (holidayCheck.isHoliday && todayStatus === 'NOT_CHECKED_IN') {
+                todayStatus = 'HOLIDAY';
             }
         }
 
@@ -2386,8 +2452,16 @@ exports.wfhPunch = async (req, res) => {
             }
         }
 
-        // 3. Validate Approved Leave Status
+        // 3. Validate Approved Leave & Holiday Status
         if (action === 'CHECK_IN') {
+            const holidayCheck = await isDateHoliday(todayDateOnly);
+            if (holidayCheck.isHoliday) {
+                return res.status(400).send({
+                    success: false,
+                    message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not permitted.`
+                });
+            }
+
             const approvedFullDayLeave = await LeaveRequest.findOne({
                 where: {
                     staff_id: user.staffid,

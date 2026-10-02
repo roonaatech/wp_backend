@@ -31,6 +31,15 @@ exports.checkIn = async (req, res) => {
     const nowString = timezoneUtil.getNowStringInTimezone(tz);
     const todayDateOnly = nowString.split(' ')[0];
 
+    // Verify today is not a company holiday
+    const { isDateHoliday } = require("../utils/holiday.helper");
+    const holidayCheck = await isDateHoliday(todayDateOnly);
+    if (holidayCheck.isHoliday) {
+        return res.status(400).send({
+            message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
+        });
+    }
+
     // Verify employee is not on approved full-day leave today
     const LeaveRequest = db.leave_requests;
     const Op = db.Sequelize.Op;
