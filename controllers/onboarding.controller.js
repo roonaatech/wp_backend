@@ -599,9 +599,89 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
             active: active !== undefined ? parseInt(active) : user.active
         };
 
+        // Capture diffs for change history
+        const oldVals = {};
+        const newVals = {};
+        const changeDescriptions = [];
+
+        // Core user field diffs
+        if (firstname && firstname.trim() !== (user.firstname || '').trim()) {
+            oldVals.firstname = user.firstname;
+            newVals.firstname = firstname.trim();
+            changeDescriptions.push('first name');
+        }
+        if (lastname && lastname.trim() !== (user.lastname || '').trim()) {
+            oldVals.lastname = user.lastname;
+            newVals.lastname = lastname.trim();
+            changeDescriptions.push('last name');
+        }
+        if (email && email.trim() !== (user.email || '').trim()) {
+            oldVals.email = user.email;
+            newVals.email = email.trim();
+            changeDescriptions.push('email');
+        }
+        if (secondary_email !== undefined && (secondary_email || '').trim() !== (user.secondary_email || '').trim()) {
+            oldVals.secondary_email = user.secondary_email || 'None';
+            newVals.secondary_email = secondary_email || 'None';
+            changeDescriptions.push('secondary email');
+        }
+        if (gender && gender !== user.gender) {
+            oldVals.gender = user.gender || 'None';
+            newVals.gender = gender;
+            changeDescriptions.push('gender');
+        }
+        if (abis_access !== undefined) {
+            const newAbis = (abis_access === 'true' || abis_access === true);
+            const oldAbis = Boolean(user.abis_access);
+            if (newAbis !== oldAbis) {
+                oldVals.abis_access = oldAbis;
+                newVals.abis_access = newAbis;
+                changeDescriptions.push('ABIS access');
+            }
+        }
+        if (active !== undefined && parseInt(active) !== user.active) {
+            oldVals.active = user.active === 1;
+            newVals.active = parseInt(active) === 1;
+            changeDescriptions.push(parseInt(active) === 1 ? 'activated account' : 'deactivated account');
+        }
+
+        // Manager diff
+        const oldMgrId = user.approving_manager_id;
+        const newMgrId = updateUserData.approving_manager_id;
+        if (oldMgrId !== newMgrId) {
+            let oldMgrName = 'None';
+            let newMgrName = 'None';
+            if (oldMgrId) {
+                const m = await User.findByPk(oldMgrId);
+                oldMgrName = m ? `${m.firstname} ${m.lastname}` : `User #${oldMgrId}`;
+            }
+            if (newMgrId) {
+                const m = await User.findByPk(newMgrId);
+                newMgrName = m ? `${m.firstname} ${m.lastname}` : `User #${newMgrId}`;
+            }
+            oldVals.approving_manager = oldMgrName;
+            newVals.approving_manager = newMgrName;
+            changeDescriptions.push(`reporting manager from "${oldMgrName}" to "${newMgrName}"`);
+        }
+
+        // Role diff
+        if (user.role !== roleInt) {
+            const oldR = await Role.findByPk(user.role);
+            const oldRName = oldR ? (oldR.display_name || oldR.name) : `Role #${user.role}`;
+            const newRName = newRole ? (newRole.display_name || newRole.name) : `Role #${roleInt}`;
+            oldVals.role = oldRName;
+            newVals.role = newRName;
+            changeDescriptions.push(`role from "${oldRName}" to "${newRName}"`);
+        }
+
         if (work_mode !== undefined) {
             const selectedWorkMode = normalizeWorkMode(work_mode);
             updateUserData.work_mode = selectedWorkMode;
+            if (user.work_mode !== selectedWorkMode) {
+                oldVals.work_mode = user.work_mode || 'None';
+                newVals.work_mode = selectedWorkMode;
+                changeDescriptions.push(`work mode to "${selectedWorkMode}"`);
+            }
 
             if (selectedWorkMode === 'Hybrid') {
                 const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -626,6 +706,8 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
         if (password) {
             updateUserData.password = bcrypt.hashSync(password, 8);
             updateUserData.last_login = null; // Force password change on next login
+            newVals.password_changed = true;
+            changeDescriptions.push('password updated');
         }
 
         await user.update(updateUserData, { transaction });
@@ -738,6 +820,71 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
             onboarding_place
         };
 
+        // Compare profile fields
+        const profileFieldLabels = {
+            date_of_joining: 'date of joining',
+            date_of_birth: 'date of birth',
+            birthplace: 'birth place',
+            height_weight: 'height & weight',
+            blood_group: 'blood group',
+            marital_status: 'marital status',
+            no_of_children: 'number of children',
+            hobbies: 'hobbies',
+            nationality: 'nationality',
+            religion: 'religion',
+            present_address: 'present address',
+            present_contact_no: 'present contact',
+            permanent_address: 'permanent address',
+            permanent_contact_no: 'permanent contact',
+            father_name: 'father name',
+            father_age: 'father age',
+            father_occupation: 'father occupation',
+            father_work_status: 'father work status',
+            mother_name: 'mother name',
+            mother_age: 'mother age',
+            mother_occupation: 'mother occupation',
+            bank_account_number: 'bank account number',
+            bank_ifsc_code: 'bank IFSC code',
+            bank_name_address: 'bank name & branch',
+            onboarding_place: 'joining location'
+        };
+
+        const normalizeVal = (v) => {
+            if (v === null || v === undefined) return '';
+            if (v instanceof Date) return v.toISOString().split('T')[0];
+            return String(v).trim();
+        };
+
+        if (profile) {
+            for (const [fKey, fLabel] of Object.entries(profileFieldLabels)) {
+                if (profileData[fKey] !== undefined) {
+                    const oldV = normalizeVal(profile[fKey]);
+                    const newV = normalizeVal(profileData[fKey]);
+                    if (oldV !== newV) {
+                        oldVals[fKey] = profile[fKey] || 'None';
+                        newVals[fKey] = profileData[fKey] || 'None';
+                        changeDescriptions.push(fLabel);
+                    }
+                }
+            }
+
+            if (profileData.has_disability !== undefined) {
+                const oldDis = Boolean(profile.has_disability);
+                const newDis = Boolean(profileData.has_disability);
+                if (oldDis !== newDis) {
+                    oldVals.has_disability = oldDis;
+                    newVals.has_disability = newDis;
+                    changeDescriptions.push('disability status');
+                }
+            }
+
+            if (profileImagePath && profile.image_path !== profileImagePath) {
+                oldVals.profile_image = profile.image_path ? 'Previous photo' : 'None';
+                newVals.profile_image = 'New photo uploaded';
+                changeDescriptions.push('profile photo');
+            }
+        }
+
         if (profile) {
             await profile.update(profileData, { transaction });
         } else {
@@ -805,6 +952,10 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
         if (req.files && req.files.length > 0) {
             const nonImageFiles = req.files.filter(file => file.fieldname !== 'profile_image');
             if (nonImageFiles.length > 0) {
+                const docNames = nonImageFiles.map(f => f.fieldname.replace(/^doc_/, "")).join(', ');
+                newVals.documents = `Uploaded: ${docNames}`;
+                changeDescriptions.push(`documents (${docNames})`);
+
                 // Delete previous physical file and DB record of same type to prevent duplicates
                 for (const file of nonImageFiles) {
                     const docType = file.fieldname.replace(/^doc_/, "");
@@ -840,14 +991,30 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
 
         await transaction.commit();
 
-        // Log admin update
+        // Log admin update with diffs
+        const hasOrgChanges = Boolean(newVals.approving_manager || newVals.role || newVals.work_mode || newVals.active !== undefined);
+        
+        // Build clear, informative description
+        let description = '';
+        if (changeDescriptions.length === 0) {
+            description = `Profile reviewed and saved with no changes for employee ${user.firstname} ${user.lastname}`;
+        } else if (changeDescriptions.length <= 4) {
+            description = `Updated ${changeDescriptions.join(', ')} for employee ${user.firstname} ${user.lastname}`;
+        } else {
+            const firstFew = changeDescriptions.slice(0, 3).join(', ');
+            const remaining = changeDescriptions.length - 3;
+            description = `Updated ${firstFew} and ${remaining} more field(s) for employee ${user.firstname} ${user.lastname}`;
+        }
+
         await logActivity({
             admin_id: req.userId,
             action: "UPDATE",
-            entity: "UserOnboarding",
+            entity: hasOrgChanges ? "User" : "UserOnboarding",
             entity_id: id,
             affected_user_id: id,
-            description: `Updated extended joining profile for employee ${user.firstname} ${user.lastname}`,
+            old_values: Object.keys(oldVals).length > 0 ? oldVals : null,
+            new_values: Object.keys(newVals).length > 0 ? newVals : null,
+            description,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });

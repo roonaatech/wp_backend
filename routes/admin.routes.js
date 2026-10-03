@@ -477,6 +477,27 @@ module.exports = function (app) {
 
     /**
      * @swagger
+     * /api/admin/users/{id}/change-history:
+     *   get:
+     *     summary: Get change and audit history for a staff member
+     *     description: Retrieve all recorded profile edits, org changes, leave allocations, and who made the changes
+     *     tags: [Users]
+     *     security:
+     *       - ApiKeyAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: id
+     *         required: true
+     *         schema:
+     *           type: integer
+     *     responses:
+     *       200:
+     *         description: Staff change history retrieved successfully
+     */
+    app.get("/api/admin/users/:id/change-history", [verifyToken, authJwt.canViewUsers], controller.getStaffChangeHistory);
+
+    /**
+     * @swagger
      * /api/admin/users/{id}/reset-password:
      *   post:
      *     summary: Reset user password (Admin only)

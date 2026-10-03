@@ -412,6 +412,89 @@ exports.updateUser = async (req, res) => {
             }
         }
 
+        // Capture old vs new diff before updating
+        const changedFields = [];
+        const oldValues = {};
+        const newValues = {};
+
+        // 1. Role
+        if (updateData.role && Number(updateData.role) !== Number(targetUser.role)) {
+            const oldRoleObj = targetUserRole || (targetUser.role ? await Role.findByPk(targetUser.role) : null);
+            const newRoleObj = newRole || (updateData.role ? await Role.findByPk(updateData.role) : null);
+            const oldRoleName = oldRoleObj ? (oldRoleObj.display_name || oldRoleObj.name) : `Role #${targetUser.role}`;
+            const newRoleName = newRoleObj ? (newRoleObj.display_name || newRoleObj.name) : `Role #${updateData.role}`;
+            changedFields.push(`Role changed from "${oldRoleName}" to "${newRoleName}"`);
+            oldValues.role = oldRoleName;
+            newValues.role = newRoleName;
+        }
+
+        // 2. Reporting Manager
+        if (updateData.approving_manager_id && Number(updateData.approving_manager_id) !== Number(targetUser.approving_manager_id)) {
+            const oldMgr = targetUser.approving_manager_id ? await TblStaff.findByPk(targetUser.approving_manager_id) : null;
+            const newMgr = updateData.approving_manager_id ? await TblStaff.findByPk(updateData.approving_manager_id) : null;
+            const oldMgrName = oldMgr ? `${oldMgr.firstname} ${oldMgr.lastname}` : 'None';
+            const newMgrName = newMgr ? `${newMgr.firstname} ${newMgr.lastname}` : 'None';
+            changedFields.push(`Reporting manager changed from "${oldMgrName}" to "${newMgrName}"`);
+            oldValues.approving_manager = oldMgrName;
+            newValues.approving_manager = newMgrName;
+        }
+
+        // 3. Work Mode & Hybrid Days
+        if (updateData.work_mode && updateData.work_mode !== targetUser.work_mode) {
+            changedFields.push(`Work mode changed from "${targetUser.work_mode || 'Office'}" to "${updateData.work_mode}"`);
+            oldValues.work_mode = targetUser.work_mode || 'Office';
+            newValues.work_mode = updateData.work_mode;
+        }
+        if (updateData.work_mode === 'Hybrid') {
+            const oldDaysStr = Array.isArray(targetUser.hybrid_office_days) ? targetUser.hybrid_office_days.join(', ') : (targetUser.hybrid_office_days || 'None');
+            const newDaysStr = Array.isArray(updateData.hybrid_office_days) ? updateData.hybrid_office_days.join(', ') : (updateData.hybrid_office_days || 'None');
+            if (oldDaysStr !== newDaysStr) {
+                changedFields.push(`Hybrid office days changed from [${oldDaysStr}] to [${newDaysStr}]`);
+                oldValues.hybrid_office_days = oldDaysStr;
+                newValues.hybrid_office_days = newDaysStr;
+            }
+        }
+
+        // 4. Status (Active / Inactive)
+        if (updateData.active !== undefined && Number(updateData.active) !== Number(targetUser.active)) {
+            const oldStatus = Number(targetUser.active) === 1 ? 'Active' : 'Inactive';
+            const newStatus = Number(updateData.active) === 1 ? 'Active' : 'Inactive';
+            changedFields.push(`Account status changed from "${oldStatus}" to "${newStatus}"`);
+            oldValues.active = oldStatus;
+            newValues.active = newStatus;
+        }
+
+        // 5. Profile fields
+        if (updateData.firstname && updateData.firstname !== targetUser.firstname) {
+            changedFields.push(`First name changed from "${targetUser.firstname}" to "${updateData.firstname}"`);
+            oldValues.firstname = targetUser.firstname;
+            newValues.firstname = updateData.firstname;
+        }
+        if (updateData.lastname && updateData.lastname !== targetUser.lastname) {
+            changedFields.push(`Last name changed from "${targetUser.lastname}" to "${updateData.lastname}"`);
+            oldValues.lastname = targetUser.lastname;
+            newValues.lastname = updateData.lastname;
+        }
+        if (updateData.email && updateData.email !== targetUser.email) {
+            changedFields.push(`Email changed from "${targetUser.email}" to "${updateData.email}"`);
+            oldValues.email = targetUser.email;
+            newValues.email = updateData.email;
+        }
+        if (updateData.secondary_email !== undefined && updateData.secondary_email !== targetUser.secondary_email) {
+            changedFields.push(`Secondary email updated`);
+            oldValues.secondary_email = targetUser.secondary_email;
+            newValues.secondary_email = updateData.secondary_email;
+        }
+        if (updateData.gender && updateData.gender !== targetUser.gender) {
+            changedFields.push(`Gender changed from "${targetUser.gender}" to "${updateData.gender}"`);
+            oldValues.gender = targetUser.gender;
+            newValues.gender = updateData.gender;
+        }
+        if (password) {
+            changedFields.push(`Password reset by administrator`);
+            newValues.password_changed = true;
+        }
+
         // Only update password if provided
         if (password) {
             updateData.password = bcrypt.hashSync(password, 8);
@@ -420,6 +503,10 @@ exports.updateUser = async (req, res) => {
         // Update user
         const updatedUser = await targetUser.update(updateData);
 
+        const logDesc = changedFields.length > 0 
+            ? `Updated staff profile for ${updatedUser.firstname} ${updatedUser.lastname}: ${changedFields.join('; ')}`
+            : `Updated user account for ${updatedUser.firstname} ${updatedUser.lastname}`;
+
         // Log activity
         await logActivity({
             admin_id: req.userId,
@@ -427,7 +514,9 @@ exports.updateUser = async (req, res) => {
             entity: 'User',
             entity_id: updatedUser.staffid,
             affected_user_id: updatedUser.staffid,
-            description: `Updated user account for ${updatedUser.firstname} ${updatedUser.lastname}`,
+            description: logDesc,
+            old_values: Object.keys(oldValues).length > 0 ? oldValues : null,
+            new_values: Object.keys(newValues).length > 0 ? newValues : null,
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
@@ -3634,6 +3723,272 @@ exports.resetEmployeeDevice = async (req, res) => {
     } catch (err) {
         console.error("Error resetting employee device:", err);
         res.status(500).send({ message: err.message || "Failed to reset employee device binding." });
+    }
+};
+
+/**
+ * Get change and audit history for a specific staff member
+ * GET /api/admin/users/:id/change-history
+ */
+exports.getStaffChangeHistory = async (req, res) => {
+    const { id } = req.params;
+    const staffId = parseInt(id);
+    const { category = 'all', page = 1, limit = 50, search = '', duration = '30d', startDate = '', endDate = '' } = req.query;
+
+    try {
+        const targetUser = await TblStaff.findByPk(staffId);
+        if (!targetUser) {
+            return res.status(404).send({ message: "Staff member not found." });
+        }
+
+        // Check permission: subordinates or all
+        const currentUser = await TblStaff.findByPk(req.userId);
+        const Role = db.roles;
+        const currentUserRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
+
+        const canManageAll = currentUserRole && currentUserRole.can_manage_users === 'all';
+        const canViewAll = currentUserRole && currentUserRole.can_view_users === 'all';
+        const canViewSubordinates = currentUserRole && (currentUserRole.can_view_users === 'subordinates' || currentUserRole.can_manage_users === 'subordinates');
+
+        if (!canManageAll && !canViewAll) {
+            if (canViewSubordinates) {
+                // Must be the staff member themselves or an approving manager
+                if (staffId !== req.userId && targetUser.approving_manager_id !== req.userId) {
+                    return res.status(403).send({ message: "You only have permission to view your direct subordinates." });
+                }
+            } else {
+                return res.status(403).send({ message: "You do not have permission to view staff history." });
+            }
+        }
+
+        const Op = db.Sequelize.Op;
+        const whereClause = {
+            [Op.or]: [
+                { affected_user_id: staffId },
+                { entity: 'User', entity_id: staffId }
+            ],
+            action: {
+                [Op.notIn]: ['LOGIN', 'LOGOUT', 'BADGE_QR_CHECK_IN', 'BADGE_QR_CHECK_OUT', 'KIOSK_CHECK_IN', 'KIOSK_CHECK_OUT', 'CHECK_IN', 'CHECK_OUT', 'WFH_CHECK_IN', 'WFH_CHECK_OUT']
+            }
+        };
+
+        // Date duration filter
+        if (startDate || endDate) {
+            whereClause.createdAt = {};
+            if (startDate) whereClause.createdAt[Op.gte] = new Date(startDate + 'T00:00:00');
+            if (endDate) whereClause.createdAt[Op.lte] = new Date(endDate + 'T23:59:59');
+        } else if (duration && duration !== 'all') {
+            const now = new Date();
+            if (duration === '7d') {
+                whereClause.createdAt = { [Op.gte]: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) };
+            } else if (duration === '30d') {
+                whereClause.createdAt = { [Op.gte]: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) };
+            } else if (duration === '90d') {
+                whereClause.createdAt = { [Op.gte]: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000) };
+            } else if (duration === 'this_month') {
+                whereClause.createdAt = { [Op.gte]: new Date(now.getFullYear(), now.getMonth(), 1) };
+            } else if (duration === 'this_year') {
+                whereClause.createdAt = { [Op.gte]: new Date(now.getFullYear(), 0, 1) };
+            }
+        }
+
+        if (search && search.trim()) {
+            whereClause[Op.and] = [
+                {
+                    [Op.or]: [
+                        { description: { [Op.like]: `%${search.trim()}%` } },
+                        { action: { [Op.like]: `%${search.trim()}%` } },
+                        { entity: { [Op.like]: `%${search.trim()}%` } }
+                    ]
+                }
+            ];
+        }
+
+        const ActivityLog = db.activity_logs;
+        const rows = await ActivityLog.findAll({
+            where: whereClause,
+            include: [
+                {
+                    model: db.user,
+                    as: 'admin',
+                    attributes: ['staffid', 'firstname', 'lastname', 'email', 'role']
+                }
+            ],
+            order: [['createdAt', 'DESC']],
+            limit: 250 // reasonable maximum to categorize and paginate cleanly
+        });
+
+        // Fetch all roles for displaying changer's role title
+        const allRoles = await Role.findAll();
+        const roleMap = {};
+        allRoles.forEach(r => { roleMap[r.id] = r.display_name || r.name; });
+
+        // Map and enrich each history event
+        const enriched = rows.map(log => {
+            const raw = log.toJSON();
+            const admin = raw.admin;
+            const isSelf = raw.admin_id === staffId;
+            const adminRoleName = admin?.role ? (roleMap[admin.role] || `Role #${admin.role}`) : null;
+
+            // Determine categorized tag
+            let cat = 'profile';
+            let catLabel = 'Profile';
+            let iconType = 'profile';
+
+            const desc = (raw.description || '').toLowerCase();
+            const newVals = raw.new_values || {};
+            const oldVals = raw.old_values || {};
+            const roleChanged = Boolean(newVals.role && oldVals.role !== newVals.role);
+            const managerChanged = Boolean(newVals.approving_manager && oldVals.approving_manager !== newVals.approving_manager);
+            const workModeChanged = Boolean(newVals.work_mode && oldVals.work_mode && String(oldVals.work_mode).trim() !== String(newVals.work_mode).trim());
+            const activeChanged = Boolean(newVals.active !== undefined && oldVals.active !== undefined && newVals.active !== oldVals.active);
+
+            const hasOrgDiff = Boolean(
+                managerChanged ||
+                roleChanged ||
+                workModeChanged ||
+                activeChanged ||
+                desc.includes('reporting manager') ||
+                desc.includes('manager from') ||
+                desc.includes('role from') ||
+                desc.includes('work mode to') ||
+                desc.includes('deactivated account') ||
+                desc.includes('activated account')
+            );
+
+            if (['UserLeaveType', 'LeaveRequest', 'TimeOffRequest'].includes(raw.entity)) {
+                cat = 'leave';
+                catLabel = 'Leave & Balance';
+                iconType = 'leave';
+            } else if (hasOrgDiff) {
+                cat = 'org';
+                catLabel = 'Org Structure';
+                iconType = 'org';
+            } else if (raw.action === 'PASSWORD_RESET' || raw.action === 'PASSWORD_CHANGE') {
+                cat = 'security';
+                catLabel = 'Security & Auth';
+                iconType = 'security';
+            } else if (['AttendanceLog', 'OnDutyLog'].includes(raw.entity)) {
+                cat = 'attendance';
+                catLabel = 'Attendance & OD';
+                iconType = 'attendance';
+            } else if (['UserOnboarding', 'UserDeclaration'].includes(raw.entity)) {
+                cat = 'profile';
+                catLabel = 'Profile & Onboarding';
+                iconType = 'profile';
+            } else {
+                cat = 'profile';
+                catLabel = 'Profile & Bio';
+                iconType = 'profile';
+            }
+
+            // Friendly human readable title
+            let actionTitle = raw.action;
+            if (raw.entity === 'UserLeaveType') {
+                actionTitle = 'Leave Quotas Updated';
+            } else if (raw.entity === 'LeaveRequest') {
+                actionTitle = raw.action === 'APPROVE' ? 'Leave Request Approved' : (raw.action === 'REJECT' ? 'Leave Request Rejected' : 'Leave Request Submitted');
+            } else if (raw.entity === 'TimeOffRequest') {
+                actionTitle = raw.action === 'APPROVE' ? 'Time-Off Approved' : (raw.action === 'REJECT' ? 'Time-Off Rejected' : 'Time-Off Request Submitted');
+            } else if (raw.entity === 'OnDutyLog') {
+                actionTitle = raw.action === 'APPROVE' ? 'On-Duty Visit Approved' : (raw.action === 'REJECT' ? 'On-Duty Request Rejected' : 'On-Duty Logged');
+            } else if (raw.entity === 'AttendanceLog') {
+                actionTitle = raw.action === 'CREATE' ? 'Manual Attendance Added' : 'Attendance Log Adjusted';
+            } else if (raw.action === 'PASSWORD_RESET' || raw.action === 'PASSWORD_CHANGE') {
+                actionTitle = 'Password Reset by Admin';
+            } else if (cat === 'org') {
+                if (managerChanged || desc.includes('reporting manager') || desc.includes('manager from')) {
+                    actionTitle = 'Reporting Manager Updated';
+                } else if (roleChanged || desc.includes('role from')) {
+                    actionTitle = 'Staff Role Updated';
+                } else if (workModeChanged || desc.includes('work mode to')) {
+                    actionTitle = 'Work Mode Updated';
+                } else if (activeChanged || desc.includes('deactivated account') || desc.includes('activated account')) {
+                    actionTitle = 'Account Status Changed';
+                } else {
+                    actionTitle = 'Org Structure Updated';
+                }
+            } else if (raw.entity === 'User' && raw.action === 'CREATE') {
+                actionTitle = 'User Account Created';
+            } else if (raw.entity === 'UserOnboarding') {
+                if (desc.includes('no changes') || desc.includes('saved with no changes') || desc.includes('reviewed')) {
+                    actionTitle = 'Profile Reviewed / Saved';
+                } else if (desc.includes('activation email') || desc.includes('welcome')) {
+                    actionTitle = 'Welcome Email Sent';
+                } else if (raw.new_values && Object.keys(raw.new_values).length > 0) {
+                    actionTitle = 'Profile Details Updated';
+                } else {
+                    actionTitle = 'Joining Profile Saved';
+                }
+            } else if (raw.entity === 'UserDeclaration') {
+                actionTitle = 'Employee Declaration Signed';
+            } else {
+                actionTitle = 'Staff Profile Updated';
+            }
+
+            return {
+                id: raw.id,
+                action: raw.action,
+                actionTitle,
+                entity: raw.entity,
+                category: cat,
+                categoryLabel: catLabel,
+                iconType,
+                description: raw.description,
+                old_values: raw.old_values,
+                new_values: raw.new_values,
+                createdAt: raw.createdAt,
+                changer: {
+                    id: raw.admin_id,
+                    name: isSelf 
+                        ? `${targetUser.firstname} ${targetUser.lastname} (Self)` 
+                        : (admin ? `${admin.firstname} ${admin.lastname}` : `Admin #${raw.admin_id}`),
+                    email: admin?.email || null,
+                    role: isSelf ? 'Employee (Self)' : (adminRoleName || 'Administrator'),
+                    isSelf
+                }
+            };
+        });
+
+        // Compute counts across all categories
+        const counts = {
+            all: enriched.length,
+            leave: enriched.filter(e => e.category === 'leave').length,
+            org: enriched.filter(e => e.category === 'org').length,
+            profile: enriched.filter(e => e.category === 'profile' || e.category === 'security').length,
+            attendance: enriched.filter(e => e.category === 'attendance').length
+        };
+
+        // Filter by category if requested
+        let filtered = enriched;
+        if (category === 'leave') {
+            filtered = enriched.filter(e => e.category === 'leave');
+        } else if (category === 'org') {
+            filtered = enriched.filter(e => e.category === 'org');
+        } else if (category === 'profile') {
+            filtered = enriched.filter(e => e.category === 'profile' || e.category === 'security');
+        } else if (category === 'attendance') {
+            filtered = enriched.filter(e => e.category === 'attendance');
+        }
+
+        const pageSize = parseInt(limit);
+        const currentPage = parseInt(page);
+        const startIndex = (currentPage - 1) * pageSize;
+        const pagedItems = filtered.slice(startIndex, startIndex + pageSize);
+
+        res.status(200).send({
+            success: true,
+            counts,
+            total: filtered.length,
+            page: currentPage,
+            limit: pageSize,
+            totalPages: Math.ceil(filtered.length / pageSize),
+            history: pagedItems
+        });
+
+    } catch (err) {
+        console.error("Error in getStaffChangeHistory:", err);
+        res.status(500).send({ message: err.message || "Failed to retrieve staff change history." });
     }
 };
 

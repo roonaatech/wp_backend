@@ -167,13 +167,32 @@ exports.updateUserLeaveTypes = async (req, res) => {
                 await record.update({ days_allowed: update.days_allowed });
             }
         }
+        const allLeaveTypes = await LeaveType.findAll({ attributes: ['id', 'name'] });
+        const ltNameMap = {};
+        allLeaveTypes.forEach(lt => { ltNameMap[lt.id] = lt.name; });
+
+        const oldAllocations = currentAssignments.map(ult => ({
+            leave_type_id: ult.leave_type_id,
+            name: ltNameMap[ult.leave_type_id] || `Type #${ult.leave_type_id}`,
+            days_allowed: ult.days_allowed
+        }));
+
+        const newAllocations = updates.map(u => ({
+            leave_type_id: u.leave_type_id,
+            name: ltNameMap[u.leave_type_id] || `Type #${u.leave_type_id}`,
+            days_allowed: u.days_allowed
+        }));
+
+        const diffSummary = newAllocations.map(na => `${na.name}: ${na.days_allowed}d`).join(', ');
+
         await logActivity({
             admin_id: req.userId,
             action: 'UPDATE',
             entity: 'UserLeaveType',
             affected_user_id: parseInt(userId),
-            description: `Updated assigned leave types and quotas for employee ID ${userId} (${targetUser.firstname} ${targetUser.lastname})`,
-            new_values: { updated_allocations: updates },
+            description: `Updated assigned leave quotas for ${targetUser.firstname} ${targetUser.lastname} (${diffSummary})`,
+            old_values: { allocations: oldAllocations },
+            new_values: { allocations: newAllocations },
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
