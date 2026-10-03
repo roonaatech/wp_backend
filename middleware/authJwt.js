@@ -481,6 +481,31 @@ const canViewUsers = async (req, res, next) => {
     }
 };
 
+const canViewChangeHistory = async (req, res, next) => {
+    try {
+        const role = await getRoleForRequest(req);
+        if (!role) {
+            return res.status(403).send({ message: "User or Role not found or account is inactive." });
+        }
+
+        const perm = role.can_view_change_history;
+        if (perm === 'all' || perm === 'subordinates') {
+            req.changeHistoryPermission = perm;
+            next();
+            return;
+        }
+
+        res.status(403).send({
+            message: "You don't have permission to view staff change history!"
+        });
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).send({
+            message: "Unable to validate User role!"
+        });
+    }
+};
+
 const canViewReports = async (req, res, next) => {
     try {
         const role = await getRoleForRequest(req);
@@ -832,6 +857,7 @@ const authJwt = {
     canManageOnboarding: canManageOnboarding,
     canManageManualAttendance: canManageManualAttendance,
     canViewUsers: canViewUsers,
+    canViewChangeHistory: canViewChangeHistory,
     canViewReports: canViewReports,
     canManageActiveOnDuty: canManageActiveOnDuty,
     canManageSchedule: canManageSchedule,

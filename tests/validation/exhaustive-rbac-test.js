@@ -17,6 +17,7 @@ const PERMISSIONS = [
     { field: 'can_approve_timeoff', display: 'Approve Time-Off Requests', type: 'hierarchical' },
     { field: 'can_manage_users', display: 'Manage Users', type: 'hierarchical' },
     { field: 'can_view_users', display: 'View Users (Read Only)', type: 'hierarchical' },
+    { field: 'can_view_change_history', display: 'View Staff Change History', type: 'hierarchical' },
     { field: 'can_view_reports', display: 'View Reports', type: 'hierarchical' },
     { field: 'can_manage_active_onduty', display: 'View Active On-Duty', type: 'hierarchical' },
     { field: 'can_manage_schedule', display: 'View Schedule', type: 'hierarchical' },
@@ -64,6 +65,8 @@ function getExpectedAccess(role, endpoint) {
         } else if (mw === 'authJwt.canViewUsers') {
             if ((role.can_view_users !== 'all' && role.can_view_users !== 'subordinates') &&
                 (role.can_manage_users !== 'all' && role.can_manage_users !== 'subordinates')) return 'DENIED';
+        } else if (mw === 'authJwt.canViewChangeHistory') {
+            if (role.can_view_change_history !== 'all' && role.can_view_change_history !== 'subordinates') return 'DENIED';
         } else if (mw === 'authJwt.canViewReports') {
             if (role.can_view_reports !== 'all' && role.can_view_reports !== 'subordinates') return 'DENIED';
         } else if (mw === 'authJwt.canManageSchedule') {
@@ -203,12 +206,13 @@ async function runExhaustiveTest() {
                 process.stdout.write(' Done\n');
             }
 
-            // Purge the clone
+            // Reassign tempUser to role 1 before destroying tempRole
+            await tempUser.update({ role: 1 });
             await tempRole.destroy();
         }
     } finally {
         // Purge the tester
-        await tempUser.destroy();
+        if (tempUser) await tempUser.destroy();
     }
 
     // 5. Build Comprehensive CSV

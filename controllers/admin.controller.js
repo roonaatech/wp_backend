@@ -3857,11 +3857,12 @@ exports.getStaffChangeHistory = async (req, res) => {
         const Role = db.roles;
         const currentUserRole = currentUser?.role ? await Role.findByPk(currentUser.role) : null;
 
-        const canManageAll = currentUserRole && currentUserRole.can_manage_users === 'all';
-        const canViewAll = currentUserRole && currentUserRole.can_view_users === 'all';
-        const canViewSubordinates = currentUserRole && (currentUserRole.can_view_users === 'subordinates' || currentUserRole.can_manage_users === 'subordinates');
+        const perm = currentUserRole?.can_view_change_history;
 
-        if (!canManageAll && !canViewAll) {
+        const canViewAll = perm === 'all';
+        const canViewSubordinates = perm === 'subordinates';
+
+        if (!canViewAll) {
             if (canViewSubordinates) {
                 // Must be the staff member themselves or an approving manager
                 if (staffId !== req.userId && targetUser.approving_manager_id !== req.userId) {

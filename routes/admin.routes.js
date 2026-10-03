@@ -494,7 +494,7 @@ module.exports = function (app) {
      *       200:
      *         description: Staff change history retrieved successfully
      */
-    app.get("/api/admin/users/:id/change-history", [verifyToken, authJwt.canViewUsers], controller.getStaffChangeHistory);
+    app.get("/api/admin/users/:id/change-history", [verifyToken, authJwt.canViewChangeHistory], controller.getStaffChangeHistory);
 
     /**
      * @swagger

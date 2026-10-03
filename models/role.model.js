@@ -54,6 +54,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: 'none',
             comment: 'View only access to users - none=no access, subordinates=only subordinates, all=everyone'
         },
+        can_view_change_history: {
+            type: Sequelize.ENUM('none', 'subordinates', 'all'),
+            allowNull: false,
+            defaultValue: 'none',
+            comment: 'View staff change history - none=no access, subordinates=only subordinates, all=everyone'
+        },
         can_view_reports: {
             type: Sequelize.ENUM('none', 'subordinates', 'all'),
             allowNull: false,
