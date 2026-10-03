@@ -1839,6 +1839,7 @@ exports.getMonthlySummary = async (req, res) => {
                     firstname: userData?.firstname || 'Unknown',
                     lastname: userData?.lastname || '',
                     email: userData?.email || '',
+                    datecreated: userData?.datecreated || null,
                     present_days: 0,
                     work_minutes: 0,
                     leave_days: 0,
@@ -1861,7 +1862,7 @@ exports.getMonthlySummary = async (req, res) => {
         }
         const activeStaffList = await Staff.findAll({
             where: baseStaffWhere,
-            attributes: ['staffid', 'firstname', 'lastname', 'email']
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'datecreated']
         });
         activeStaffList.forEach(st => ensureStaff(st.staffid, st));
 
@@ -2090,7 +2091,7 @@ exports.getMonthlySummary = async (req, res) => {
         });
 
         const { getAttendanceConfig } = require('../utils/attendanceConfig');
-        const { calculateMonthlyCompliance } = require('../utils/salaryCompliance.util');
+        const { calculateMonthlyCompliance, getWeekday } = require('../utils/salaryCompliance.util');
         const { getActiveHolidaysMap } = require('../utils/holiday.helper');
         const attConfig = await getAttendanceConfig();
 
@@ -2103,6 +2104,36 @@ exports.getMonthlySummary = async (req, res) => {
                 holiday_name: name
             });
         });
+
+        // Determine date range for absence calculation (working days till current date)
+        const todayStr = getDateInTimezone(new Date(), reportTz);
+        const isPastOrCurrent = startDate <= todayStr;
+        const effectiveCutoff = endDate < todayStr ? endDate : todayStr;
+
+        // Generate working dates in range [startDate, effectiveCutoff] (excluding Sundays and Company Holidays)
+        const workingDatesTillToday = [];
+        if (isPastOrCurrent) {
+            const startParts = startDate.split('-').map(Number);
+            const endParts = effectiveCutoff.split('-').map(Number);
+            const startD = new Date(startParts[0], startParts[1] - 1, startParts[2]);
+            const endD = new Date(endParts[0], endParts[1] - 1, endParts[2]);
+
+            for (let curr = new Date(startD); curr <= endD; curr.setDate(curr.getDate() + 1)) {
+                if (curr.getDay() === 0) continue; // Skip Sunday (standard weekly off)
+
+                const yyyy = curr.getFullYear();
+                const mm = String(curr.getMonth() + 1).padStart(2, '0');
+                const dd = String(curr.getDate()).padStart(2, '0');
+                const dStr = `${yyyy}-${mm}-${dd}`;
+
+                if (holidaysMap.has(dStr)) continue; // Skip Company Holiday
+
+                workingDatesTillToday.push({
+                    date: dStr,
+                    weekday: getWeekday(dStr)
+                });
+            }
+        }
 
         // Convert to array and format hours
         const summary = Object.values(staffMap).map(s => {
@@ -2133,6 +2164,59 @@ exports.getMonthlySummary = async (req, res) => {
                 year: y
             });
 
+            // Calculate Absent Days till current date
+            const joinDateStr = s.datecreated ? getDateInTimezone(s.datecreated, reportTz) : null;
+            const absentDatesList = [];
+            let totalAbsentDays = 0;
+
+            workingDatesTillToday.forEach(wd => {
+                const dStr = wd.date;
+                // If employee joined after this date, skip
+                if (joinDateStr && dStr < joinDateStr) {
+                    return;
+                }
+
+                const isPresent = s.attendance_dates && s.attendance_dates.has(dStr);
+                const isOnDuty = (s.onduty_records || []).some(od => od.date === dStr);
+                const isTimeOff = (s.timeoff_records || []).some(to => to.date === dStr);
+                const leaveEntries = (s.leave_days_list || []).filter(lv => lv.date === dStr);
+                const leaveDays = leaveEntries.reduce((sum, lv) => sum + (lv.days || 1), 0);
+
+                if (isPresent || isOnDuty) {
+                    return;
+                }
+                if (leaveDays >= 1.0) {
+                    return;
+                }
+                if (leaveDays > 0) {
+                    const unexcused = Math.max(0, 1.0 - leaveDays);
+                    if (unexcused > 0) {
+                        totalAbsentDays += unexcused;
+                        absentDatesList.push({
+                            date: dStr,
+                            weekday: wd.weekday,
+                            days: unexcused,
+                            detail: `Half-day absence (${leaveDays}d leave, no attendance logged)`
+                        });
+                    }
+                    return;
+                }
+                if (isTimeOff) {
+                    return;
+                }
+
+                // Full-day unexcused absence
+                totalAbsentDays += 1.0;
+                absentDatesList.push({
+                    date: dStr,
+                    weekday: wd.weekday,
+                    days: 1.0,
+                    detail: 'Absent (No check-in or approved leave logged)'
+                });
+            });
+
+            totalAbsentDays = Math.round(totalAbsentDays * 10) / 10;
+
             // Build records list for the employee with a single grouped Attendance row at the top
             const recordsList = [...s.records];
 
@@ -2145,6 +2229,29 @@ exports.getMonthlySummary = async (req, res) => {
                     detail: h.holiday_name
                 });
             });
+
+            // Add absent days to daily_breakdown (Tab 1: Salary Consideration Breakdown)
+            absentDatesList.forEach(ab => {
+                compliance.daily_breakdown.push({
+                    date: ab.date,
+                    weekday: ab.weekday,
+                    type: 'Absent',
+                    attendance_minutes: 0,
+                    onduty_minutes: 0,
+                    timeoff_requested_minutes: 0,
+                    timeoff_credited_minutes: 0,
+                    timeoff_excess_minutes: 0,
+                    effective_work_minutes: 0,
+                    leave_days: 0,
+                    leave_credited: 0,
+                    leave_excess: 0,
+                    is_compliant: false,
+                    compliant_day_value: 0.0,
+                    status_label: 'Non-Compliant',
+                    remarks: ab.detail
+                });
+            });
+            compliance.daily_breakdown.sort((a, b) => a.date.localeCompare(b.date));
 
             if (s.attendance_records.length > 0) {
                 const attDates = Array.from(s.attendance_dates).sort();
@@ -2188,6 +2295,8 @@ exports.getMonthlySummary = async (req, res) => {
                 lastname: s.lastname,
                 email: s.email,
                 present_days: presentDays,
+                absent_days: totalAbsentDays,
+                absent_dates: absentDatesList,
                 work_hours: parseFloat((s.work_minutes / 60).toFixed(1)),
                 work_minutes: s.work_minutes,
                 leave_days: s.leave_days,
@@ -2198,7 +2307,7 @@ exports.getMonthlySummary = async (req, res) => {
                 holidays_count: holidaysList.length,
                 holidays: holidaysList,
                 compliant_days: compliance.compliant_days,
-                non_compliant_days: compliance.non_compliant_days,
+                non_compliant_days: Math.round((compliance.non_compliant_days + totalAbsentDays) * 10) / 10,
                 quota_summary: compliance.quota_summary,
                 daily_breakdown: compliance.daily_breakdown,
                 attendance_records: s.attendance_records,
@@ -2213,6 +2322,8 @@ exports.getMonthlySummary = async (req, res) => {
             month: m,
             year: y,
             period: `${startDate} to ${endDate}`,
+            evaluated_till: effectiveCutoff,
+            today: todayStr,
             compliance_hours: attConfig.complianceHours,
             allowed_leave_per_month: attConfig.allowedLeavePerMonth,
             allowed_time_off_per_month: attConfig.allowedTimeOffPerMonth,
