@@ -633,6 +633,7 @@ exports.getAllUsers = async (req, res) => {
         const role = req.query.role || ''; // Comma-separated role ids
         const userType = req.query.userType || ''; // 'workpulse' or 'external'
         const manager = req.query.manager || ''; // Selected manager id
+        const workMode = req.query.work_mode || req.query.workMode || '';
 
         // Build where clause using AND conditions
         const andConditions = [];
@@ -695,6 +696,30 @@ exports.getAllUsers = async (req, res) => {
             if (managerIds.length > 0) {
                 andConditions.push({
                     approving_manager_id: { [Op.in]: managerIds }
+                });
+            }
+        }
+
+        // Work Mode constraint
+        if (workMode) {
+            const modes = workMode.split(',').map(m => m.trim()).filter(Boolean);
+            if (modes.length > 0) {
+                const modeConditions = [];
+                modes.forEach(m => {
+                    if (m.toLowerCase() === 'office') {
+                        modeConditions.push({ work_mode: 'Office' });
+                        modeConditions.push({ work_mode: 'Regular' });
+                        modeConditions.push({ work_mode: null });
+                    } else if (m.toLowerCase() === 'work from home' || m.toLowerCase() === 'wfh') {
+                        modeConditions.push({ work_mode: 'Work from home' });
+                    } else if (m.toLowerCase() === 'hybrid') {
+                        modeConditions.push({ work_mode: 'Hybrid' });
+                    } else {
+                        modeConditions.push({ work_mode: m });
+                    }
+                });
+                andConditions.push({
+                    [Op.or]: modeConditions
                 });
             }
         }
@@ -3114,7 +3139,13 @@ exports.getUserAttendanceHistory = async (req, res) => {
         // Today (in app timezone) so the frontend does not flag future days as absent
         const todayStr = getDateInTimezone(new Date(), calTz);
 
-        res.send({ present, excused: Array.from(excusedSet), holidays, today: todayStr });
+        res.send({ 
+            present, 
+            excused: Array.from(excusedSet), 
+            holidays, 
+            holidaysMap: Object.fromEntries(holidaysMap), 
+            today: todayStr 
+        });
     } catch (error) {
         console.error('Error fetching attendance history:', error);
         res.status(500).send({ message: "Error fetching attendance history." });
