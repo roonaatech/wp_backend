@@ -3563,7 +3563,7 @@ exports.getAllServiceAccounts = async (req, res) => {
 };
 
 exports.createServiceAccount = async (req, res) => {
-    const { name, email, password, role_id } = req.body;
+    const { name, email, password, role_id, context_path } = req.body;
 
     if (!name || !email || !password || !role_id) {
         return res.status(400).send({
@@ -3588,13 +3588,23 @@ exports.createServiceAccount = async (req, res) => {
             return res.status(400).send({ message: "Invalid role specified." });
         }
 
+        // Format context_path if provided
+        let formattedContextPath = null;
+        if (typeof context_path === 'string' && context_path.trim()) {
+            formattedContextPath = context_path.trim();
+            if (!formattedContextPath.startsWith('/')) {
+                formattedContextPath = '/' + formattedContextPath;
+            }
+        }
+
         const hashed = bcrypt.hashSync(password, 8);
         const newSA = await db.service_accounts.create({
             name: name.trim(),
             email: username,
             password: hashed,
             role_id,
-            active: true
+            active: true,
+            context_path: formattedContextPath
         });
 
         // Log activity
@@ -3620,7 +3630,7 @@ exports.createServiceAccount = async (req, res) => {
 
 exports.updateServiceAccount = async (req, res) => {
     const { id } = req.params;
-    const { name, email, password, role_id, active } = req.body;
+    const { name, email, password, role_id, active, context_path } = req.body;
 
     try {
         const sa = await db.service_accounts.findByPk(id);
@@ -3654,6 +3664,17 @@ exports.updateServiceAccount = async (req, res) => {
         }
         if (active !== undefined) {
             sa.active = active;
+        }
+        if (context_path !== undefined) {
+            if (context_path === null || (typeof context_path === 'string' && !context_path.trim())) {
+                sa.context_path = null;
+            } else if (typeof context_path === 'string') {
+                let formattedContextPath = context_path.trim();
+                if (!formattedContextPath.startsWith('/')) {
+                    formattedContextPath = '/' + formattedContextPath;
+                }
+                sa.context_path = formattedContextPath;
+            }
         }
 
         await sa.save();

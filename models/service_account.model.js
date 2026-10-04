@@ -35,6 +35,11 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.DATE,
             allowNull: true,
             defaultValue: null
+        },
+        context_path: {
+            type: Sequelize.STRING(255),
+            allowNull: true,
+            defaultValue: null
         }
     }, {
         tableName: 'service_accounts',

@@ -404,6 +404,7 @@ exports.signin = async (req, res) => {
             isTemporaryPassword,
             mustCompleteDeclaration,
             isServiceAccount,
+            context_path: isServiceAccount ? (user.context_path || null) : null,
             accessToken: token
         });
     } catch (err) {
