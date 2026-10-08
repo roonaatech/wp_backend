@@ -2344,6 +2344,7 @@ exports.getMonthlySummary = async (req, res) => {
 
 exports.getDashboardStats = async (req, res) => {
     const { Op } = require("sequelize");
+    const AttendanceLog = db.attendance_logs;
     const OnDutyLog = db.on_duty_logs;
     const LeaveRequest = db.leave_requests;
     const TimeOffRequest = db.time_off_requests;
@@ -2382,10 +2383,8 @@ exports.getDashboardStats = async (req, res) => {
 
         // Build staff filter for non-admin users
         let staffFilter = {};
-        let staffFilterWithReportees = {};
         if (!canViewAllReports) {
             staffFilter = { staff_id: { [Op.in]: reporteeIds } };
-            staffFilterWithReportees = { approving_manager_id: req.userId };
         }
 
         const results = await Promise.all([
@@ -2408,30 +2407,34 @@ exports.getDashboardStats = async (req, res) => {
                     ...(canViewAllReports ? {} : { approving_manager_id: req.userId })
                 }
             }),
-            // Present today (distinct staff with check_in on on-duty logs)
-            OnDutyLog.findAll({
+            // Distinct staff attendance from AttendanceLog today
+            AttendanceLog.findAll({
                 attributes: [
                     [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
                 ],
                 where: {
-                    start_time: { [Op.gte]: today },
-                    end_time: { [Op.ne]: null },
+                    [Op.or]: [
+                        { date: todayDateOnly },
+                        { check_in_time: { [Op.gte]: today } }
+                    ],
                     ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 },
                 raw: true
-            }).then(result => result[0]?.distinct_staff || 0),
-            // Present yesterday (distinct staff with check_in on on-duty logs)
-            OnDutyLog.findAll({
+            }).then(result => parseInt(result[0]?.distinct_staff) || 0),
+            // Distinct staff attendance from AttendanceLog yesterday
+            AttendanceLog.findAll({
                 attributes: [
                     [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
                 ],
                 where: {
-                    start_time: { [Op.gte]: yesterday, [Op.lt]: today },
-                    end_time: { [Op.ne]: null },
+                    [Op.or]: [
+                        { date: yesterdayDateOnly },
+                        { check_in_time: { [Op.gte]: yesterday, [Op.lt]: today } }
+                    ],
                     ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 },
                 raw: true
-            }).then(result => result[0]?.distinct_staff || 0),
+            }).then(result => parseInt(result[0]?.distinct_staff) || 0),
             // On duty count
             OnDutyLog.count({
                 where: {
@@ -2510,28 +2513,38 @@ exports.getDashboardStats = async (req, res) => {
                     status: 'Rejected',
                     ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
                 }
+            }),
+            // Active attendance sessions currently clocked in without check-out
+            AttendanceLog.count({
+                where: {
+                    [Op.or]: [
+                        { date: todayDateOnly },
+                        { check_in_time: { [Op.gte]: today } }
+                    ],
+                    check_out_time: null,
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                }
+            }),
+            // Completed attendance sessions today
+            AttendanceLog.count({
+                where: {
+                    [Op.or]: [
+                        { date: todayDateOnly },
+                        { check_in_time: { [Op.gte]: today } }
+                    ],
+                    check_out_time: { [Op.ne]: null },
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                }
             })
         ]);
 
-        const [totalUsers, newUsersToday, newUsersYesterday, presentToday, presentYesterday, onDuty, pendingLeaves, approvedLeaves, rejectedLeaves, pendingOnDuty, approvedOnDuty, rejectedOnDuty, activeOnDuty, pendingTimeOff, approvedTimeOff, rejectedTimeOff] = results;
-
-        // Calculate new users trend
-        let usersTrend = 0;
-        if (newUsersYesterday > 0) {
-            usersTrend = Math.round(((newUsersToday - newUsersYesterday) / newUsersYesterday) * 100);
-        } else if (newUsersToday > 0) {
-            usersTrend = 100; // If yesterday was 0 and today is > 0, it's a 100% increase
-        }
-
-        // Calculate attendance trend percentage
-        let presentTrend = 0;
-        if (presentYesterday > 0) {
-            presentTrend = Math.round(((presentToday - presentYesterday) / presentYesterday) * 100);
-        } else if (presentToday > 0) {
-            presentTrend = 100; // If yesterday was 0 and today is > 0, it's a 100% increase
-        }
-
-        console.log('Dashboard Stats:', {
+        const [
+            totalUsers,
+            newUsersToday,
+            newUsersYesterday,
+            presentToday,
+            presentYesterday,
+            onDuty,
             pendingLeaves,
             approvedLeaves,
             rejectedLeaves,
@@ -2541,13 +2554,145 @@ exports.getDashboardStats = async (req, res) => {
             activeOnDuty,
             pendingTimeOff,
             approvedTimeOff,
-            rejectedTimeOff
+            rejectedTimeOff,
+            activeSessions,
+            completedSessions
+        ] = results;
+
+        // Calculate new users trend
+        let usersTrend = 0;
+        if (newUsersYesterday > 0) {
+            usersTrend = Math.round(((newUsersToday - newUsersYesterday) / newUsersYesterday) * 100);
+        } else if (newUsersToday > 0) {
+            usersTrend = 100;
+        }
+
+        // Calculate attendance trend percentage
+        let presentTrend = 0;
+        if (presentYesterday > 0) {
+            presentTrend = Math.round(((presentToday - presentYesterday) / presentYesterday) * 100);
+        } else if (presentToday > 0) {
+            presentTrend = 100;
+        }
+
+        // Fetch detailed workforce distributions for HR and Leadership
+        const userStaffFilter = canViewAllReports ? {} : { staffid: { [Op.in]: reporteeIds } };
+        const staffList = await TblStaff.findAll({
+            where: userStaffFilter,
+            attributes: ['staffid', 'role', 'active', 'gender', 'work_mode', 'face_descriptor'],
+            raw: true
         });
 
+        const allRoles = await Role.findAll({ attributes: ['id', 'name', 'display_name'], raw: true });
+        const roleMap = {};
+        allRoles.forEach(r => { roleMap[r.id] = r.display_name || r.name; });
+
+        let activeStaff = 0;
+        let inactiveStaff = 0;
+        let registeredFaceCount = 0;
+        const workModes = { Office: 0, 'Work from home': 0, Hybrid: 0 };
+        const genderDist = { Male: 0, Female: 0, Other: 0, Unassigned: 0 };
+        const roleDistMap = {};
+
+        staffList.forEach(u => {
+            if (u.active === 1) activeStaff++;
+            else inactiveStaff++;
+
+            const wm = u.work_mode || 'Office';
+            workModes[wm] = (workModes[wm] || 0) + 1;
+
+            if (u.gender === 'Male') genderDist.Male++;
+            else if (u.gender === 'Female') genderDist.Female++;
+            else if (u.gender === 'Transgender') genderDist.Other++;
+            else genderDist.Unassigned++;
+
+            if (u.face_descriptor) registeredFaceCount++;
+
+            const rName = roleMap[u.role] || (u.role ? `Role #${u.role}` : 'Unassigned');
+            roleDistMap[rName] = (roleDistMap[rName] || 0) + 1;
+        });
+
+        // Onboarding Pipeline metrics
+        const onboardingProfiles = await db.employee_profiles.findAll({
+            attributes: ['onboarding_status'],
+            raw: true
+        });
+        const onboardingPipeline = {
+            Completed: 0,
+            Pending_Candidate: 0,
+            Pending_HR_Approval: 0,
+            Total: onboardingProfiles.length
+        };
+        onboardingProfiles.forEach(p => {
+            const s = p.onboarding_status || 'Completed';
+            onboardingPipeline[s] = (onboardingPipeline[s] || 0) + 1;
+        });
+
+        // Leave type breakdown
+        const leaveTypeCounts = await LeaveRequest.findAll({
+            attributes: ['leave_type', [db.sequelize.fn('COUNT', db.sequelize.col('id')), 'count']],
+            where: {
+                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+            },
+            group: ['leave_type'],
+            raw: true
+        });
+
+        // Punch sources breakdown
+        const punchSourceCounts = await AttendanceLog.findAll({
+            attributes: ['punch_source', [db.sequelize.fn('COUNT', db.sequelize.col('id')), 'count']],
+            where: {
+                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+            },
+            group: ['punch_source'],
+            raw: true
+        });
+
+        // Upcoming Holidays (active holidays from today onward)
+        const upcomingHolidays = await db.holidays.findAll({
+            where: {
+                status: 1,
+                holiday_date: { [Op.gte]: todayDateOnly }
+            },
+            order: [['holiday_date', 'ASC']],
+            limit: 4,
+            raw: true
+        });
+
+        // Recent punch activity feed (latest 6 records)
+        const recentLogs = await AttendanceLog.findAll({
+            where: {
+                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+            },
+            order: [['id', 'DESC']],
+            limit: 6,
+            raw: true
+        });
+        const recentStaffIds = [...new Set(recentLogs.map(l => l.staff_id))];
+        const recentStaff = await TblStaff.findAll({
+            where: { staffid: recentStaffIds },
+            attributes: ['staffid', 'firstname', 'lastname'],
+            raw: true
+        });
+        const nameMap = {};
+        recentStaff.forEach(s => { nameMap[s.staffid] = `${s.firstname} ${s.lastname}`.trim(); });
+        const recentActivity = recentLogs.map(l => ({
+            id: l.id,
+            staff_id: l.staff_id,
+            name: nameMap[l.staff_id] || `Staff #${l.staff_id}`,
+            date: l.date,
+            check_in_time: l.check_in_time,
+            check_out_time: l.check_out_time,
+            punch_source: l.punch_source,
+            phone_model: l.phone_model
+        }));
+
         res.send({
+            // Legacy / backward compatible fields
             totalUsers,
             usersTrend,
             presentToday,
+            presentYesterday,
             presentTrend,
             onDuty,
             pendingLeaves,
@@ -2559,7 +2704,36 @@ exports.getDashboardStats = async (req, res) => {
             activeOnDuty,
             pendingTimeOff,
             approvedTimeOff,
-            rejectedTimeOff
+            rejectedTimeOff,
+            pending_leave_requests: pendingLeaves,
+
+            // New enriched People Management & Workforce Metrics for HR & Leadership
+            workforce: {
+                totalHeadcount: totalUsers,
+                activeStaff,
+                inactiveStaff,
+                todayAttendance: presentToday,
+                attendanceRate: activeStaff > 0 ? Math.min(100, Math.round((presentToday / activeStaff) * 100)) : 0,
+                activeSessions,
+                completedSessions,
+                workModes,
+                genderDistribution: genderDist,
+                faceRegistration: {
+                    registered: registeredFaceCount,
+                    pending: Math.max(0, staffList.length - registeredFaceCount),
+                    rate: staffList.length > 0 ? Math.round((registeredFaceCount / staffList.length) * 100) : 0
+                },
+                onboardingPipeline,
+                roleDistribution: Object.entries(roleDistMap).map(([role, count]) => ({ role, count })),
+                punchSources: punchSourceCounts.map(p => ({ source: p.punch_source, count: parseInt(p.count) || 0 })),
+                leaveTypes: leaveTypeCounts.map(l => ({ type: l.leave_type, count: parseInt(l.count) || 0 })),
+                recentActivity,
+                upcomingHolidays: upcomingHolidays.map(h => ({
+                    date: h.holiday_date,
+                    name: h.holiday_name,
+                    status: h.status
+                }))
+            }
         });
     } catch (err) {
         res.status(500).send({
@@ -2570,6 +2744,7 @@ exports.getDashboardStats = async (req, res) => {
 
 exports.getDailyTrendData = async (req, res) => {
     const { Op } = require("sequelize");
+    const AttendanceLog = db.attendance_logs;
     const LeaveRequest = db.leave_requests;
     const OnDutyLog = db.on_duty_logs;
     const Staff = db.user;
@@ -2629,6 +2804,18 @@ exports.getDailyTrendData = async (req, res) => {
             const y = String(current.getFullYear()).slice(-2);
             const displayDateStr = `${d}/${m}/${y}`;
 
+            // Count distinct staff attendance check-ins on this day
+            const attendanceCount = await AttendanceLog.findAll({
+                attributes: [
+                    [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
+                ],
+                where: {
+                    date: dateStrISO,
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                },
+                raw: true
+            }).then(result => parseInt(result[0]?.distinct_staff) || 0);
+
             // Count approved leaves on this day
             const approvedLeavesCount = await LeaveRequest.count({
                 where: {
@@ -2667,6 +2854,8 @@ exports.getDailyTrendData = async (req, res) => {
 
             trendData.push({
                 day: displayDateStr,
+                isoDate: dateStrISO,
+                attendance: attendanceCount,
                 leaves: approvedLeavesCount,
                 onDuty: approvedOnDutyCount,
                 timeOff: approvedTimeOffCount,
@@ -2676,7 +2865,6 @@ exports.getDailyTrendData = async (req, res) => {
             current.setDate(current.getDate() + 1);
         }
 
-        console.log(`Daily trend data for ${days} days:`, trendData);
         res.send(trendData);
     } catch (error) {
         console.error('Error fetching daily trend data:', error);
