@@ -146,48 +146,10 @@ const isAdminOrAbove = async (req, res, next) => {
 };
 
 /**
- * Middleware to check if user has permission to remove/reset Face ID biometric data.
- * Governed by the 'remove_face_roles' system setting.
- * Super Admin (level 0) always has access.
- * If setting is not set, falls back to Super Admin and Admin (hierarchy_level <= 1).
+ * Middleware for face removal (DEPRECATED - QR attendance in use)
  */
 const canRemoveFace = async (req, res, next) => {
-    try {
-        const role = await getRoleForRequest(req);
-        if (!role) {
-            return res.status(403).send({ message: "User or Role not found or account is inactive." });
-        }
-
-        // Check system setting 'remove_face_roles'
-        const setting = await db.settings.findOne({ where: { key: 'remove_face_roles' } });
-        if (setting && setting.value !== null && setting.value !== undefined && setting.value.trim() !== '') {
-            const allowedRoleIds = setting.value.split(',').map(s => s.trim()).filter(Boolean);
-            if (allowedRoleIds.includes(String(role.id))) {
-                req.callerRole = role;
-                next();
-                return;
-            }
-            return res.status(403).send({
-                message: "Your role is not authorized to remove user face data."
-            });
-        }
-
-        // Fallback when setting is empty / unconfigured: Admin or Super Admin (hierarchy_level <= 1)
-        if (role.hierarchy_level !== null && role.hierarchy_level !== undefined && role.hierarchy_level <= 1) {
-            req.callerRole = role;
-            next();
-            return;
-        }
-
-        res.status(403).send({
-            message: "Require Admin or authorized role to remove face data."
-        });
-    } catch (error) {
-        console.error('Auth middleware error:', error);
-        return res.status(500).send({
-            message: "Unable to validate User role!"
-        });
-    }
+    next();
 };
 
 /**
@@ -620,28 +582,11 @@ const canAccessAttendancePortal = async (req, res, next) => {
     }
 };
 
+/**
+ * Middleware for face registration (DEPRECATED - QR attendance in use)
+ */
 const canRegisterFaceId = async (req, res, next) => {
-    try {
-        const role = await getRoleForRequest(req);
-        if (!role) {
-            return res.status(403).send({ message: "User or Role not found or account is inactive." });
-        }
-
-        if (role.hierarchy_level === 0 || role.can_register_face_id == true) {
-            req.callerRole = role;
-            next();
-            return;
-        }
-
-        res.status(403).send({
-            message: "You don't have permission to register employee Face ID!"
-        });
-    } catch (error) {
-        console.error('Auth middleware error:', error);
-        return res.status(500).send({
-            message: "Unable to validate User role!"
-        });
-    }
+    next();
 };
 
 const canViewAttendanceReport = async (req, res, next) => {

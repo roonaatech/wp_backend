@@ -503,6 +503,21 @@ exports.updateUser = async (req, res) => {
         // Update user
         const updatedUser = await targetUser.update(updateData);
 
+        // If the user's onboarding was pending HR approval and role is now assigned, complete onboarding status
+        if (updateData.role && updateData.approving_manager_id) {
+            try {
+                const EmployeeProfile = db.employee_profiles;
+                const profile = await EmployeeProfile.findOne({ where: { staff_id: targetUser.staffid } });
+                if (profile && (profile.onboarding_status === 'Pending_HR_Approval' || profile.onboarding_status === 'Pending_Candidate')) {
+                    if (profile.consent_given) {
+                        await profile.update({ onboarding_status: 'Completed' });
+                    }
+                }
+            } catch (profErr) {
+                console.error('Error updating profile onboarding status in updateUser:', profErr);
+            }
+        }
+
         const logDesc = changedFields.length > 0 
             ? `Updated staff profile for ${updatedUser.firstname} ${updatedUser.lastname}: ${changedFields.join('; ')}`
             : `Updated user account for ${updatedUser.firstname} ${updatedUser.lastname}`;
@@ -2589,7 +2604,6 @@ exports.getDashboardStats = async (req, res) => {
 
         let activeStaff = 0;
         let inactiveStaff = 0;
-        let registeredFaceCount = 0;
         const workModes = { Office: 0, 'Work from home': 0, Hybrid: 0 };
         const genderDist = { Male: 0, Female: 0, Other: 0, Unassigned: 0 };
         const roleDistMap = {};
@@ -2605,8 +2619,6 @@ exports.getDashboardStats = async (req, res) => {
             else if (u.gender === 'Female') genderDist.Female++;
             else if (u.gender === 'Transgender') genderDist.Other++;
             else genderDist.Unassigned++;
-
-            if (u.face_descriptor) registeredFaceCount++;
 
             const rName = roleMap[u.role] || (u.role ? `Role #${u.role}` : 'Unassigned');
             roleDistMap[rName] = (roleDistMap[rName] || 0) + 1;
@@ -2718,10 +2730,10 @@ exports.getDashboardStats = async (req, res) => {
                 completedSessions,
                 workModes,
                 genderDistribution: genderDist,
-                faceRegistration: {
-                    registered: registeredFaceCount,
-                    pending: Math.max(0, staffList.length - registeredFaceCount),
-                    rate: staffList.length > 0 ? Math.round((registeredFaceCount / staffList.length) * 100) : 0
+                qrBadgeAdoption: {
+                    registered: activeStaff,
+                    pending: 0,
+                    rate: 100
                 },
                 onboardingPipeline,
                 roleDistribution: Object.entries(roleDistMap).map(([role, count]) => ({ role, count })),

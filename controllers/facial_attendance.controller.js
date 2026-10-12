@@ -14,7 +14,6 @@ const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const faceBiometrics = require("../services/face_biometrics.service");
 const badgeSecurity = require("../services/badge_security.service");
 const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
@@ -104,223 +103,14 @@ const checkUserWfhToday = (user, tz, clientTimezone) => {
     };
 };
 
-// Calculate Euclidean distance between two descriptor arrays
-const getEuclideanDistance = (arr1, arr2) => {
-    return faceBiometrics.getEuclideanDistance(arr1, arr2);
-};
+
 
 /**
- * Register employee face descriptor and optional photo
- * POST /api/attendance/register-face (Self-service)
- * POST /api/admin/users/:id/register-face (Admin/HR)
+ * Check attendance terminal / kiosk access permissions
+ * GET /api/attendance/terminal-status
+ * GET /api/attendance/face-status (backward compatibility alias)
  */
-exports.registerFace = async (req, res) => {
-    const userId = req.params.id || req.userId;
-    let { faceDescriptor, faceDescriptorLeft, faceDescriptorRight, profileImage, imageLeft, imageRight } = req.body;
-
-    try {
-        // Server-side descriptor extraction if raw images are provided
-        if ((!faceDescriptor || !Array.isArray(faceDescriptor)) && profileImage) {
-            const extracted = await faceBiometrics.extractDescriptor(profileImage);
-            if (!extracted) {
-                return res.status(400).send({ message: "No face detected in the front profile image." });
-            }
-            faceDescriptor = extracted.descriptor;
-        }
-
-        if ((!faceDescriptorLeft || !Array.isArray(faceDescriptorLeft)) && imageLeft) {
-            const extractedLeft = await faceBiometrics.extractDescriptor(imageLeft);
-            if (extractedLeft) faceDescriptorLeft = extractedLeft.descriptor;
-        }
-
-        if ((!faceDescriptorRight || !Array.isArray(faceDescriptorRight)) && imageRight) {
-            const extractedRight = await faceBiometrics.extractDescriptor(imageRight);
-            if (extractedRight) faceDescriptorRight = extractedRight.descriptor;
-        }
-
-        if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
-            return res.status(400).send({
-                message: "A valid 128-dimensional face descriptor or front profile image is required."
-            });
-        }
-
-        const user = await User.findByPk(userId);
-        if (!user) {
-            return res.status(404).send({ message: "Employee not found." });
-        }
-
-        // Prevent the same face from being registered for more than one employee.
-        // Compare the incoming descriptor against every OTHER user's registered face.
-        const DUPLICATE_THRESHOLD = 0.45;
-        const otherUsers = await User.findAll({
-            where: {
-                staffid: { [db.Sequelize.Op.ne]: user.staffid },
-                face_descriptor: { [db.Sequelize.Op.ne]: null }
-            },
-            attributes: ['staffid', 'firstname', 'lastname', 'face_descriptor']
-        });
-
-        for (const other of otherUsers) {
-            let existingDescriptor;
-            try {
-                existingDescriptor = JSON.parse(other.face_descriptor);
-            } catch {
-                continue; // skip malformed stored descriptors
-            }
-            const distance = getEuclideanDistance(faceDescriptor, existingDescriptor);
-            if (distance < DUPLICATE_THRESHOLD) {
-                return res.status(409).send({
-                    message: `This face is already registered to ${other.firstname} ${other.lastname}. A face can only be registered for one employee.`
-                });
-            }
-        }
-
-        const updates = {
-            face_descriptor: JSON.stringify(faceDescriptor),
-            face_registered_at: new Date()
-        };
-
-        if (faceDescriptorLeft) {
-            updates.face_descriptor_left = JSON.stringify(faceDescriptorLeft);
-        }
-        if (faceDescriptorRight) {
-            updates.face_descriptor_right = JSON.stringify(faceDescriptorRight);
-        }
-
-        // Save the face capture as a separate image, keeping the existing profile photo intact
-        if (profileImage && profileImage.startsWith("data:image")) {
-            const dir = "uploads/faces";
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-
-            const base64Data = profileImage.replace(/^data:image\/\w+;base64,/, "");
-            const ext = profileImage.substring(profileImage.indexOf("/") + 1, profileImage.indexOf(";"));
-            const filename = `face-${userId}-${Date.now()}.${ext}`;
-            const imagePath = path.join(dir, filename);
-
-            fs.writeFileSync(imagePath, base64Data, "base64");
-
-            // Store the face image path on the user; do NOT overwrite the profile photo
-            updates.face_image_path = imagePath;
-        }
-
-        // Update face descriptor, timestamp, and (optionally) face image path
-        await user.update(updates);
-
-        // Log action
-        await logActivity({
-            admin_id: req.userId,
-            action: 'REGISTER_FACE',
-            entity: 'User',
-            entity_id: userId,
-            affected_user_id: userId,
-            description: `Registered face verification template for employee: ${user.firstname} ${user.lastname}`,
-            ip_address: getClientIp(req),
-            user_agent: getUserAgent(req)
-        });
-
-        res.status(200).send({
-            success: true,
-            message: "Face registration completed successfully."
-        });
-    } catch (err) {
-        console.error("Error registering face:", err);
-        res.status(500).send({ message: err.message || "Error occurred while registering face." });
-    }
-};
-
-/**
- * Remove employee face descriptor and stored face photo
- * DELETE /api/admin/users/:id/face (Admin and above)
- */
-exports.removeFace = async (req, res) => {
-    const userId = req.params.id;
-
-    if (!userId) {
-        return res.status(400).send({ message: "User ID parameter is required." });
-    }
-
-    try {
-        const user = await User.findByPk(userId);
-        if (!user) {
-            return res.status(404).send({ message: "Employee not found." });
-        }
-
-        // Hierarchy & Permission validation:
-        // Super Admin (level 0) can remove anyone's face.
-        // Other authorized roles (governed by remove_face_roles setting) can remove anyone
-        // whose hierarchy level is equal or greater (cannot remove higher authority).
-        const callerRole = req.callerRole || (req.userId ? await Role.findByPk((await User.findByPk(req.userId))?.role) : null);
-        const targetUserRole = user.role ? await Role.findByPk(user.role) : null;
-
-        if (!callerRole) {
-            return res.status(403).send({ message: "Unable to validate caller role." });
-        }
-
-        const setting = await db.settings.findOne({ where: { key: 'remove_face_roles' } });
-        if (setting && setting.value !== null && setting.value !== undefined && setting.value.trim() !== '') {
-            const allowedRoleIds = setting.value.split(',').map(s => s.trim()).filter(Boolean);
-            if (!allowedRoleIds.includes(String(callerRole.id))) {
-                return res.status(403).send({ message: "Your role is not authorized to remove user face data." });
-            }
-        } else if (callerRole.hierarchy_level === null || callerRole.hierarchy_level === undefined || callerRole.hierarchy_level > 1) {
-            return res.status(403).send({ message: "Only Admin and Super Admin roles can remove user face data." });
-        }
-
-        if (callerRole.hierarchy_level > 0 && targetUserRole && targetUserRole.hierarchy_level < callerRole.hierarchy_level) {
-            return res.status(403).send({
-                message: `You don't have permission to remove face data for users with ${targetUserRole.display_name || targetUserRole.name} role.`
-            });
-        }
-
-        // Delete face image file from disk if it exists
-        if (user.face_image_path) {
-            try {
-                if (fs.existsSync(user.face_image_path)) {
-                    fs.unlinkSync(user.face_image_path);
-                }
-            } catch (fileErr) {
-                console.warn("Could not delete face image file:", fileErr.message);
-            }
-        }
-
-        // Reset face fields in database
-        await user.update({
-            face_descriptor: null,
-            face_descriptor_left: null,
-            face_descriptor_right: null,
-            face_image_path: null,
-            face_registered_at: null
-        });
-
-        // Log audit activity
-        await logActivity({
-            admin_id: req.userId,
-            action: 'REMOVE_FACE',
-            entity: 'User',
-            entity_id: userId,
-            affected_user_id: userId,
-            description: `Removed biometric face data and image for employee: ${user.firstname} ${user.lastname}`,
-            ip_address: getClientIp(req),
-            user_agent: getUserAgent(req)
-        });
-
-        res.status(200).send({
-            success: true,
-            message: `Face ID for ${user.firstname} ${user.lastname} has been removed successfully.`
-        });
-    } catch (err) {
-        console.error("Error removing face data:", err);
-        res.status(500).send({ message: err.message || "Error occurred while removing face data." });
-    }
-};
-
-/**
- * Get face registration status of current authenticated user
- * GET /api/attendance/face-status
- */
-exports.getFaceStatus = async (req, res) => {
+exports.getTerminalStatus = async (req, res) => {
     try {
         if (req.isServiceAccount) {
             const account = await db.service_accounts.findByPk(req.userId);
@@ -337,7 +127,7 @@ exports.getFaceStatus = async (req, res) => {
             }
 
             return res.status(200).send({
-                isRegistered: false,
+                isRegistered: true,
                 registeredAt: null,
                 faceImagePath: null,
                 isServiceAccount: true,
@@ -346,7 +136,7 @@ exports.getFaceStatus = async (req, res) => {
         }
 
         const user = await User.findByPk(req.userId, {
-            attributes: ['staffid', 'role', 'face_descriptor', 'face_registered_at', 'face_image_path']
+            attributes: ['staffid', 'role']
         });
 
         if (!user) {
@@ -361,71 +151,47 @@ exports.getFaceStatus = async (req, res) => {
             }
         }
 
-        const isRegistered = !!(user.face_descriptor && user.face_descriptor.length > 0);
         res.status(200).send({
-            isRegistered,
-            registeredAt: user.face_registered_at,
-            faceImagePath: user.face_image_path ? user.face_image_path.replace(/\\/g, '/') : null,
+            isRegistered: true,
+            registeredAt: null,
+            faceImagePath: null,
             can_access_attendance_portal: canAccessAttendancePortal
         });
     } catch (err) {
-        console.error("Error checking face status:", err);
-        res.status(500).send({ message: err.message || "Failed to check face status." });
+        console.error("Error checking terminal status:", err);
+        res.status(500).send({ message: err.message || "Failed to check terminal status." });
     }
 };
 
+// Backward-compatible alias for existing mobile/kiosk clients
+exports.getFaceStatus = exports.getTerminalStatus;
+
 /**
- * Identify an employee by face image or descriptor (auto-fill / auto-identify)
- * POST /api/attendance/identify-face
- * Returns: { matched: true, email, employeeName, distance } or { matched: false }
+ * Register employee face (DEPRECATED - QR attendance in use)
+ */
+exports.registerFace = async (req, res) => {
+    return res.status(400).send({
+        message: "Face recognition attendance is deprecated. WorkPulse uses QR code badge attendance."
+    });
+};
+
+/**
+ * Remove employee face (DEPRECATED - QR attendance in use)
+ */
+exports.removeFace = async (req, res) => {
+    return res.status(400).send({
+        message: "Face recognition attendance is deprecated. WorkPulse uses QR code badge attendance."
+    });
+};
+
+/**
+ * Identify employee face (DEPRECATED - QR attendance in use)
  */
 exports.identifyFace = async (req, res) => {
-    try {
-        const { faceDescriptor, image, snapshotImage } = req.body;
-        const rawImage = image || snapshotImage;
-
-        if ((!faceDescriptor || !Array.isArray(faceDescriptor)) && !rawImage) {
-            return res.status(400).send({ matched: false, message: "Face snapshot image or descriptor is required." });
-        }
-
-        // Fetch all active users with registered face descriptors
-        const users = await User.findAll({
-            where: {
-                active: true,
-                face_descriptor: { [db.Sequelize.Op.ne]: null }
-            },
-            attributes: ['staffid', 'email', 'firstname', 'lastname', 'face_descriptor']
-        });
-
-        if (!users || users.length === 0) {
-            return res.status(200).send({ matched: false, message: "No registered faces found." });
-        }
-
-        const result = await faceBiometrics.identifyEmployee(faceDescriptor || rawImage, users, {
-            threshold: 0.45,
-            margin: 0.03
-        });
-
-        if (result.matched && result.user) {
-            return res.status(200).send({
-                matched: true,
-                email: result.user.email,
-                employeeName: `${result.user.firstname} ${result.user.lastname}`,
-                distance: result.distance,
-                descriptor: result.descriptor
-            });
-        }
-
-        return res.status(200).send({
-            matched: false,
-            message: result.message || "Face not recognized.",
-            distance: result.closestDistance
-        });
-
-    } catch (err) {
-        console.error("Error identifying face:", err);
-        res.status(500).send({ matched: false, message: err.message || "Error identifying face." });
-    }
+    return res.status(400).send({
+        matched: false,
+        message: "Face recognition attendance is deprecated. WorkPulse uses QR code badge attendance."
+    });
 };
 
 /**
@@ -633,361 +399,12 @@ exports.getMyAttendedDates = async (req, res) => {
  * POST /api/attendance/check-in-out-with-face
  */
 exports.checkInOutWithFace = async (req, res) => {
-    let { email, password, faceDescriptor, faceDescriptorLeft, faceDescriptorRight, snapshotImage, image, imageLeft, imageRight, latitude, longitude, phone_model, action, livenessVerified } = req.body;
-    const rawImage = snapshotImage || image;
-
-    if (!email || (!password && !livenessVerified)) {
-        return res.status(400).send({
-            message: "Email and password/liveness are required."
-        });
-    }
-
-    if (!action || !['CHECK_IN', 'CHECK_OUT'].includes(action)) {
-        return res.status(400).send({
-            message: "Action must be either 'CHECK_IN' or 'CHECK_OUT'."
-        });
-    }
-
-    try {
-        // Server-side descriptor extraction from snapshot if not already supplied
-        if ((!faceDescriptor || !Array.isArray(faceDescriptor)) && rawImage) {
-            const extracted = await faceBiometrics.extractDescriptor(rawImage);
-            if (!extracted) {
-                return res.status(400).send({
-                    success: false,
-                    message: "No face detected in the attendance snapshot."
-                });
-            }
-            faceDescriptor = extracted.descriptor;
-        }
-
-        if ((!faceDescriptorLeft || !Array.isArray(faceDescriptorLeft)) && imageLeft) {
-            const extractedLeft = await faceBiometrics.extractDescriptor(imageLeft);
-            if (extractedLeft) faceDescriptorLeft = extractedLeft.descriptor;
-        }
-
-        if ((!faceDescriptorRight || !Array.isArray(faceDescriptorRight)) && imageRight) {
-            const extractedRight = await faceBiometrics.extractDescriptor(imageRight);
-            if (extractedRight) faceDescriptorRight = extractedRight.descriptor;
-        }
-
-        if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
-            return res.status(400).send({
-                message: "A valid face descriptor or camera snapshot image is required."
-            });
-        }
-
-        // 1. Authenticate password
-        const user = await User.findOne({ where: { email } });
-        if (!user) {
-            return res.status(404).send({ message: "Employee not found." });
-        }
-
-        if (user.active == 0 || user.active === false || user.active === '0') {
-            return res.status(403).send({ message: "Account is inactive. Please contact administrator." });
-        }
-
-        if (action === 'CHECK_IN') {
-            const tz = await getAppTimezone();
-            const nowString = timezoneUtil.getNowStringInTimezone(tz);
-            const todayDateOnly = nowString.split(' ')[0];
-
-            const holidayCheck = await isDateHoliday(todayDateOnly);
-            if (holidayCheck.isHoliday) {
-                return res.status(400).send({
-                    success: false,
-                    message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
-                });
-            }
-
-            const approvedFullDayLeave = await LeaveRequest.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    status: 'Approved',
-                    start_date: { [Op.lte]: todayDateOnly },
-                    end_date: { [Op.gte]: todayDateOnly }
-                }
-            });
-
-            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
-                return res.status(400).send({
-                    success: false,
-                    message: "You are on approved leave for today. Attendance check-in is not allowed."
-                });
-            }
-        }
-
-        if (!livenessVerified) {
-            const passwordIsValid = bcrypt.compareSync(password, user.password);
-            if (!passwordIsValid) {
-                return res.status(400).send({ message: "Invalid Password!" });
-            }
-        }
-
-        // Single Device Security & Proxy Attendance Prevention (Mobile Only for Check-In / Check-Out)
-        const isMobileHeader = req.headers['x-is-mobile'];
-        const isMobileAppHeader = req.headers['x-is-mobile-app'];
-        const userAgent = getUserAgent(req);
-        const deviceId = req.headers['x-device-id'] || req.body.deviceId || req.body.device_id || req.query.deviceId;
-        const deviceName = req.headers['x-device-name'] || req.body.deviceName || req.body.device_name || phone_model;
-
-        const isMobileClient = deviceSecurity.isMobileClient({
-            userAgent,
-            isMobile: isMobileHeader,
-            isMobileApp: isMobileAppHeader,
-            deviceId
-        });
-
-        if (isMobileClient) {
-            if (!deviceId) {
-                return res.status(400).send({
-                    success: false,
-                    message: "Device identification is required for mobile attendance check-in/out."
-                });
-            }
-
-            const clientIp = getClientIp(req);
-            const isMobileApp = (isMobileAppHeader === 'true' || isMobileAppHeader === true || deviceId.startsWith('wp-dev-app-'));
-
-            const deviceCheck = await deviceSecurity.verifyAndBindDevice({
-                staffId: user.staffid,
-                deviceId,
-                deviceName,
-                userAgent,
-                ipAddress: clientIp,
-                isMobile: true,
-                isMobileApp,
-                action: action === 'CHECK_IN' ? 'MOBILE_FACE_CHECK_IN' : 'MOBILE_FACE_CHECK_OUT'
-            });
-
-            if (!deviceCheck.allowed) {
-                return res.status(403).send({
-                    success: false,
-                    deviceViolation: true,
-                    message: deviceCheck.error
-                });
-            }
-        }
-
-        // 2. Fetch stored descriptor
-        if (!user.face_descriptor) {
-            return res.status(400).send({
-                message: "Face ID is not registered for this employee. Please register first."
-            });
-        }
-
-        const storedDescriptor = JSON.parse(user.face_descriptor);
-        
-        // 3. Compute Euclidean Distance
-        const distance = getEuclideanDistance(faceDescriptor, storedDescriptor);
-        const threshold = 0.6; // Default face-api.js threshold
-
-        if (distance >= threshold) {
-            return res.status(400).send({
-                success: false,
-                distance,
-                message: "Facial verification failed. Face does not match the registered user."
-            });
-        }
-
-        // Profile descriptors verification (with angle tolerance & cross-mirror matching)
-        const PROFILE_THRESHOLD = 0.72;
-        let storedLeft = null;
-        let storedRight = null;
-        try {
-            if (user.face_descriptor_left) storedLeft = JSON.parse(user.face_descriptor_left);
-            if (user.face_descriptor_right) storedRight = JSON.parse(user.face_descriptor_right);
-        } catch (_) {}
-
-        // Collect all reference descriptors for this user
-        const allUserDescriptors = [storedDescriptor];
-        if (storedLeft) allUserDescriptors.push(storedLeft);
-        if (storedRight) allUserDescriptors.push(storedRight);
-
-        // Compare Left Profile if provided and registered
-        if (faceDescriptorLeft && (storedLeft || storedRight)) {
-            try {
-                const minLeftDistance = Math.min(...allUserDescriptors.map(d => getEuclideanDistance(faceDescriptorLeft, d)));
-                if (minLeftDistance >= PROFILE_THRESHOLD) {
-                    return res.status(400).send({
-                        success: false,
-                        distance: minLeftDistance,
-                        message: "Left profile verification failed. Face does not match registered profile."
-                    });
-                }
-            } catch (err) {
-                // ignore parsing error
-            }
-        }
-
-        // Compare Right Profile if provided and registered
-        if (faceDescriptorRight && (storedLeft || storedRight)) {
-            try {
-                const minRightDistance = Math.min(...allUserDescriptors.map(d => getEuclideanDistance(faceDescriptorRight, d)));
-                if (minRightDistance >= PROFILE_THRESHOLD) {
-                    return res.status(400).send({
-                        success: false,
-                        distance: minRightDistance,
-                        message: "Right profile verification failed. Face does not match registered profile."
-                    });
-                }
-            } catch (err) {
-                // ignore parsing error
-            }
-        }
-
-        // 4. Face matches! Process the requested action
-        const tz = await getAppTimezone();
-        const now = new Date();
-        const nowString = timezoneUtil.getNowStringInTimezone(tz);
-        const todayDateOnly = nowString.split(' ')[0];
-
-        // Save verification snapshot if provided (useful for auditing)
-        let snapshotPath = null;
-        if (snapshotImage && snapshotImage.startsWith("data:image")) {
-            const dir = "uploads/attendance_snapshots";
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-            const base64Data = snapshotImage.replace(/^data:image\/\w+;base64,/, "");
-            const ext = snapshotImage.substring(snapshotImage.indexOf("/") + 1, snapshotImage.indexOf(";"));
-            filename = `snapshot-${user.staffid}-${Date.now()}.${ext}`;
-            snapshotPath = path.join(dir, filename);
-            fs.writeFileSync(snapshotPath, base64Data, "base64");
-        }
-
-        let logDetails = null;
-
-        if (action === 'CHECK_IN') {
-            const holidayCheck = await isDateHoliday(todayDateOnly);
-            if (holidayCheck.isHoliday) {
-                return res.status(400).send({
-                    success: false,
-                    message: `Today (${todayDateOnly}) is a company holiday (${holidayCheck.holidayName}). Attendance check-in is not allowed.`
-                });
-            }
-
-            // Verify employee is not on approved full-day leave today
-            const approvedFullDayLeave = await LeaveRequest.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    status: 'Approved',
-                    start_date: { [Op.lte]: todayDateOnly },
-                    end_date: { [Op.gte]: todayDateOnly }
-                }
-            });
-
-            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
-                return res.status(400).send({
-                    success: false,
-                    message: "You are on approved leave for today. Attendance check-in is not allowed."
-                });
-            }
-
-            // Verify employee is NOT already checked in today
-            const existingOpenLog = await AttendanceLog.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    date: todayDateOnly,
-                    check_out_time: null
-                }
-            });
-
-            if (existingOpenLog) {
-                return res.status(400).send({
-                    success: false,
-                    message: "You are already checked in. Please check out first before checking in again."
-                });
-            }
-
-            // Also check if a completed session exists today
-            const completedLog = await AttendanceLog.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    date: todayDateOnly,
-                    check_out_time: { [db.Sequelize.Op.ne]: null }
-                }
-            });
-
-            if (completedLog) {
-                return res.status(400).send({
-                    success: false,
-                    message: "Check-in can be done once per day. You have already completed attendance for today."
-                });
-            }
-
-            // Create check-in record
-            const attendance = {
-                staff_id: user.staffid,
-                check_in_time: now,
-                date: todayDateOnly,
-                phone_model: phone_model || 'Front Desk Web Camera',
-                ip_address: getClientIp(req),
-                latitude: latitude || null,
-                longitude: longitude || null
-            };
-
-            logDetails = await AttendanceLog.create(attendance);
-
-        } else {
-            // CHECK_OUT: Find the open check-in record for today
-            const existingLog = await AttendanceLog.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    date: todayDateOnly,
-                    check_out_time: null
-                },
-                order: [['check_in_time', 'DESC']]
-            });
-
-            if (!existingLog) {
-                return res.status(400).send({
-                    success: false,
-                    message: "No active check-in found. Please check in first before checking out."
-                });
-            }
-
-            await existingLog.update({
-                check_out_time: now
-            });
-            logDetails = existingLog;
-
-            // Auto-trigger approval if manager exists
-            if (user.approving_manager_id) {
-                await Approval.create({
-                    attendance_log_id: existingLog.id,
-                    manager_id: user.approving_manager_id,
-                    status: 'pending'
-                });
-            }
-        }
-
-        // Log Activity log
-        await logActivity({
-            admin_id: user.staffid,
-            action: action,
-            entity: 'AttendanceLog',
-            entity_id: logDetails.id,
-            affected_user_id: user.staffid,
-            description: `Facial Attendance ${action === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} successful (Distance: ${distance.toFixed(4)})`,
-            ip_address: getClientIp(req),
-            user_agent: getUserAgent(req)
-        });
-
-        res.status(200).send({
-            success: true,
-            type: action,
-            employeeName: `${user.firstname} ${user.lastname}`,
-            time: nowString,
-            distance,
-            message: `${action === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} recorded successfully.`
-        });
-
-    } catch (err) {
-        console.error("Error in facial attendance validation:", err);
-        res.status(500).send({ message: err.message || "Internal server error occurred." });
-    }
+    return res.status(400).send({
+        message: "Face recognition attendance is deprecated. Please scan your employee QR badge."
+    });
 };
+
+
 
 // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
 const formatDateInTimezone = (dateObj, tz) => {

@@ -163,12 +163,19 @@ exports.signin = async (req, res) => {
             }
         }
 
-        // 2. If user not found yet (Local Auth, or First-time Sync where userid is null), find by Email
+        // 2. If user not found yet (Local Auth, or First-time Sync where userid is null), find by Email or Secondary Email
         let isServiceAccount = false;
         if (!user) {
+            const rawEmail = (req.body.email || '').trim();
+            const Op = db.Sequelize.Op;
             user = await TblStaff.findOne({
                 where: {
-                    email: req.body.email
+                    [Op.or]: [
+                        { email: rawEmail },
+                        { secondary_email: rawEmail },
+                        db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('email')), rawEmail.toLowerCase()),
+                        db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('secondary_email')), rawEmail.toLowerCase())
+                    ]
                 }
             });
 
@@ -176,7 +183,10 @@ exports.signin = async (req, res) => {
                 // Try to find in Service Accounts
                 user = await db.service_accounts.findOne({
                     where: {
-                        email: req.body.email
+                        [Op.or]: [
+                            { email: rawEmail },
+                            db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('email')), rawEmail.toLowerCase())
+                        ]
                     }
                 });
                 if (user) {
@@ -220,7 +230,7 @@ exports.signin = async (req, res) => {
         }
 
         if (!user) {
-            return res.status(404).send({ message: "User Not found." });
+            return res.status(401).send({ message: "Invalid email address or password." });
         }
 
         // Ensure robust check for inactive status (handle 0, "0", false)
@@ -238,12 +248,17 @@ exports.signin = async (req, res) => {
             if (userRole && req.body.is_mobile_app !== true && userRole.can_access_webapp != true) {
                 // Bypass web app check ONLY if they need first-time setup (password reset or declaration)
                 const isTempPwd = user.is_temporary_password === true || user.is_temporary_password === 1 || user.is_temporary_password === '1';
-                const mustChangePassword = isServiceAccount ? false : (!user.last_login || isTempPwd);
+                let mustChangePassword = false;
                 let mustCompleteDeclaration = false;
                 if (!isServiceAccount) {
                     const EmployeeProfile = db.employee_profiles;
                     const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
-                    mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+                    if (profile) {
+                        mustCompleteDeclaration = profile.onboarding_status === 'Pending_Candidate' || (!profile.consent_given && profile.onboarding_status !== 'Completed' && profile.onboarding_status !== 'Pending_HR_Approval');
+                    } else {
+                        mustCompleteDeclaration = !user.role || isTempPwd;
+                    }
+                    mustChangePassword = isTempPwd || (!user.last_login && (!profile || profile.onboarding_status === 'Pending_Candidate'));
                 }
 
                 if (!mustChangePassword && !mustCompleteDeclaration) {
@@ -269,14 +284,33 @@ exports.signin = async (req, res) => {
 
         // Compute first-time login flags BEFORE updating last_login
         const isTemporaryPassword = user.is_temporary_password === true || user.is_temporary_password === 1 || user.is_temporary_password === '1';
-        const mustChangePassword = isServiceAccount ? false : (!user.last_login || isTemporaryPassword);
-
-        // Check if declaration is signed
+        let mustChangePassword = false;
         let mustCompleteDeclaration = false;
+
         if (!isServiceAccount) {
             const EmployeeProfile = db.employee_profiles;
             const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
-            mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+
+            // Check declaration requirement:
+            // An employee must complete declaration ONLY if they haven't submitted it yet:
+            // - If onboarding_status is 'Pending_Candidate', candidate declaration is pending.
+            // - If onboarding_status is 'Completed' or 'Pending_HR_Approval', or consent_given is true, declaration is ALREADY done.
+            // - If no profile exists and user has no role / is temporary, declaration is required.
+            if (profile) {
+                if (profile.onboarding_status === 'Pending_Candidate') {
+                    mustCompleteDeclaration = true;
+                } else if (profile.onboarding_status === 'Completed' || profile.onboarding_status === 'Pending_HR_Approval' || profile.consent_given) {
+                    mustCompleteDeclaration = false;
+                } else {
+                    mustCompleteDeclaration = true;
+                }
+            } else {
+                mustCompleteDeclaration = !user.role || isTemporaryPassword;
+            }
+
+            // Check password change requirement:
+            // Mandatory if temporary password flag is set, or if candidate is still Pending_Candidate without prior login
+            mustChangePassword = isTemporaryPassword || (!user.last_login && (!profile || profile.onboarding_status === 'Pending_Candidate'));
         }
 
         // Block mobile app login if password setup or declaration is not completed
@@ -737,12 +771,13 @@ exports.exchangeQRToken = async (req, res) => {
             return res.status(403).send({ message: "User account is inactive." });
         }
 
-        const mustChangePassword = !user.last_login;
-
-        // Check if declaration is signed
         const EmployeeProfile = db.employee_profiles;
         const profile = await EmployeeProfile.findOne({ where: { staff_id: user.staffid } });
-        const mustCompleteDeclaration = !profile || !profile.consent_given || !profile.signature_path;
+        const mustCompleteDeclaration = profile
+            ? (profile.onboarding_status === 'Pending_Candidate' || (!profile.consent_given && profile.onboarding_status !== 'Completed' && profile.onboarding_status !== 'Pending_HR_Approval'))
+            : (!user.role);
+
+        let mustChangePassword = !user.last_login && (!profile || profile.onboarding_status === 'Pending_Candidate');
 
         // Issue a full session token (lifetime configurable via JWT_EXPIRES_IN)
         const expiresIn = await getSessionTimeoutInSeconds();

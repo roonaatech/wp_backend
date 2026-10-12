@@ -78,7 +78,7 @@ require('./routes/email.routes')(app);
 require('./routes/setting.routes')(app);
 require('./routes/timeoff.routes')(app);
 require('./routes/onboarding.routes')(app);
-require('./routes/facial_attendance.routes')(app);
+require('./routes/attendance.routes')(app);
 require('./routes/manual_attendance.routes')(app);
 
 // Sync database and start HTTPS server

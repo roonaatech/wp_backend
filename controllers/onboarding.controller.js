@@ -814,10 +814,10 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
             bank_account_number,
             bank_ifsc_code,
             bank_name_address,
-            consent_given: consent_given === 'true' || consent_given === true,
-            signature_name,
-            signature_path: signaturePath,
-            onboarding_place
+            consent_given: consent_given !== undefined ? (consent_given === 'true' || consent_given === true) : (profile ? profile.consent_given : false),
+            signature_name: (signature_name && signature_name.trim()) ? signature_name.trim() : (profile ? profile.signature_name : null),
+            signature_path: signaturePath || (profile ? profile.signature_path : null),
+            onboarding_place: (onboarding_place && onboarding_place.trim()) ? onboarding_place.trim() : (profile ? profile.onboarding_place : null)
         };
 
         // Compare profile fields
@@ -1266,12 +1266,15 @@ exports.completeEmployeeDeclaration = async (req, res) => {
             bank_name_address: bank_name_address !== undefined ? bank_name_address : (profile ? profile.bank_name_address : null),
         };
 
-        if (signature_data) {
+        if (signature_data || consent_given === true || consent_given === 'true' || hasExistingDeclaration) {
             profileData.consent_given = true;
-            profileData.signature_name = signature_name;
-            profileData.signature_path = signaturePath;
-            profileData.signature_date = new Date();
-            profileData.onboarding_place = onboarding_place;
+            profileData.signature_name = (signature_name && signature_name.trim()) ? signature_name.trim() : (profile ? profile.signature_name : null);
+            profileData.signature_path = signaturePath || (profile ? profile.signature_path : null);
+            profileData.signature_date = (profile && profile.signature_date) ? profile.signature_date : new Date();
+            profileData.onboarding_place = (onboarding_place && onboarding_place.trim()) ? onboarding_place.trim() : (profile ? profile.onboarding_place : null);
+            if (!profile || profile.onboarding_status === 'Pending_Candidate') {
+                profileData.onboarding_status = 'Pending_HR_Approval';
+            }
         }
 
         if (profile) {
@@ -1400,8 +1403,8 @@ exports.inviteCandidate = async (req, res) => {
             });
         }
 
-        // Generate temporary placeholder password
-        const tempPassword = require('crypto').randomBytes(16).toString('hex');
+        // Generate readable temporary password (8 characters) for employee self-service login
+        const tempPassword = require('crypto').randomBytes(4).toString('hex');
         const hashedPassword = bcrypt.hashSync(tempPassword, 8);
 
         const user = await User.create({
@@ -1413,7 +1416,8 @@ exports.inviteCandidate = async (req, res) => {
             role: null,
             approving_manager_id: null,
             gender,
-            active: 1
+            active: 1,
+            is_temporary_password: true
         }, { transaction });
 
         const onboardingToken = require('crypto').randomBytes(32).toString('hex');
@@ -1444,15 +1448,40 @@ exports.inviteCandidate = async (req, res) => {
         const inviteLink = `${appUrl}/candidate-onboarding?token=${onboardingToken}`;
         const emailSubject = "WorkPulse - Complete Your Onboarding Profile";
         const emailBody = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2>Welcome to the Team, ${firstname}!</h2>
-                <p>We are excited to have you onboard. Please complete your extended joining form and sign the employment declaration by clicking the link below:</p>
-                <div style="margin: 30px 0;">
-                    <a href="${inviteLink}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Complete Onboarding Profile</a>
+            <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #f1f5f9; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); background-color: #ffffff;">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <h1 style="color: #4f46e5; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em;">WorkPulse</h1>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 5px;">Your Employee Management & Collaboration Hub</p>
                 </div>
-                <p>If the button doesn't work, copy and paste this link into your browser:</p>
-                <p style="word-break: break-all; color: #666; font-size: 14px;">${inviteLink}</p>
-                <p>Thank you,<br/>Human Resources</p>
+                <div style="background-color: #faf5ff; border: 1px solid #f3e8ff; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                    <h2 style="color: #581c87; margin-top: 0; font-size: 18px; font-weight: 700;">Welcome to the Team, ${firstname}!</h2>
+                    <p style="color: #6b21a8; font-size: 14px; line-height: 1.5; margin-bottom: 0;">
+                        We are excited to have you onboard. You can now log into WorkPulse with your temporary credentials to fill in your personal details, sign your employment declaration, and set your permanent password.
+                    </p>
+                </div>
+                <div style="margin-bottom: 25px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px;">
+                    <h3 style="color: #1e293b; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Your Temporary Login Credentials</h3>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr>
+                            <td style="padding: 6px 0; color: #64748b; width: 130px; font-weight: 500;">Login Email:</td>
+                            <td style="padding: 6px 0; color: #1e293b; font-weight: 600;">${personal_email}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 0; color: #64748b; font-weight: 500;">Temp Password:</td>
+                            <td style="padding: 6px 0; color: #e11d48; font-family: monospace; font-weight: 700; font-size: 15px;">${tempPassword}</td>
+                        </tr>
+                    </table>
+                </div>
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="${appUrl}/login" style="background-color: #4f46e5; color: #ffffff; padding: 14px 28px; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.25); display: inline-block;">Log In & Complete Profile</a>
+                </div>
+                <p style="font-size: 13px; color: #64748b; text-align: center;">
+                    Alternatively, you can access the direct form link: <a href="${inviteLink}" style="color: #4f46e5; font-weight: 600;">Direct Onboarding Link</a>
+                </p>
+                <div style="border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; font-size: 11px; color: #94a3b8; margin-top: 25px;">
+                    <p style="margin: 0;">If you have any questions or require assistance, please contact the HR Department.</p>
+                    <p style="margin: 5px 0 0;">WorkPulse Security Team © 2026</p>
+                </div>
             </div>
         `;
         
@@ -1764,14 +1793,23 @@ exports.approveCandidateOnboarding = async (req, res) => {
             }
         }
 
-        // Generate random temporary password for real login
-        const tempPassword = require('crypto').randomBytes(4).toString('hex'); // 8 characters
-        const hashedPassword = bcrypt.hashSync(tempPassword, 8);
+        // Only generate random temporary password if user hasn't set their permanent password yet or reset was explicitly requested
+        const shouldResetPassword = req.body.reset_password === true || user.is_temporary_password;
+        let tempPassword = null;
+        let passwordUpdate = {};
+        if (shouldResetPassword) {
+            tempPassword = require('crypto').randomBytes(4).toString('hex'); // 8 characters
+            passwordUpdate = {
+                password: bcrypt.hashSync(tempPassword, 8),
+                is_temporary_password: true,
+                last_login: null
+            };
+        }
 
         const oldPersonalEmail = user.email;
         const newSecondaryEmail = oldPersonalEmail !== email ? oldPersonalEmail : user.secondary_email;
 
-        // Update user to have credentials and new password
+        // Update user to have credentials and assigned role
         await user.update({
             email,
             secondary_email: newSecondaryEmail,
@@ -1780,8 +1818,7 @@ exports.approveCandidateOnboarding = async (req, res) => {
             abis_access: abis_access === 'true' || abis_access === true,
             work_mode: selectedWorkMode,
             hybrid_office_days: validHybridDays,
-            password: hashedPassword,
-            last_login: null
+            ...passwordUpdate
         }, { transaction });
 
         let approvedImagePath = profile.image_path;
@@ -1899,24 +1936,29 @@ exports.approveCandidateOnboarding = async (req, res) => {
                     <div style="background-color: #faf5ff; border: 1px solid #f3e8ff; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
                         <h2 style="color: #581c87; margin-top: 0; font-size: 18px; font-weight: 700;">Welcome to the Team, ${user.firstname}!</h2>
                         <p style="color: #6b21a8; font-size: 14px; line-height: 1.5; margin-bottom: 0;">
-                            Your profile has been approved by Human Resources. To activate your account, please log in and set your new password. (You have already completed the declaration.)
+                            Your profile and role assignment have been finalized and approved by Human Resources.
                         </p>
                     </div>
                     <div style="margin-bottom: 25px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px;">
-                        <h3 style="color: #1e293b; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Your Temporary Login Credentials</h3>
+                        <h3 style="color: #1e293b; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Your Account Details</h3>
                         <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
                             <tr>
-                                <td style="padding: 6px 0; color: #64748b; width: 120px; font-weight: 500;">Primary Email:</td>
+                                <td style="padding: 6px 0; color: #64748b; width: 140px; font-weight: 500;">Official Email:</td>
                                 <td style="padding: 6px 0; color: #1e293b; font-weight: 600;">${user.email}</td>
                             </tr>
+                            ${tempPassword ? `
                             <tr>
                                 <td style="padding: 6px 0; color: #64748b; font-weight: 500;">Temp Password:</td>
                                 <td style="padding: 6px 0; color: #e11d48; font-family: monospace; font-weight: 700; font-size: 15px;">${tempPassword}</td>
-                            </tr>
+                            </tr>` : `
+                            <tr>
+                                <td style="padding: 6px 0; color: #64748b; font-weight: 500;">Password:</td>
+                                <td style="padding: 6px 0; color: #059669; font-weight: 600;">Your established password</td>
+                            </tr>`}
                         </table>
                     </div>
                     <div style="text-align: center; margin: 35px 0;">
-                        <a href="${appUrl}/login" style="background-color: #4f46e5; color: #ffffff; padding: 14px 30px; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.25); display: inline-block;">Log In & Activate Profile</a>
+                        <a href="${appUrl}/login" style="background-color: #4f46e5; color: #ffffff; padding: 14px 30px; font-weight: 700; font-size: 14px; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.25); display: inline-block;">Log In to WorkPulse</a>
                     </div>
                     <div style="border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; font-size: 11px; color: #94a3b8;">
                         <p style="margin: 0;">If you have any questions or require assistance, please contact the HR Department.</p>
@@ -1960,9 +2002,10 @@ exports.resendWelcomeEmail = async (req, res) => {
         const tempPassword = require('crypto').randomBytes(4).toString('hex');
         const hashedPassword = bcrypt.hashSync(tempPassword, 8);
 
-        // Update the password in database and reset last_login to null
+        // Update the password in database, set temporary password flag, and reset last_login to null
         await user.update({
             password: hashedPassword,
+            is_temporary_password: true,
             last_login: null
         });
 
