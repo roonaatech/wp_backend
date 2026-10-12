@@ -2594,7 +2594,7 @@ exports.getDashboardStats = async (req, res) => {
         const userStaffFilter = canViewAllReports ? {} : { staffid: { [Op.in]: reporteeIds } };
         const staffList = await TblStaff.findAll({
             where: userStaffFilter,
-            attributes: ['staffid', 'role', 'active', 'gender', 'work_mode', 'face_descriptor'],
+            attributes: ['staffid', 'role', 'active', 'gender', 'work_mode', 'face_descriptor', 'datecreated'],
             raw: true
         });
 
@@ -2602,15 +2602,91 @@ exports.getDashboardStats = async (req, res) => {
         const roleMap = {};
         allRoles.forEach(r => { roleMap[r.id] = r.display_name || r.name; });
 
+        // Onboarding Pipeline and employee profile metrics
+        const profileFilter = canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } };
+        let employeeProfiles = [];
+        try {
+            employeeProfiles = await db.employee_profiles.findAll({
+                where: profileFilter,
+                attributes: ['staff_id', 'onboarding_status', 'date_of_joining', 'date_of_birth', 'age'],
+                raw: true
+            });
+        } catch (e) {
+            console.error('Error fetching employee profiles for workforce stats:', e.message);
+        }
+
+        const profileMap = {};
+        employeeProfiles.forEach(p => {
+            if (p.staff_id) profileMap[p.staff_id] = p;
+        });
+
+        const onboardingPipeline = {
+            Completed: 0,
+            Pending_Candidate: 0,
+            Pending_HR_Approval: 0,
+            Total: employeeProfiles.length
+        };
+        employeeProfiles.forEach(p => {
+            const s = p.onboarding_status || 'Completed';
+            onboardingPipeline[s] = (onboardingPipeline[s] || 0) + 1;
+        });
+
         let activeStaff = 0;
         let inactiveStaff = 0;
         const workModes = { Office: 0, 'Work from home': 0, Hybrid: 0 };
         const genderDist = { Male: 0, Female: 0, Other: 0, Unassigned: 0 };
         const roleDistMap = {};
 
+        const now = new Date();
+        let totalTenureYears = 0;
+        let activeTenureCount = 0;
+        const tenureBuckets = { '< 1 Year': 0, '1 - 3 Years': 0, '3 - 5 Years': 0, '5+ Years': 0 };
+
+        let totalAge = 0;
+        let ageCount = 0;
+        const ageBuckets = { '< 25 Yrs': 0, '25 - 34 Yrs': 0, '35 - 49 Yrs': 0, '50+ Yrs': 0 };
+
         staffList.forEach(u => {
-            if (u.active === 1) activeStaff++;
-            else inactiveStaff++;
+            if (u.active === 1) {
+                activeStaff++;
+
+                // Calculate Tenure & Experience
+                const prof = profileMap[u.staffid];
+                let joinDate = prof && prof.date_of_joining ? new Date(prof.date_of_joining) : new Date(u.datecreated);
+                if (isNaN(joinDate.getTime())) joinDate = new Date(u.datecreated);
+
+                if (!isNaN(joinDate.getTime())) {
+                    const diffYears = Math.max(0, (now - joinDate) / (1000 * 60 * 60 * 24 * 365.25));
+                    totalTenureYears += diffYears;
+                    activeTenureCount++;
+                    if (diffYears < 1) tenureBuckets['< 1 Year']++;
+                    else if (diffYears < 3) tenureBuckets['1 - 3 Years']++;
+                    else if (diffYears < 5) tenureBuckets['3 - 5 Years']++;
+                    else tenureBuckets['5+ Years']++;
+                }
+
+                // Calculate Age Demographics
+                let age = null;
+                if (prof && prof.age) {
+                    age = parseInt(prof.age, 10);
+                } else if (prof && prof.date_of_birth) {
+                    const dob = new Date(prof.date_of_birth);
+                    if (!isNaN(dob.getTime())) {
+                        age = Math.floor((now - dob) / (1000 * 60 * 60 * 24 * 365.25));
+                    }
+                }
+
+                if (age && !isNaN(age) && age >= 16 && age <= 85) {
+                    totalAge += age;
+                    ageCount++;
+                    if (age < 25) ageBuckets['< 25 Yrs']++;
+                    else if (age <= 34) ageBuckets['25 - 34 Yrs']++;
+                    else if (age <= 49) ageBuckets['35 - 49 Yrs']++;
+                    else ageBuckets['50+ Yrs']++;
+                }
+            } else {
+                inactiveStaff++;
+            }
 
             const wm = u.work_mode || 'Office';
             workModes[wm] = (workModes[wm] || 0) + 1;
@@ -2624,21 +2700,64 @@ exports.getDashboardStats = async (req, res) => {
             roleDistMap[rName] = (roleDistMap[rName] || 0) + 1;
         });
 
-        // Onboarding Pipeline metrics
-        const onboardingProfiles = await db.employee_profiles.findAll({
-            attributes: ['onboarding_status'],
-            raw: true
-        });
-        const onboardingPipeline = {
-            Completed: 0,
-            Pending_Candidate: 0,
-            Pending_HR_Approval: 0,
-            Total: onboardingProfiles.length
+        const tenureDistribution = {
+            averageYears: activeTenureCount > 0 ? parseFloat((totalTenureYears / activeTenureCount).toFixed(1)) : 0,
+            totalActive: activeTenureCount,
+            buckets: tenureBuckets
         };
-        onboardingProfiles.forEach(p => {
-            const s = p.onboarding_status || 'Completed';
-            onboardingPipeline[s] = (onboardingPipeline[s] || 0) + 1;
-        });
+
+        const ageDistribution = {
+            averageAge: ageCount > 0 ? Math.round(totalAge / ageCount) : 0,
+            recordedCount: ageCount,
+            buckets: ageBuckets
+        };
+
+        // Distinct staff attendance completed today (distinct staff with non-null check_out_time)
+        const completedStaffCount = await AttendanceLog.findAll({
+            attributes: [
+                [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
+            ],
+            where: {
+                [Op.or]: [
+                    { date: todayDateOnly },
+                    { check_in_time: { [Op.gte]: today } }
+                ],
+                check_out_time: { [Op.ne]: null },
+                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+            },
+            raw: true
+        }).then(res => parseInt(res[0]?.distinct_staff) || 0);
+
+        // Distinct staff on approved leave today
+        const onLeaveStaffToday = await LeaveRequest.findAll({
+            attributes: [
+                [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
+            ],
+            where: {
+                status: 'Approved',
+                start_date: { [Op.lte]: todayDateOnly },
+                end_date: { [Op.gte]: todayDateOnly },
+                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+            },
+            raw: true
+        }).then(res => parseInt(res[0]?.distinct_staff) || 0);
+
+        const totalAbsentsStaff = Math.max(0, activeStaff - presentToday - onLeaveStaffToday);
+        const inProgressStaff = Math.max(0, presentToday - completedStaffCount);
+
+        const presenceMetrics = {
+            totalActiveStaff: activeStaff,
+            attendanceCompleted: completedStaffCount,
+            attendanceCompletedPct: activeStaff > 0 ? Math.round((completedStaffCount / activeStaff) * 100) : 0,
+            inProgress: inProgressStaff,
+            inProgressPct: activeStaff > 0 ? Math.round((inProgressStaff / activeStaff) * 100) : 0,
+            presentTotal: presentToday,
+            presentTotalPct: activeStaff > 0 ? Math.round((presentToday / activeStaff) * 100) : 0,
+            leaves: onLeaveStaffToday,
+            leavesPct: activeStaff > 0 ? Math.round((onLeaveStaffToday / activeStaff) * 100) : 0,
+            totalAbsents: totalAbsentsStaff,
+            totalAbsentsPct: activeStaff > 0 ? Math.round((totalAbsentsStaff / activeStaff) * 100) : 0
+        };
 
         // Leave type breakdown
         const leaveTypeCounts = await LeaveRequest.findAll({
@@ -2727,9 +2846,13 @@ exports.getDashboardStats = async (req, res) => {
                 todayAttendance: presentToday,
                 attendanceRate: activeStaff > 0 ? Math.min(100, Math.round((presentToday / activeStaff) * 100)) : 0,
                 activeSessions,
-                completedSessions,
+                completedSessions: completedStaffCount,
+                presenceMetrics,
+                workmodes: workModes,
                 workModes,
                 genderDistribution: genderDist,
+                tenureDistribution,
+                ageDistribution,
                 qrBadgeAdoption: {
                     registered: activeStaff,
                     pending: 0,
