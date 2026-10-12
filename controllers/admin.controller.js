@@ -12,7 +12,7 @@ const birthdayUtil = require("../utils/birthday.util");
 const anniversaryUtil = require("../utils/anniversary.util");
 const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
-const { getActiveHolidaysSetForYear, toDateString } = require("../utils/holiday.helper");
+const { getActiveHolidaysSetForYear, getActiveHolidaysMap, toDateString } = require("../utils/holiday.helper");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -2802,19 +2802,23 @@ exports.getDailyTrendData = async (req, res) => {
             dateEndStr = todayStr;
         }
 
-        // Generate Dates
-        let current = new Date(dateStartStr + 'T00:00:00');
-        const final = new Date(dateEndStr + 'T00:00:00');
+        // Fetch active holidays map within this range
+        const holidaysMap = await getActiveHolidaysMap(dateStartStr, dateEndStr);
+
+        // Generate Dates using noon UTC to avoid local timezone / DST boundary shifts
+        let current = new Date(dateStartStr + 'T12:00:00Z');
+        const final = new Date(dateEndStr + 'T12:00:00Z');
 
         while (current <= final) {
             const dateStrISO = current.toISOString().split('T')[0];
+            const [yearStr, monthStr, dayStr] = dateStrISO.split('-');
+            const displayDateStr = `${dayStr}/${monthStr}/${yearStr.slice(-2)}`;
             const [startOfDay, endOfDay] = getUTCBounds(dateStrISO, tz);
 
-            // Format for display (DD/MM/YY)
-            const d = String(current.getDate()).padStart(2, '0');
-            const m = String(current.getMonth() + 1).padStart(2, '0');
-            const y = String(current.getFullYear()).slice(-2);
-            const displayDateStr = `${d}/${m}/${y}`;
+            // Check if Sunday or company holiday
+            const isSunday = current.getUTCDay() === 0;
+            const isHoliday = holidaysMap.has(dateStrISO);
+            const holidayName = holidaysMap.get(dateStrISO) || null;
 
             // Count distinct staff attendance check-ins on this day
             const attendanceCount = await AttendanceLog.findAll({
@@ -2827,6 +2831,13 @@ exports.getDailyTrendData = async (req, res) => {
                 },
                 raw: true
             }).then(result => parseInt(result[0]?.distinct_staff) || 0);
+
+            // Ignore showing holidays and Sundays ONLY when 0 attendance is recorded.
+            // If anyone entered attendance on a holiday or Sunday, include it in the graph.
+            if ((isSunday || isHoliday) && attendanceCount === 0) {
+                current.setUTCDate(current.getUTCDate() + 1);
+                continue;
+            }
 
             // Count approved leaves on this day
             const approvedLeavesCount = await LeaveRequest.count({
@@ -2871,10 +2882,13 @@ exports.getDailyTrendData = async (req, res) => {
                 leaves: approvedLeavesCount,
                 onDuty: approvedOnDutyCount,
                 timeOff: approvedTimeOffCount,
-                total: approvedLeavesCount + approvedOnDutyCount + approvedTimeOffCount
+                total: approvedLeavesCount + approvedOnDutyCount + approvedTimeOffCount,
+                isSunday,
+                isHoliday,
+                holidayName
             });
 
-            current.setDate(current.getDate() + 1);
+            current.setUTCDate(current.getUTCDate() + 1);
         }
 
         res.send(trendData);
