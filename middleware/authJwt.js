@@ -836,6 +836,63 @@ const authJwt = {
                 message: "Unable to validate User role!"
             });
         }
+    },
+    canManageModules: async (req, res, next) => {
+        try {
+            const role = await getRoleForRequest(req);
+            if (!role) {
+                return res.status(403).send({ message: "User or Role not found or account is inactive." });
+            }
+
+            if (role.can_manage_modules == true) {
+                next();
+                return;
+            }
+
+            res.status(403).send({
+                message: "You don't have permission to manage module configuration!"
+            });
+        } catch (error) {
+            console.error('Auth middleware error:', error);
+            return res.status(500).send({
+                message: "Unable to validate User role!"
+            });
+        }
+    },
+    canManageSystemSettingsOrModules: async (req, res, next) => {
+        try {
+            const role = await getRoleForRequest(req);
+            if (!role) {
+                return res.status(403).send({ message: "User or Role not found or account is inactive." });
+            }
+
+            const { key, category } = req.body || {};
+            const isModule = category === 'modules' || (key && key.startsWith('module_'));
+
+            if (isModule) {
+                if (role.can_manage_modules == true) {
+                    next();
+                    return;
+                }
+                return res.status(403).send({
+                    message: "You don't have permission to manage module configuration!"
+                });
+            }
+
+            if (role.can_manage_system_settings === 'all') {
+                next();
+                return;
+            }
+
+            res.status(403).send({
+                message: "You don't have permission to manage system settings!"
+            });
+        } catch (error) {
+            console.error('Auth middleware error:', error);
+            return res.status(500).send({
+                message: "Unable to validate User role!"
+            });
+        }
     }
 };
 module.exports = authJwt;

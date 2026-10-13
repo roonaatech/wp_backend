@@ -224,6 +224,15 @@ exports.updateSetting = async (req, res) => {
             }
         }
 
+        if (key === 'module_attendance_enabled') {
+            try {
+                const { invalidateAttendanceModuleCache } = require('../middleware/moduleGuard');
+                invalidateAttendanceModuleCache();
+            } catch (cacheErr) {
+                console.error('Failed to invalidate module cache:', cacheErr);
+            }
+        }
+
         await logActivity({
             admin_id: req.userId,
             action: 'UPDATE',

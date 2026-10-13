@@ -265,6 +265,16 @@ async function seedSettings() {
             validation_rules: null,
             is_public: true,
             display_order: 3
+        },
+        {
+            key: 'module_attendance_enabled',
+            value: 'true',
+            description: 'Master switch to enable or disable the Attendance module across the platform (backend, web and mobile app)',
+            category: 'modules',
+            data_type: 'boolean',
+            validation_rules: '{"required": true}',
+            is_public: true,
+            display_order: 1
         }
     ];
 

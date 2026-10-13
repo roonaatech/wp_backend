@@ -13,6 +13,7 @@ const anniversaryUtil = require("../utils/anniversary.util");
 const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
 const { getActiveHolidaysSetForYear, getActiveHolidaysMap, toDateString } = require("../utils/holiday.helper");
+const { isAttendanceModuleEnabled } = require("../middleware/moduleGuard");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -1802,8 +1803,10 @@ exports.getMonthlySummary = async (req, res) => {
             return res.send({ summary: [] });
         }
 
+        const attendanceEnabled = await isAttendanceModuleEnabled();
+
         // --- Fetch Attendance Logs in date range ---
-        const attendanceLogs = await AttendanceLog.findAll({
+        const attendanceLogs = attendanceEnabled ? await AttendanceLog.findAll({
             where: {
                 ...staffFilter,
                 [Op.or]: [
@@ -1813,7 +1816,7 @@ exports.getMonthlySummary = async (req, res) => {
             },
             include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }],
             order: [['date', 'ASC'], ['check_in_time', 'ASC']]
-        });
+        }) : [];
 
         // --- Fetch Leave Requests in date range ---
         const leaves = await LeaveRequest.findAll({
@@ -2127,7 +2130,7 @@ exports.getMonthlySummary = async (req, res) => {
 
         // Generate working dates in range [startDate, effectiveCutoff] (excluding Sundays and Company Holidays)
         const workingDatesTillToday = [];
-        if (isPastOrCurrent) {
+        if (attendanceEnabled && isPastOrCurrent) {
             const startParts = startDate.split('-').map(Number);
             const endParts = effectiveCutoff.split('-').map(Number);
             const startD = new Date(startParts[0], startParts[1] - 1, startParts[2]);
@@ -2165,72 +2168,90 @@ exports.getMonthlySummary = async (req, res) => {
             });
 
             // Calculate Salary Compliance (Compliant Days) and Day-by-Day Breakdown
-            const compliance = calculateMonthlyCompliance({
-                attendanceRecords: s.attendance_records,
-                leaveDays: s.leave_days_list,
-                timeoffRecords: s.timeoff_records,
-                ondutyRecords: s.onduty_records
-            }, {
-                complianceHours: attConfig.complianceHours,
-                allowedLeavePerMonth: attConfig.allowedLeavePerMonth,
-                allowedTimeOffPerMonth: attConfig.allowedTimeOffPerMonth,
-                holidays: holidaysList,
-                month: m,
-                year: y
-            });
+            let compliance = {
+                compliant_days: 0,
+                non_compliant_days: 0,
+                quota_summary: {
+                    allowed_leave_days: attConfig.allowedLeavePerMonth,
+                    allowed_timeoff_minutes: attConfig.allowedTimeOffPerMonth * 60,
+                    credited_leave_days: s.leave_days,
+                    used_leave_days: s.leave_days,
+                    credited_timeoff_minutes: s.timeoff_minutes,
+                    used_timeoff_minutes: s.timeoff_minutes
+                },
+                daily_breakdown: []
+            };
 
-            // Calculate Absent Days till current date
+            if (attendanceEnabled) {
+                compliance = calculateMonthlyCompliance({
+                    attendanceRecords: s.attendance_records,
+                    leaveDays: s.leave_days_list,
+                    timeoffRecords: s.timeoff_records,
+                    ondutyRecords: s.onduty_records
+                }, {
+                    complianceHours: attConfig.complianceHours,
+                    allowedLeavePerMonth: attConfig.allowedLeavePerMonth,
+                    allowedTimeOffPerMonth: attConfig.allowedTimeOffPerMonth,
+                    holidays: holidaysList,
+                    month: m,
+                    year: y
+                });
+            }
+
+            // Calculate Absent Days till current date (only if attendance module is enabled)
             const joinDateStr = s.datecreated ? getDateInTimezone(s.datecreated, reportTz) : null;
             const absentDatesList = [];
             let totalAbsentDays = 0;
 
-            workingDatesTillToday.forEach(wd => {
-                const dStr = wd.date;
-                // If employee joined after this date, skip
-                if (joinDateStr && dStr < joinDateStr) {
-                    return;
-                }
-
-                const isPresent = s.attendance_dates && s.attendance_dates.has(dStr);
-                const isOnDuty = (s.onduty_records || []).some(od => od.date === dStr);
-                const isTimeOff = (s.timeoff_records || []).some(to => to.date === dStr);
-                const leaveEntries = (s.leave_days_list || []).filter(lv => lv.date === dStr);
-                const leaveDays = leaveEntries.reduce((sum, lv) => sum + (lv.days || 1), 0);
-
-                if (isPresent || isOnDuty) {
-                    return;
-                }
-                if (leaveDays >= 1.0) {
-                    return;
-                }
-                if (leaveDays > 0) {
-                    const unexcused = Math.max(0, 1.0 - leaveDays);
-                    if (unexcused > 0) {
-                        totalAbsentDays += unexcused;
-                        absentDatesList.push({
-                            date: dStr,
-                            weekday: wd.weekday,
-                            days: unexcused,
-                            detail: `Half-day absence (${leaveDays}d leave, no attendance logged)`
-                        });
+            if (attendanceEnabled) {
+                workingDatesTillToday.forEach(wd => {
+                    const dStr = wd.date;
+                    // If employee joined after this date, skip
+                    if (joinDateStr && dStr < joinDateStr) {
+                        return;
                     }
-                    return;
-                }
-                if (isTimeOff) {
-                    return;
-                }
 
-                // Full-day unexcused absence
-                totalAbsentDays += 1.0;
-                absentDatesList.push({
-                    date: dStr,
-                    weekday: wd.weekday,
-                    days: 1.0,
-                    detail: 'Absent (No check-in or approved leave logged)'
+                    const isPresent = s.attendance_dates && s.attendance_dates.has(dStr);
+                    const isOnDuty = (s.onduty_records || []).some(od => od.date === dStr);
+                    const isTimeOff = (s.timeoff_records || []).some(to => to.date === dStr);
+                    const leaveEntries = (s.leave_days_list || []).filter(lv => lv.date === dStr);
+                    const leaveDays = leaveEntries.reduce((sum, lv) => sum + (lv.days || 1), 0);
+
+                    if (isPresent || isOnDuty) {
+                        return;
+                    }
+                    if (leaveDays >= 1.0) {
+                        return;
+                    }
+                    if (leaveDays > 0) {
+                        const unexcused = Math.max(0, 1.0 - leaveDays);
+                        if (unexcused > 0) {
+                            totalAbsentDays += unexcused;
+                            absentDatesList.push({
+                                date: dStr,
+                                weekday: wd.weekday,
+                                days: unexcused,
+                                detail: `Half-day absence (${leaveDays}d leave, no attendance logged)`
+                            });
+                        }
+                        return;
+                    }
+                    if (isTimeOff) {
+                        return;
+                    }
+
+                    // Full-day unexcused absence
+                    totalAbsentDays += 1.0;
+                    absentDatesList.push({
+                        date: dStr,
+                        weekday: wd.weekday,
+                        days: 1.0,
+                        detail: 'Absent (No check-in or approved leave logged)'
+                    });
                 });
-            });
 
-            totalAbsentDays = Math.round(totalAbsentDays * 10) / 10;
+                totalAbsentDays = Math.round(totalAbsentDays * 10) / 10;
+            }
 
             // Build records list for the employee with a single grouped Attendance row at the top
             const recordsList = [...s.records];
@@ -2246,27 +2267,29 @@ exports.getMonthlySummary = async (req, res) => {
             });
 
             // Add absent days to daily_breakdown (Tab 1: Salary Consideration Breakdown)
-            absentDatesList.forEach(ab => {
-                compliance.daily_breakdown.push({
-                    date: ab.date,
-                    weekday: ab.weekday,
-                    type: 'Absent',
-                    attendance_minutes: 0,
-                    onduty_minutes: 0,
-                    timeoff_requested_minutes: 0,
-                    timeoff_credited_minutes: 0,
-                    timeoff_excess_minutes: 0,
-                    effective_work_minutes: 0,
-                    leave_days: 0,
-                    leave_credited: 0,
-                    leave_excess: 0,
-                    is_compliant: false,
-                    compliant_day_value: 0.0,
-                    status_label: 'Non-Compliant',
-                    remarks: ab.detail
+            if (attendanceEnabled) {
+                absentDatesList.forEach(ab => {
+                    compliance.daily_breakdown.push({
+                        date: ab.date,
+                        weekday: ab.weekday,
+                        type: 'Absent',
+                        attendance_minutes: 0,
+                        onduty_minutes: 0,
+                        timeoff_requested_minutes: 0,
+                        timeoff_credited_minutes: 0,
+                        timeoff_excess_minutes: 0,
+                        effective_work_minutes: 0,
+                        leave_days: 0,
+                        leave_credited: 0,
+                        leave_excess: 0,
+                        is_compliant: false,
+                        compliant_day_value: 0.0,
+                        status_label: 'Non-Compliant',
+                        remarks: ab.detail
+                    });
                 });
-            });
-            compliance.daily_breakdown.sort((a, b) => a.date.localeCompare(b.date));
+                compliance.daily_breakdown.sort((a, b) => a.date.localeCompare(b.date));
+            }
 
             if (s.attendance_records.length > 0) {
                 const attDates = Array.from(s.attendance_dates).sort();
@@ -2309,11 +2332,11 @@ exports.getMonthlySummary = async (req, res) => {
                 firstname: s.firstname,
                 lastname: s.lastname,
                 email: s.email,
-                present_days: presentDays,
-                absent_days: totalAbsentDays,
-                absent_dates: absentDatesList,
-                work_hours: parseFloat((s.work_minutes / 60).toFixed(1)),
-                work_minutes: s.work_minutes,
+                present_days: attendanceEnabled ? presentDays : 0,
+                absent_days: attendanceEnabled ? totalAbsentDays : 0,
+                absent_dates: attendanceEnabled ? absentDatesList : [],
+                work_hours: attendanceEnabled ? parseFloat((s.work_minutes / 60).toFixed(1)) : 0,
+                work_minutes: attendanceEnabled ? s.work_minutes : 0,
                 leave_days: s.leave_days,
                 timeoff_hours: parseFloat((s.timeoff_minutes / 60).toFixed(1)),
                 timeoff_minutes: s.timeoff_minutes,
@@ -2321,11 +2344,11 @@ exports.getMonthlySummary = async (req, res) => {
                 onduty_minutes: s.onduty_minutes,
                 holidays_count: holidaysList.length,
                 holidays: holidaysList,
-                compliant_days: compliance.compliant_days,
-                non_compliant_days: Math.round((compliance.non_compliant_days + totalAbsentDays) * 10) / 10,
+                compliant_days: attendanceEnabled ? compliance.compliant_days : 0,
+                non_compliant_days: attendanceEnabled ? Math.round((compliance.non_compliant_days + totalAbsentDays) * 10) / 10 : 0,
                 quota_summary: compliance.quota_summary,
                 daily_breakdown: compliance.daily_breakdown,
-                attendance_records: s.attendance_records,
+                attendance_records: attendanceEnabled ? s.attendance_records : [],
                 records: recordsList
             };
         });
@@ -2339,7 +2362,8 @@ exports.getMonthlySummary = async (req, res) => {
             period: `${startDate} to ${endDate}`,
             evaluated_till: effectiveCutoff,
             today: todayStr,
-            compliance_hours: attConfig.complianceHours,
+            attendance_enabled: attendanceEnabled,
+            compliance_hours: attendanceEnabled ? attConfig.complianceHours : null,
             allowed_leave_per_month: attConfig.allowedLeavePerMonth,
             allowed_time_off_per_month: attConfig.allowedTimeOffPerMonth,
             office_start_time: attConfig.startTime,
@@ -2402,6 +2426,8 @@ exports.getDashboardStats = async (req, res) => {
             staffFilter = { staff_id: { [Op.in]: reporteeIds } };
         }
 
+        const attendanceEnabled = await isAttendanceModuleEnabled();
+
         const results = await Promise.all([
             // Total users (for admin: all users, for manager: their reportees)
             canViewAllReports ? TblStaff.count() : TblStaff.count({ where: { approving_manager_id: req.userId } }),
@@ -2423,33 +2449,37 @@ exports.getDashboardStats = async (req, res) => {
                 }
             }),
             // Distinct staff attendance from AttendanceLog today
-            AttendanceLog.findAll({
-                attributes: [
-                    [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
-                ],
-                where: {
-                    [Op.or]: [
-                        { date: todayDateOnly },
-                        { check_in_time: { [Op.gte]: today } }
+            attendanceEnabled
+                ? AttendanceLog.findAll({
+                    attributes: [
+                        [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
                     ],
-                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-                },
-                raw: true
-            }).then(result => parseInt(result[0]?.distinct_staff) || 0),
+                    where: {
+                        [Op.or]: [
+                            { date: todayDateOnly },
+                            { check_in_time: { [Op.gte]: today } }
+                        ],
+                        ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    },
+                    raw: true
+                }).then(result => parseInt(result[0]?.distinct_staff) || 0)
+                : Promise.resolve(0),
             // Distinct staff attendance from AttendanceLog yesterday
-            AttendanceLog.findAll({
-                attributes: [
-                    [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
-                ],
-                where: {
-                    [Op.or]: [
-                        { date: yesterdayDateOnly },
-                        { check_in_time: { [Op.gte]: yesterday, [Op.lt]: today } }
+            attendanceEnabled
+                ? AttendanceLog.findAll({
+                    attributes: [
+                        [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
                     ],
-                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-                },
-                raw: true
-            }).then(result => parseInt(result[0]?.distinct_staff) || 0),
+                    where: {
+                        [Op.or]: [
+                            { date: yesterdayDateOnly },
+                            { check_in_time: { [Op.gte]: yesterday, [Op.lt]: today } }
+                        ],
+                        ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    },
+                    raw: true
+                }).then(result => parseInt(result[0]?.distinct_staff) || 0)
+                : Promise.resolve(0),
             // On duty count
             OnDutyLog.count({
                 where: {
@@ -2530,27 +2560,31 @@ exports.getDashboardStats = async (req, res) => {
                 }
             }),
             // Active attendance sessions currently clocked in without check-out
-            AttendanceLog.count({
-                where: {
-                    [Op.or]: [
-                        { date: todayDateOnly },
-                        { check_in_time: { [Op.gte]: today } }
-                    ],
-                    check_out_time: null,
-                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-                }
-            }),
+            attendanceEnabled
+                ? AttendanceLog.count({
+                    where: {
+                        [Op.or]: [
+                            { date: todayDateOnly },
+                            { check_in_time: { [Op.gte]: today } }
+                        ],
+                        check_out_time: null,
+                        ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    }
+                })
+                : Promise.resolve(0),
             // Completed attendance sessions today
-            AttendanceLog.count({
-                where: {
-                    [Op.or]: [
-                        { date: todayDateOnly },
-                        { check_in_time: { [Op.gte]: today } }
-                    ],
-                    check_out_time: { [Op.ne]: null },
-                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-                }
-            })
+            attendanceEnabled
+                ? AttendanceLog.count({
+                    where: {
+                        [Op.or]: [
+                            { date: todayDateOnly },
+                            { check_in_time: { [Op.gte]: today } }
+                        ],
+                        check_out_time: { [Op.ne]: null },
+                        ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    }
+                })
+                : Promise.resolve(0)
         ]);
 
         const [
@@ -2713,20 +2747,22 @@ exports.getDashboardStats = async (req, res) => {
         };
 
         // Distinct staff attendance completed today (distinct staff with non-null check_out_time)
-        const completedStaffCount = await AttendanceLog.findAll({
-            attributes: [
-                [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
-            ],
-            where: {
-                [Op.or]: [
-                    { date: todayDateOnly },
-                    { check_in_time: { [Op.gte]: today } }
+        const completedStaffCount = attendanceEnabled
+            ? await AttendanceLog.findAll({
+                attributes: [
+                    [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
                 ],
-                check_out_time: { [Op.ne]: null },
-                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-            },
-            raw: true
-        }).then(res => parseInt(res[0]?.distinct_staff) || 0);
+                where: {
+                    [Op.or]: [
+                        { date: todayDateOnly },
+                        { check_in_time: { [Op.gte]: today } }
+                    ],
+                    check_out_time: { [Op.ne]: null },
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                },
+                raw: true
+            }).then(res => parseInt(res[0]?.distinct_staff) || 0)
+            : 0;
 
         // Distinct staff on approved leave today
         const onLeaveStaffToday = await LeaveRequest.findAll({
@@ -2770,14 +2806,16 @@ exports.getDashboardStats = async (req, res) => {
         });
 
         // Punch sources breakdown
-        const punchSourceCounts = await AttendanceLog.findAll({
-            attributes: ['punch_source', [db.sequelize.fn('COUNT', db.sequelize.col('id')), 'count']],
-            where: {
-                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-            },
-            group: ['punch_source'],
-            raw: true
-        });
+        const punchSourceCounts = attendanceEnabled
+            ? await AttendanceLog.findAll({
+                attributes: ['punch_source', [db.sequelize.fn('COUNT', db.sequelize.col('id')), 'count']],
+                where: {
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                },
+                group: ['punch_source'],
+                raw: true
+            })
+            : [];
 
         // Upcoming Holidays (active holidays from today onward)
         const upcomingHolidays = await db.holidays.findAll({
@@ -2791,14 +2829,16 @@ exports.getDashboardStats = async (req, res) => {
         });
 
         // Recent punch activity feed (latest 6 records)
-        const recentLogs = await AttendanceLog.findAll({
-            where: {
-                ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-            },
-            order: [['id', 'DESC']],
-            limit: 6,
-            raw: true
-        });
+        const recentLogs = attendanceEnabled
+            ? await AttendanceLog.findAll({
+                where: {
+                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                },
+                order: [['id', 'DESC']],
+                limit: 6,
+                raw: true
+            })
+            : [];
         const recentStaffIds = [...new Set(recentLogs.map(l => l.staff_id))];
         const recentStaff = await TblStaff.findAll({
             where: { staffid: recentStaffIds },
@@ -2927,6 +2967,7 @@ exports.getDailyTrendData = async (req, res) => {
 
         // Fetch active holidays map within this range
         const holidaysMap = await getActiveHolidaysMap(dateStartStr, dateEndStr);
+        const attendanceEnabled = await isAttendanceModuleEnabled();
 
         // Generate Dates using noon UTC to avoid local timezone / DST boundary shifts
         let current = new Date(dateStartStr + 'T12:00:00Z');
@@ -2944,16 +2985,18 @@ exports.getDailyTrendData = async (req, res) => {
             const holidayName = holidaysMap.get(dateStrISO) || null;
 
             // Count distinct staff attendance check-ins on this day
-            const attendanceCount = await AttendanceLog.findAll({
-                attributes: [
-                    [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
-                ],
-                where: {
-                    date: dateStrISO,
-                    ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
-                },
-                raw: true
-            }).then(result => parseInt(result[0]?.distinct_staff) || 0);
+            const attendanceCount = attendanceEnabled
+                ? await AttendanceLog.findAll({
+                    attributes: [
+                        [db.sequelize.fn('COUNT', db.sequelize.fn('DISTINCT', db.sequelize.col('staff_id'))), 'distinct_staff']
+                    ],
+                    where: {
+                        date: dateStrISO,
+                        ...(canViewAllReports ? {} : { staff_id: { [Op.in]: reporteeIds } })
+                    },
+                    raw: true
+                }).then(result => parseInt(result[0]?.distinct_staff) || 0)
+                : 0;
 
             // Ignore showing holidays and Sundays ONLY when 0 attendance is recorded.
             // If anyone entered attendance on a holiday or Sunday, include it in the graph.
@@ -3570,6 +3613,18 @@ exports.getUserAttendanceHistory = async (req, res) => {
     const Role = db.roles;
 
     try {
+        const { isAttendanceModuleEnabled } = require('../middleware/moduleGuard');
+        if (!(await isAttendanceModuleEnabled())) {
+            const year = parseInt(req.query.year) || new Date().getFullYear();
+            return res.status(200).send({
+                year,
+                presentDays: [],
+                absentDays: [],
+                stats: { totalPresent: 0, totalAbsent: 0, totalWorkingDays: 0 },
+                moduleDisabled: true
+            });
+        }
+
         const calTz = await getAppTimezone();
         const year = parseInt(req.query.year) || new Date().getFullYear();
         const targetUserId = parseInt(req.params.id);

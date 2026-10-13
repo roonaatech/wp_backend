@@ -206,10 +206,10 @@ module.exports = function (app) {
         controller.getSettings
     );
 
-    // Update/create setting (requires system settings permission)
+    // Update/create setting (requires system settings or module permission)
     app.post(
         "/api/settings",
-        [authJwt.verifyToken, authJwt.canManageSystemSettings],
+        [authJwt.verifyToken, authJwt.canManageSystemSettingsOrModules],
         controller.updateSetting
     );
 };

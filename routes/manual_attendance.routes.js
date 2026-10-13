@@ -1,5 +1,6 @@
 const controller = require("../controllers/manual_attendance.controller");
 const { verifyToken, canManageManualAttendance } = require("../middleware/authJwt");
+const { requireAttendanceModule } = require("../middleware/moduleGuard");
 
 module.exports = function (app) {
     app.use(function (req, res, next) {
@@ -13,21 +14,21 @@ module.exports = function (app) {
     // Get active employees who missed check-in and/or check-out for date range
     app.get(
         "/api/attendance/missed",
-        [verifyToken, canManageManualAttendance],
+        [requireAttendanceModule, verifyToken, canManageManualAttendance],
         controller.getMissedAttendance
     );
 
     // Save/Regularize manual attendance for single or bulk records
     app.post(
         "/api/attendance/manual-regularize",
-        [verifyToken, canManageManualAttendance],
+        [requireAttendanceModule, verifyToken, canManageManualAttendance],
         controller.regularizeAttendance
     );
 
     // Get recently regularized attendance records
     app.get(
         "/api/attendance/manual-recent",
-        [verifyToken, canManageManualAttendance],
+        [requireAttendanceModule, verifyToken, canManageManualAttendance],
         controller.getRecentRegularizations
     );
 };

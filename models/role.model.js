@@ -120,6 +120,12 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: false,
             comment: 'Can manage service accounts'
         },
+        can_manage_modules: {
+            type: Sequelize.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: 'Can view and configure system modules'
+        },
         can_manage_email_settings: {
             type: Sequelize.BOOLEAN,
             allowNull: false,

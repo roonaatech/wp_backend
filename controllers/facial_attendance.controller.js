@@ -18,6 +18,7 @@ const badgeSecurity = require("../services/badge_security.service");
 const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
 const { isDateHoliday } = require("../utils/holiday.helper");
+const { isAttendanceModuleEnabled } = require("../middleware/moduleGuard");
 
 // Cache of pending QR badge attendance confirmations (expires in 60 seconds)
 const pendingQrConfirmations = new Map();
@@ -305,6 +306,32 @@ exports.getMyTodayAttendance = async (req, res) => {
         const nowString = timezoneUtil.getNowStringInTimezone(tz);
         const todayDateOnly = nowString.split(' ')[0];
 
+        // If attendance module is disabled, return clean disabled state without querying attendance logs
+        if (!(await isAttendanceModuleEnabled())) {
+            const approvedLeave = await LeaveRequest.findOne({
+                where: {
+                    staff_id: user.staffid,
+                    status: 'Approved',
+                    start_date: { [Op.lte]: todayDateOnly },
+                    end_date: { [Op.gte]: todayDateOnly }
+                }
+            });
+            const holidayCheck = await isDateHoliday(todayDateOnly);
+            return res.status(200).send({
+                date: todayDateOnly,
+                status: approvedLeave ? 'ON_LEAVE' : (holidayCheck.isHoliday ? 'HOLIDAY' : 'DISABLED'),
+                moduleDisabled: true,
+                checkedIn: false,
+                hasCheckIn: false,
+                hasCheckOut: false,
+                checkInTime: null,
+                checkOutTime: null,
+                leaveType: approvedLeave ? approvedLeave.leave_type : null,
+                isHoliday: holidayCheck.isHoliday,
+                holidayName: holidayCheck.holidayName
+            });
+        }
+
         // 1. Check for open check-in today
         const openLog = await AttendanceLog.findOne({
             where: {
@@ -371,6 +398,14 @@ exports.getMyAttendedDates = async (req, res) => {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(404).send({ message: "Employee not found." });
+        }
+
+        if (!(await isAttendanceModuleEnabled())) {
+            return res.status(200).send({
+                attendedDates: [],
+                logs: [],
+                moduleDisabled: true
+            });
         }
 
         const logs = await AttendanceLog.findAll({
