@@ -13,7 +13,7 @@ module.exports = {
             await queryInterface.bulkInsert('settings', [{
                 key: 'time_off_past_days_allowed',
                 value: '0',
-                description: 'Number of past days users can select when applying for time-off (0 = only today and future)',
+                description: 'Number of past working days users can select when applying for time-off (0 = only today and future; Sundays and holidays excluded)',
                 category: 'time_off',
                 data_type: 'number',
                 validation_rules: '{"min": 0, "max": 365, "step": 1, "required": true}',

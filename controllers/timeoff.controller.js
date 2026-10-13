@@ -57,12 +57,16 @@ const validatePastDaysAllowed = async (dateStr) => {
         timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
     }).formatToParts(new Date()).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
     const ty = parseInt(todayParts.year), tm = parseInt(todayParts.month), td = parseInt(todayParts.day);
-    // Walk back N working days (Sundays not counted)
+    // Walk back N working days (Sundays and company holidays not counted)
     const cursor = new Date(ty, tm - 1, td);
     let workingDaysBack = 0;
     while (workingDaysBack < pastDaysAllowed) {
         cursor.setDate(cursor.getDate() - 1);
-        if (cursor.getDay() !== 0) workingDaysBack++;
+        const cDateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+        const hol = await isDateHoliday(cDateStr);
+        if (cursor.getDay() !== 0 && !hol.isHoliday) {
+            workingDaysBack++;
+        }
     }
     const minDateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
     if (dateStr < minDateStr) {

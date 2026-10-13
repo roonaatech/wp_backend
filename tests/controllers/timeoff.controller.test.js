@@ -66,6 +66,47 @@ describe('Time Off Controller', () => {
       expect(res.body.message).toContain('Time-off cannot be requested for dates more than 0 working day(s) in the past');
     });
 
+    it('should reject time off requested for Sunday', async () => {
+      const res = await request(app)
+        .post('/api/timeoff/apply')
+        .set('x-access-token', employeeToken)
+        .send({
+          date: '2026-10-18',
+          start_time: '10:00',
+          end_time: '11:00',
+          reason: 'Sunday test'
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('Time-off requests cannot be submitted for Sundays');
+    });
+
+    it('should reject time off requested for a company holiday', async () => {
+      const anyUser = await db.user.findOne();
+      await db.holidays.destroy({ where: { holiday_date: '2026-10-20' } });
+      await db.holidays.create({
+        holiday_date: '2026-10-20',
+        holiday_name: 'Test Holiday',
+        user_added: anyUser.staffid,
+        user_updated: anyUser.staffid,
+        status: 1
+      });
+
+      const res = await request(app)
+        .post('/api/timeoff/apply')
+        .set('x-access-token', employeeToken)
+        .send({
+          date: '2026-10-20',
+          start_time: '10:00',
+          end_time: '11:00',
+          reason: 'Holiday test'
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('Time-off cannot be requested on a company holiday');
+      await db.holidays.destroy({ where: { holiday_date: '2026-10-20' } });
+    });
+
     it('should reject without authentication', async () => {
       const res = await request(app)
         .post('/api/timeoff/apply')
