@@ -44,6 +44,28 @@ describe('Time Off Controller', () => {
       expect([400, 404]).toContain(res.status);
     });
 
+    it('should reject past date when time_off_past_days_allowed is 0', async () => {
+      await db.settings.upsert({
+        key: 'time_off_past_days_allowed',
+        value: '0',
+        category: 'time_off',
+        data_type: 'number'
+      });
+
+      const res = await request(app)
+        .post('/api/timeoff/apply')
+        .set('x-access-token', employeeToken)
+        .send({
+          date: '2020-01-02',
+          start_time: '10:00',
+          end_time: '11:00',
+          reason: 'Past time-off test'
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('Time-off cannot be requested for dates more than 0 working day(s) in the past');
+    });
+
     it('should reject without authentication', async () => {
       const res = await request(app)
         .post('/api/timeoff/apply')

@@ -37,6 +37,43 @@ const formatTime12h = (timeStr) => {
     return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
 };
 
+// Helper to get application timezone
+const getAppTimezone = async () => {
+    try {
+        const tzSetting = await Setting.findOne({ where: { key: 'application_timezone' } });
+        return tzSetting ? tzSetting.value : 'Asia/Kolkata';
+    } catch (e) {
+        return 'Asia/Kolkata';
+    }
+};
+
+// Internal validation function for past days restriction
+const validatePastDaysAllowed = async (dateStr) => {
+    const pastDaysSetting = await Setting.findOne({ where: { key: 'time_off_past_days_allowed' } });
+    const pastDaysAllowed = pastDaysSetting ? parseInt(pastDaysSetting.value) || 0 : 0;
+    const tz = await getAppTimezone();
+    // Use formatToParts to reliably extract date parts regardless of Node.js locale/ICU build
+    const todayParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date()).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+    const ty = parseInt(todayParts.year), tm = parseInt(todayParts.month), td = parseInt(todayParts.day);
+    // Walk back N working days (Sundays not counted)
+    const cursor = new Date(ty, tm - 1, td);
+    let workingDaysBack = 0;
+    while (workingDaysBack < pastDaysAllowed) {
+        cursor.setDate(cursor.getDate() - 1);
+        if (cursor.getDay() !== 0) workingDaysBack++;
+    }
+    const minDateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+    if (dateStr < minDateStr) {
+        return {
+            valid: false,
+            message: `Time-off cannot be requested for dates more than ${pastDaysAllowed} working day(s) in the past.`
+        };
+    }
+    return { valid: true };
+};
+
 // Internal validation function for time-off hours
 const validateTimeOffHours = async (staff_id, date, start_time, end_time, excludeId = null) => {
     const [attConfig, maxTimeOffSetting] = await Promise.all([
@@ -137,6 +174,12 @@ exports.applyTimeOff = async (req, res) => {
         const holiday = await isDateHoliday(dateOnlyStr);
         if (holiday.isHoliday) {
             return res.status(400).send({ message: `Time-off cannot be requested on a company holiday (${holiday.holidayName}).` });
+        }
+
+        // Validate past date restriction for time-off applications
+        const pastCheck = await validatePastDaysAllowed(dateOnlyStr);
+        if (!pastCheck.valid) {
+            return res.status(400).send({ message: pastCheck.message });
         }
 
         // Validate time format (HH:MM or HH:MM:SS)
@@ -289,6 +332,11 @@ exports.updateTimeOffDetails = async (req, res) => {
             const holiday = await isDateHoliday(dateOnlyStr);
             if (holiday.isHoliday) {
                 return res.status(400).send({ message: `Time-off cannot be requested on a company holiday (${holiday.holidayName}).` });
+            }
+
+            const pastCheck = await validatePastDaysAllowed(dateOnlyStr);
+            if (!pastCheck.valid) {
+                return res.status(400).send({ message: pastCheck.message });
             }
         }
 

@@ -26,6 +26,16 @@ async function seedSettings() {
             display_order: 1
         },
         {
+            key: 'time_off_past_days_allowed',
+            value: '0',
+            description: 'Number of past days users can select when applying for time-off (0 = only today and future)',
+            category: 'time_off',
+            data_type: 'number',
+            validation_rules: '{"min": 0, "max": 365, "step": 1, "required": true}',
+            is_public: true,
+            display_order: 2
+        },
+        {
             key: 'allowed_time_off_per_month',
             value: '2',
             description: 'Allowed time-off hours per month credited towards daily attendance compliance for salary processing',
@@ -33,7 +43,7 @@ async function seedSettings() {
             data_type: 'number',
             validation_rules: '{"min": 0, "max": 100, "step": 0.5, "required": true}',
             is_public: true,
-            display_order: 2
+            display_order: 3
         },
         {
             key: 'application_timezone',
