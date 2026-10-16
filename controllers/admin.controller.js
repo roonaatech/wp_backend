@@ -2130,6 +2130,7 @@ exports.getMonthlySummary = async (req, res) => {
 
         // Generate working dates in range [startDate, effectiveCutoff] (excluding Sundays and Company Holidays)
         const workingDatesTillToday = [];
+        const sundaysTillToday = [];
         if (attendanceEnabled && isPastOrCurrent) {
             const startParts = startDate.split('-').map(Number);
             const endParts = effectiveCutoff.split('-').map(Number);
@@ -2137,12 +2138,18 @@ exports.getMonthlySummary = async (req, res) => {
             const endD = new Date(endParts[0], endParts[1] - 1, endParts[2]);
 
             for (let curr = new Date(startD); curr <= endD; curr.setDate(curr.getDate() + 1)) {
-                if (curr.getDay() === 0) continue; // Skip Sunday (standard weekly off)
-
                 const yyyy = curr.getFullYear();
                 const mm = String(curr.getMonth() + 1).padStart(2, '0');
                 const dd = String(curr.getDate()).padStart(2, '0');
                 const dStr = `${yyyy}-${mm}-${dd}`;
+
+                if (curr.getDay() === 0) { // Sunday (standard weekly off)
+                    sundaysTillToday.push({
+                        date: dStr,
+                        weekday: 'Sun'
+                    });
+                    continue;
+                }
 
                 if (holidaysMap.has(dStr)) continue; // Skip Company Holiday
 
@@ -2266,7 +2273,7 @@ exports.getMonthlySummary = async (req, res) => {
                 });
             });
 
-            // Add absent days to daily_breakdown (Tab 1: Salary Consideration Breakdown)
+            // Add absent days and Sundays to daily_breakdown (Tab 1: Salary Consideration Breakdown)
             if (attendanceEnabled) {
                 absentDatesList.forEach(ab => {
                     compliance.daily_breakdown.push({
@@ -2288,6 +2295,37 @@ exports.getMonthlySummary = async (req, res) => {
                         remarks: ab.detail
                     });
                 });
+
+                // Add Sundays to daily_breakdown (Weekly Off)
+                const existingDates = new Set(compliance.daily_breakdown.map(d => d.date));
+                sundaysTillToday.forEach(sun => {
+                    const dStr = sun.date;
+                    if (joinDateStr && dStr < joinDateStr) {
+                        return;
+                    }
+                    if (!existingDates.has(dStr)) {
+                        compliance.daily_breakdown.push({
+                            date: dStr,
+                            weekday: sun.weekday,
+                            type: 'Sunday',
+                            attendance_minutes: 0,
+                            onduty_minutes: 0,
+                            timeoff_requested_minutes: 0,
+                            timeoff_credited_minutes: 0,
+                            timeoff_excess_minutes: 0,
+                            effective_work_minutes: 0,
+                            leave_days: 0,
+                            leave_credited: 0,
+                            leave_excess: 0,
+                            is_compliant: false,
+                            compliant_day_value: 0.0,
+                            status_label: 'Weekly Off',
+                            remarks: 'Sunday (Weekly Off)'
+                        });
+                        existingDates.add(dStr);
+                    }
+                });
+
                 compliance.daily_breakdown.sort((a, b) => a.date.localeCompare(b.date));
             }
 
