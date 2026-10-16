@@ -498,8 +498,11 @@ exports.getAttendanceLogsReport = async (req, res) => {
             allowedStaffIds = [req.userId];
         }
 
+        const { getAttendanceConfig } = require('../utils/attendanceConfig');
+        const attConfig = await getAttendanceConfig();
+
         // 2. Query filters
-        const { page = 1, limit = 10, userId, startDate, endDate, status, punchSource } = req.query;
+        const { page = 1, limit = 10, userId, startDate, endDate, status, punchSource, compliance } = req.query;
         const limitVal = parseInt(limit);
         const offsetVal = (parseInt(page) - 1) * limitVal;
 
@@ -507,6 +510,31 @@ exports.getAttendanceLogsReport = async (req, res) => {
 
         if (punchSource && punchSource !== 'all') {
             whereClause.punch_source = punchSource;
+        }
+
+        // Compliance filter
+        if (compliance && compliance !== 'all') {
+            const compHours = attConfig?.complianceHours || 9;
+            const thresholdMinutes = compHours * 60;
+            const compLower = String(compliance).toLowerCase();
+
+            if (compLower === 'in_progress') {
+                whereClause.check_in_time = { [Op.ne]: null };
+                whereClause.check_out_time = null;
+            } else if (compLower === 'compliant') {
+                whereClause.check_in_time = { [Op.ne]: null };
+                whereClause.check_out_time = { [Op.ne]: null };
+                if (!whereClause[Op.and]) whereClause[Op.and] = [];
+                whereClause[Op.and].push(
+                    db.sequelize.literal(`(CASE WHEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) > 0 THEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) WHEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) > 0 THEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) / 60 ELSE 0 END) >= ${thresholdMinutes}`)
+                );
+            } else if (compLower === 'non_compliant') {
+                whereClause.check_out_time = { [Op.ne]: null };
+                if (!whereClause[Op.and]) whereClause[Op.and] = [];
+                whereClause[Op.and].push(
+                    db.sequelize.literal(`(CASE WHEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) > 0 THEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) WHEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) > 0 THEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) / 60 ELSE 0 END) < ${thresholdMinutes}`)
+                );
+            }
         }
 
         // Scope filter
@@ -583,10 +611,6 @@ exports.getAttendanceLogsReport = async (req, res) => {
 
             return plain;
         });
-
-        const { getAttendanceConfig } = require('../utils/attendanceConfig');
-        const attConfig = await getAttendanceConfig();
-
         res.status(200).send({
             totalItems: count,
             totalPages: Math.ceil(count / limitVal),
