@@ -143,15 +143,34 @@ exports.getMissedAttendance = async (req, res) => {
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         });
 
-        // Filter staff by search if provided
-        const filteredStaff = search
-            ? staffList.filter(s => {
+        // Parse staff_ids filter if provided
+        const staffIdsParam = req.query.staff_ids || req.query.staffIds;
+        let targetStaffIds = null;
+        if (staffIdsParam) {
+            if (Array.isArray(staffIdsParam)) {
+                targetStaffIds = new Set(staffIdsParam.map(id => Number(id)));
+            } else if (typeof staffIdsParam === 'string' && staffIdsParam.trim()) {
+                targetStaffIds = new Set(
+                    staffIdsParam.split(',')
+                        .map(s => Number(s.trim()))
+                        .filter(n => !isNaN(n) && n > 0)
+                );
+            }
+        }
+
+        // Filter staff by selected staff IDs and search
+        let filteredStaff = staffList;
+        if (targetStaffIds && targetStaffIds.size > 0) {
+            filteredStaff = filteredStaff.filter(s => targetStaffIds.has(Number(s.staffid)));
+        }
+        if (search) {
+            filteredStaff = filteredStaff.filter(s => {
                 const fullName = `${s.firstname || ''} ${s.lastname || ''}`.toLowerCase();
                 const email = (s.email || '').toLowerCase();
                 const idStr = String(s.staffid);
                 return fullName.includes(search) || email.includes(search) || idStr.includes(search);
-            })
-            : staffList;
+            });
+        }
 
         if (filteredStaff.length === 0) {
             return res.status(200).send({
