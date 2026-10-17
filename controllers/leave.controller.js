@@ -359,7 +359,7 @@ exports.getMyLeaves = async (req, res) => {
         // Fetch On-Duty Logs
         const onDutyLogs = await OnDutyLog.findAll({
             where: { staff_id: req.userId },
-            attributes: ['id', 'client_name', 'location', 'end_location', 'purpose', 'start_time', 'end_time', 'status', 'rejection_reason', 'manager_id'],
+            attributes: ['id', 'client_name', 'location', 'end_location', 'purpose', 'start_time', 'end_time', 'completed_end_time', 'status', 'rejection_reason', 'manager_id'],
             raw: true
         });
 
@@ -400,6 +400,9 @@ exports.getMyLeaves = async (req, res) => {
                 status: !l.end_time ? 'Active' : (l.status || 'Pending'),
                 start: l.start_time,
                 end: l.end_time,
+                start_time: l.start_time,
+                end_time: l.end_time,
+                completed_end_time: l.completed_end_time || l.end_time,
                 location: l.location,
                 end_location: l.end_location,
                 client_name: l.client_name,
@@ -598,6 +601,7 @@ exports.getPendingLeaves = async (req, res) => {
             purpose: l.purpose,
             start_time: formatDateInTimezone(l.start_time, tz1),
             end_time: formatDateInTimezone(l.end_time, tz1),
+            completed_end_time: formatDateInTimezone(l.completed_end_time || l.end_time, tz1),
             start_lat: l.start_lat,
             start_long: l.start_long,
             end_lat: l.end_lat,
@@ -673,21 +677,42 @@ exports.getManageableRequests = async (req, res) => {
         const canApproveAllTimeOff = userRole && userRole.can_approve_timeoff === 'all';
 
         // Get subordinates (direct reportees) for filtering
-        const subordinates = await Staff.findAll({
+        let subordinates = await Staff.findAll({
             attributes: ['staffid', 'firstname', 'lastname', 'email'],
             where: { approving_manager_id: req.userId, active: 1 },
             raw: true
         });
+        if (status === 'Pending') {
+            subordinates = subordinates.filter(s => Number(s.staffid) !== Number(req.userId));
+        }
         const subordinateIds = subordinates.map(s => s.staffid);
 
         // Get all active staff for 'all' permissions
         let allStaff = [];
         if (canApproveAllLeave || canApproveAllOnDuty || canApproveAllTimeOff) {
             allStaff = await Staff.findAll({
-                attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                attributes: ['staffid', 'firstname', 'lastname', 'email', 'role'],
                 where: { active: 1 },
                 raw: true
             });
+
+            // When querying Pending requests, exclude staff the current user cannot approve:
+            // 1. Cannot approve self (req.userId)
+            // 2. Lower member cannot approve requests of higher role member
+            if (status === 'Pending') {
+                const roles = await Role.findAll({ attributes: ['id', 'hierarchy_level'], raw: true });
+                const roleHierarchyMap = Object.fromEntries(roles.map(r => [r.id, r.hierarchy_level]));
+                const currentLevel = userRole ? userRole.hierarchy_level : 999;
+
+                allStaff = allStaff.filter(s => {
+                    if (Number(s.staffid) === Number(req.userId)) return false;
+                    if (currentLevel > 0) {
+                        const sLevel = roleHierarchyMap[s.role] ?? 999;
+                        if (sLevel < currentLevel) return false;
+                    }
+                    return true;
+                });
+            }
         }
 
         // Determine manageable staff for name filter dropdown
@@ -716,10 +741,9 @@ exports.getManageableRequests = async (req, res) => {
             leaveWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
         } else {
             // No name filter - apply permission-based filtering
-            if (!canApproveAllLeave) {
-                leaveWhere.staff_id = { [Op.in]: leaveStaffIds };
+            if (!canApproveAllLeave || status === 'Pending') {
+                leaveWhere.staff_id = { [Op.in]: leaveStaffIds.length > 0 ? leaveStaffIds : [-1] };
             }
-            // If canApproveAllLeave is true, no staff_id filter needed (show all)
         }
 
         // Apply leave type filter
@@ -764,10 +788,9 @@ exports.getManageableRequests = async (req, res) => {
             onDutyWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
         } else {
             // No name filter - apply permission-based filtering
-            if (!canApproveAllOnDuty) {
-                onDutyWhere.staff_id = { [Op.in]: onDutyStaffIds };
+            if (!canApproveAllOnDuty || status === 'Pending') {
+                onDutyWhere.staff_id = { [Op.in]: onDutyStaffIds.length > 0 ? onDutyStaffIds : [-1] };
             }
-            // If canApproveAllOnDuty is true, no staff_id filter needed (show all)
         }
 
         // Apply leave type filter - if a specific leave type is selected, on-duty logs won't match
@@ -860,10 +883,9 @@ exports.getManageableRequests = async (req, res) => {
             timeOffWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
         } else {
             // No name filter - apply permission-based filtering
-            if (!canApproveAllTimeOff) {
-                timeOffWhere.staff_id = { [Op.in]: timeOffStaffIds };
+            if (!canApproveAllTimeOff || status === 'Pending') {
+                timeOffWhere.staff_id = { [Op.in]: timeOffStaffIds.length > 0 ? timeOffStaffIds : [-1] };
             }
-            // If canApproveAllTimeOff is true, no staff_id filter needed (show all)
         }
 
         // Apply leave type filter - Time-Off is not a leave type, so skip if specific leave type selected
@@ -982,14 +1004,14 @@ exports.updateLeaveStatus = async (req, res) => {
         if (requestingUser && requestingUser.role) {
             const requestingUserRole = await Role.findByPk(requestingUser.role);
             if (requestingUserRole && userRole.hierarchy_level > requestingUserRole.hierarchy_level) {
-                return res.status(403).send({ message: "You cannot approve or reject requests from a higher role member." });
+                return res.status(400).send({ message: "You cannot approve or reject requests from a higher role member." });
             }
         }
 
         // If permission is 'subordinates', validate the request is from a subordinate
         if (userRole.can_approve_leave === 'subordinates') {
             if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
-                return res.status(403).send({ message: "You can only approve leave requests from your direct subordinates." });
+                return res.status(400).send({ message: "You can only approve leave requests from your direct subordinates." });
             }
         }
 

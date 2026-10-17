@@ -95,204 +95,162 @@ exports.startOnDuty = async (req, res) => {
 };
 
 // End on-duty visit
-exports.endOnDuty = (req, res) => {
+exports.endOnDuty = async (req, res) => {
     const { latitude, longitude, end_location } = req.body;
 
-    // Find the active on-duty visit
-    OnDutyLog.findOne({
-        where: {
-            staff_id: req.userId,
-            end_time: null
-        },
-        order: [['start_time', 'DESC']]
-    })
-        .then(async onDuty => {
-            if (!onDuty) {
-                return res.status(404).send({ message: "No active on-duty visit found" });
-            }
+    try {
+        // Find the active on-duty visit
+        const onDuty = await OnDutyLog.findOne({
+            where: {
+                staff_id: req.userId,
+                end_time: null
+            },
+            order: [['start_time', 'DESC']]
+        });
 
-            // Store actual UTC timestamp (Date object), NOT a formatted string
-            const now = new Date();
+        if (!onDuty) {
+            return res.status(404).send({ message: "No active on-duty visit found" });
+        }
 
-            // Update the on-duty record with end time
-            return onDuty.update({
-                end_time: now,
-                end_lat: latitude,
-                end_long: longitude,
-                end_location: end_location,
-                status: 'Pending'
+        // Store actual UTC timestamp (Date object), NOT a formatted string
+        const now = new Date();
+
+        // Update the on-duty record with end time and original completed_end_time
+        const updatedOnDuty = await onDuty.update({
+            end_time: now,
+            completed_end_time: now,
+            end_lat: latitude,
+            end_long: longitude,
+            end_location: end_location,
+            status: 'Pending'
+        });
+
+        // Get timezone to format times correctly
+        const tz = await getAppTimezone();
+
+        // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
+        const formatDateInTimezone = (dateObj) => {
+            if (!dateObj) return null;
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                hourCycle: 'h23'
             });
-        })
-        .then(async (updatedOnDuty) => {
-            try {
-                console.log('\n=== EndOnDuty - Creating Approval ===');
-                console.log('Staff ID:', req.userId);
-                console.log('On-Duty Log ID:', updatedOnDuty.id);
 
-                // Get timezone to format times correctly
-                const tz = await getAppTimezone();
+            const parts = formatter.formatToParts(dateObj);
+            const p = {};
+            parts.forEach(part => { p[part.type] = part.value; });
+            return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+        };
 
-                // Helper to format Date in app timezone as YYYY-MM-DD HH:mm:ss
-                const formatDateInTimezone = (dateObj) => {
-                    if (!dateObj) return null;
-                    const formatter = new Intl.DateTimeFormat('en-US', {
-                        timeZone: tz,
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                        hour12: false,
-                        hourCycle: 'h23'
-                    });
+        try {
+            console.log('\n=== EndOnDuty - Creating Approval ===');
+            console.log('Staff ID:', req.userId);
+            console.log('On-Duty Log ID:', updatedOnDuty.id);
 
-                    const parts = formatter.formatToParts(dateObj);
-                    const p = {};
-                    parts.forEach(part => { p[part.type] = part.value; });
-                    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
-                };
+            // Log activity
+            await logActivity({
+                admin_id: req.userId,
+                action: 'UPDATE',
+                entity: 'OnDutyLog',
+                entity_id: updatedOnDuty.id,
+                affected_user_id: req.userId,
+                description: `Ended on-duty visit at ${updatedOnDuty.client_name}`,
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
 
-                // Log activity
-                await logActivity({
-                    admin_id: req.userId,
-                    action: 'UPDATE',
-                    entity: 'OnDutyLog',
-                    entity_id: updatedOnDuty.id,
-                    affected_user_id: req.userId,
-                    description: `Ended on-duty visit at ${updatedOnDuty.client_name}`,
-                    ip_address: getClientIp(req),
-                    user_agent: getUserAgent(req)
+            // Get the staff member's approving_manager_id
+            const staff = await User.findByPk(req.userId);
+
+            let manager = null;
+            if (staff && staff.approving_manager_id) {
+                // Create approval record for on-duty
+                await Approval.create({
+                    on_duty_log_id: updatedOnDuty.id,
+                    manager_id: staff.approving_manager_id,
+                    status: 'pending'
                 });
+                console.log('✅ Approval created successfully');
 
-                // Get the staff member's approving_manager_id
-                const staff = await User.findByPk(req.userId);
-
-                console.log('Staff found:', !!staff);
-                console.log('Staff name:', staff?.firstname, staff?.lastname);
-                console.log('Staff role:', staff?.role);
-                console.log('Approving Manager ID:', staff?.approving_manager_id);
-
-                let manager = null;
-                if (staff && staff.approving_manager_id) {
-                    // Create approval record for on-duty
-                    const approval = await Approval.create({
-                        on_duty_log_id: updatedOnDuty.id,
-                        manager_id: staff.approving_manager_id,
-                        status: 'pending'
-                    });
-                    console.log('✅ Approval created successfully');
-
-                    // Send Email to Manager
-                    try {
-                        manager = await User.findByPk(staff.approving_manager_id);
-                        if (manager && manager.email) {
-                            emailService.sendTemplateEmail(manager.email, "onduty_applied", {
-                                user_name: `${staff.firstname} ${staff.lastname}`,
-                                start_date: formatDate(updatedOnDuty.start_time),
-                                end_date: formatDate(updatedOnDuty.end_time),
-                                reason: `${updatedOnDuty.purpose} at ${updatedOnDuty.client_name}`
-                            });
-                            
-                            // Check if manager is on leave, notify next level
-                            await hierarchyUtil.notifyNextLevelIfManagerOnLeave(manager, staff, 'onduty', {
-                                client_name: updatedOnDuty.client_name,
-                                location: updatedOnDuty.location,
-                                purpose: updatedOnDuty.purpose,
-                                start_time: formatDate(updatedOnDuty.start_time),
-                                end_time: formatDate(updatedOnDuty.end_time)
-                            });
-                        }
-                    } catch (emailErr) {
-                        console.error("Failed to send email:", emailErr);
-                    }
-
-                } else {
-                    console.log('⚠️  Staff has no approving_manager_id - approval NOT created');
-                }
-
-                // Send Confirmation Email to Applicant
+                // Send Email to Manager
                 try {
-                    if (staff && staff.email) {
-                        console.log('--- Email Trigger: On-Duty Confirmation ---');
-                        console.log(`Sending onduty_applied_confirmation email to ${staff.email}`);
-
-                        // Get manager email for CC if available
-                        const managerEmail = (manager && manager.email) ? manager.email : null;
-
-                        const result = await emailService.sendTemplateEmail(staff.email, "onduty_applied_confirmation", {
+                    manager = await User.findByPk(staff.approving_manager_id);
+                    if (manager && manager.email) {
+                        emailService.sendTemplateEmail(manager.email, "onduty_applied", {
                             user_name: `${staff.firstname} ${staff.lastname}`,
                             start_date: formatDate(updatedOnDuty.start_time),
                             end_date: formatDate(updatedOnDuty.end_time),
+                            reason: `${updatedOnDuty.purpose} at ${updatedOnDuty.client_name}`
+                        });
+                        
+                        // Check if manager is on leave, notify next level
+                        await hierarchyUtil.notifyNextLevelIfManagerOnLeave(manager, staff, 'onduty', {
                             client_name: updatedOnDuty.client_name,
-                            reason: updatedOnDuty.purpose
-                        }, managerEmail);
-                        console.log('Confirmation email result:', result);
-                    } else {
-                        console.log('Applicant has no email or not found.');
+                            location: updatedOnDuty.location,
+                            purpose: updatedOnDuty.purpose,
+                            start_time: formatDate(updatedOnDuty.start_time),
+                            end_time: formatDate(updatedOnDuty.end_time)
+                        });
                     }
                 } catch (emailErr) {
-                    console.error("Failed to send confirmation email:", emailErr);
+                    console.error("Failed to send email:", emailErr);
                 }
 
-                console.log('=== EndOnDuty Complete ===\n');
-
-                // Format the response with timezone-aware time strings
-                const baseData = updatedOnDuty.get ? updatedOnDuty.get({ plain: true }) : updatedOnDuty;
-                const formattedData = {
-                    ...baseData,
-                    start_time: formatDateInTimezone(updatedOnDuty.start_time),
-                    end_time: formatDateInTimezone(updatedOnDuty.end_time)
-                };
-
-                res.status(200).send({
-                    message: "On-duty ended successfully",
-                    data: formattedData
-                });
-            } catch (err) {
-                console.error('❌ Error creating approval:', err.message);
-                console.error(err.stack);
-
-                // Format the response even in error case
-                const tz = await getAppTimezone();
-
-                const formatDateInTimezone = (dateObj) => {
-                    if (!dateObj) return null;
-                    const formatter = new Intl.DateTimeFormat('en-US', {
-                        timeZone: tz,
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                        hour12: false,
-                        hourCycle: 'h23'
-                    });
-
-                    const parts = formatter.formatToParts(dateObj);
-                    const p = {};
-                    parts.forEach(part => { p[part.type] = part.value; });
-                    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
-                };
-
-                const baseData = updatedOnDuty.get ? updatedOnDuty.get({ plain: true }) : updatedOnDuty;
-                const formattedData = {
-                    ...baseData,
-                    start_time: formatDateInTimezone(updatedOnDuty.start_time),
-                    end_time: formatDateInTimezone(updatedOnDuty.end_time)
-                };
-
-                // Still send success response even if approval creation fails
-                res.status(200).send({
-                    message: "On-duty ended successfully",
-                    data: formattedData
-                });
+            } else {
+                console.log('⚠️  Staff has no approving_manager_id - approval NOT created');
             }
-        })
-        .catch(err => {
-            res.status(500).send({ message: err.message });
+
+            // Send Confirmation Email to Applicant
+            try {
+                if (staff && staff.email) {
+                    console.log('--- Email Trigger: On-Duty Confirmation ---');
+                    console.log(`Sending onduty_applied_confirmation email to ${staff.email}`);
+
+                    // Get manager email for CC if available
+                    const managerEmail = (manager && manager.email) ? manager.email : null;
+
+                    const result = await emailService.sendTemplateEmail(staff.email, "onduty_applied_confirmation", {
+                        user_name: `${staff.firstname} ${staff.lastname}`,
+                        start_date: formatDate(updatedOnDuty.start_time),
+                        end_date: formatDate(updatedOnDuty.end_time),
+                        client_name: updatedOnDuty.client_name,
+                        reason: updatedOnDuty.purpose
+                    }, managerEmail);
+                    console.log('Confirmation email result:', result);
+                }
+            } catch (emailErr) {
+                console.error("Failed to send confirmation email:", emailErr);
+            }
+
+            console.log('=== EndOnDuty Complete ===\n');
+        } catch (innerErr) {
+            console.error('❌ Error creating approval or sending email:', innerErr.message);
+        }
+
+        // Format the response with timezone-aware time strings
+        const baseData = updatedOnDuty.get ? updatedOnDuty.get({ plain: true }) : updatedOnDuty;
+        const formattedData = {
+            ...baseData,
+            start_time: formatDateInTimezone(updatedOnDuty.start_time),
+            end_time: formatDateInTimezone(updatedOnDuty.end_time),
+            completed_end_time: formatDateInTimezone(updatedOnDuty.completed_end_time || updatedOnDuty.end_time)
+        };
+
+        return res.status(200).send({
+            message: "On-duty ended successfully",
+            data: formattedData
         });
+    } catch (err) {
+        console.error("Error in endOnDuty:", err);
+        return res.status(500).send({ message: err.message });
+    }
 };
 
 // Get active on-duty visit for the current user
@@ -443,6 +401,7 @@ exports.getOnDutyByStatus = async (req, res) => {
             purpose: log.purpose,
             start_time: formatDateInTimezone(log.start_time),
             end_time: formatDateInTimezone(log.end_time),
+            completed_end_time: formatDateInTimezone(log.completed_end_time || log.end_time),
             status: log.status,
             rejection_reason: log.rejection_reason,
             manager_id: log.manager_id,
@@ -537,6 +496,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
             purpose: log.purpose,
             start_time: formatDateInTimezone(log.start_time),
             end_time: formatDateInTimezone(log.end_time),
+            completed_end_time: formatDateInTimezone(log.completed_end_time || log.end_time),
             status: log.status,
             start_lat: log.start_lat,
             start_long: log.start_long,
@@ -561,7 +521,7 @@ exports.getAllActiveOnDuty = async (req, res) => {
 exports.updateOnDutyDetails = async (req, res) => {
     try {
         const { id } = req.params;
-        const { client_name, location, end_location, purpose } = req.body;
+        const { client_name, location, end_location, purpose, end_time, end_date } = req.body;
 
         const log = await OnDutyLog.findByPk(id);
         if (!log) {
@@ -578,10 +538,74 @@ exports.updateOnDutyDetails = async (req, res) => {
             return res.status(403).send({ message: "Unauthorized to edit this request." });
         }
 
+        const tz = await getAppTimezone();
+        const oldValues = {
+            client_name: log.client_name,
+            location: log.location,
+            end_location: log.end_location,
+            purpose: log.purpose,
+            end_time: log.end_time
+        };
+
         if (client_name) log.client_name = client_name;
         if (location) log.location = location;
         if (end_location) log.end_location = end_location;
         if (purpose) log.purpose = purpose;
+
+        // If end_time is provided, validate and update
+        if (end_time) {
+            let parsedEndTime = null;
+            let timeString = String(end_time).trim();
+
+            // If end_date is provided and timeString is just "HH:mm" or "HH:mm:ss"
+            if (end_date && /^\d{1,2}:\d{2}(:\d{2})?$/.test(timeString)) {
+                timeString = `${end_date} ${timeString}`;
+            }
+
+            // Check if it's a date-time string (YYYY-MM-DD HH:mm:ss or YYYY-MM-DD HH:mm)
+            if (/^\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(:\d{2})?$/.test(timeString)) {
+                parsedEndTime = timezoneUtil.parseTimeInTimezone(timeString, tz);
+            } else if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(timeString)) {
+                // If only HH:mm is passed without date, use start_time's date in app timezone
+                const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+                const ymd = formatter.format(new Date(log.start_time));
+                parsedEndTime = timezoneUtil.parseTimeInTimezone(`${ymd} ${timeString}`, tz);
+            } else {
+                const d = new Date(timeString);
+                if (!isNaN(d.getTime())) {
+                    parsedEndTime = d;
+                }
+            }
+
+            if (!parsedEndTime || isNaN(parsedEndTime.getTime())) {
+                return res.status(400).send({ message: "Invalid end time format." });
+            }
+
+            // If completed_end_time was not set previously, preserve the original end_time
+            if (!log.completed_end_time && log.end_time) {
+                log.completed_end_time = log.end_time;
+            }
+
+            const maxAllowedEndTime = new Date(log.completed_end_time || log.end_time);
+            const startTime = new Date(log.start_time);
+
+            // Validation: End time cannot be greater than the end time already completed
+            // Allow 1 second tolerance for round-trip milliseconds
+            if (parsedEndTime.getTime() > maxAllowedEndTime.getTime() + 1000) {
+                return res.status(400).send({
+                    message: `End time cannot be greater than the end time already completed (${formatDate(maxAllowedEndTime)}).`
+                });
+            }
+
+            // Validation: End time must be after the start time
+            if (parsedEndTime.getTime() <= startTime.getTime()) {
+                return res.status(400).send({
+                    message: `End time must be after the start time (${formatDate(startTime)}).`
+                });
+            }
+
+            log.end_time = parsedEndTime;
+        }
 
         await log.save();
 
@@ -592,12 +616,47 @@ exports.updateOnDutyDetails = async (req, res) => {
             entity_id: log.id,
             affected_user_id: log.staff_id,
             description: `Updated on-duty request ID: ${log.id} (${log.client_name || 'On-Duty'})`,
-            new_values: { client_name, location, end_location, purpose },
+            old_values: oldValues,
+            new_values: {
+                client_name: log.client_name,
+                location: log.location,
+                end_location: log.end_location,
+                purpose: log.purpose,
+                end_time: log.end_time
+            },
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)
         });
 
-        res.status(200).send({ message: "On-Duty details updated successfully!", log });
+        const formatDateInTimezone = (dateObj) => {
+            if (!dateObj) return null;
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                hourCycle: 'h23'
+            });
+
+            const parts = formatter.formatToParts(dateObj);
+            const p = {};
+            parts.forEach(part => { p[part.type] = part.value; });
+            return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+        };
+
+        const baseData = log.get ? log.get({ plain: true }) : log;
+        const formattedData = {
+            ...baseData,
+            start_time: formatDateInTimezone(log.start_time),
+            end_time: formatDateInTimezone(log.end_time),
+            completed_end_time: formatDateInTimezone(log.completed_end_time || log.end_time)
+        };
+
+        res.status(200).send({ message: "On-Duty details updated successfully!", log: formattedData });
     } catch (err) {
         res.status(500).send({ message: err.message });
     }
@@ -689,14 +748,14 @@ exports.updateOnDutyStatus = async (req, res) => {
         if (requestingUser && requestingUser.role) {
             const requestingUserRole = await Role.findByPk(requestingUser.role);
             if (requestingUserRole && userRole.hierarchy_level > requestingUserRole.hierarchy_level) {
-                return res.status(403).send({ message: "You cannot approve or reject requests from a higher role member." });
+                return res.status(400).send({ message: "You cannot approve or reject requests from a higher role member." });
             }
         }
 
         // If permission is 'subordinates', validate the request is from a subordinate
         if (userRole.can_approve_onduty === 'subordinates') {
             if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
-                return res.status(403).send({ message: "You can only approve on-duty requests from your direct subordinates." });
+                return res.status(400).send({ message: "You can only approve on-duty requests from your direct subordinates." });
             }
         }
 

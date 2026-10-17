@@ -480,14 +480,14 @@ exports.updateTimeOffStatus = async (req, res) => {
         if (requestingUser && requestingUser.role) {
             const requestingUserRole = await Role.findByPk(requestingUser.role);
             if (requestingUserRole && userRole.hierarchy_level > requestingUserRole.hierarchy_level) {
-                return res.status(403).send({ message: "You cannot approve or reject requests from a higher role member." });
+                return res.status(400).send({ message: "You cannot approve or reject requests from a higher role member." });
             }
         }
 
         // If permission is 'subordinates', validate the request is from a subordinate
         if (userRole.can_approve_timeoff === 'subordinates') {
             if (!requestingUser || requestingUser.approving_manager_id !== req.userId) {
-                return res.status(403).send({ message: "You can only approve time-off requests from your direct subordinates." });
+                return res.status(400).send({ message: "You can only approve time-off requests from your direct subordinates." });
             }
         }
 

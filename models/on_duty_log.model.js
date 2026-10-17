@@ -32,6 +32,9 @@ module.exports = (sequelize, Sequelize) => {
         end_time: {
             type: Sequelize.DATE
         },
+        completed_end_time: {
+            type: Sequelize.DATE
+        },
         end_lat: {
             type: Sequelize.STRING
         },

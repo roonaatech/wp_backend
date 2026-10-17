@@ -165,6 +165,58 @@ describe('On-Duty Controller', () => {
 
       expect(res.status).toBe(403);
     });
+
+    it('should validate end_time constraints when updating on-duty', async () => {
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.decode(employeeToken);
+      const staffId = decoded.id;
+
+      const baseDate = '2026-10-15';
+      const timezoneUtil = require('../../utils/timezone.util');
+      const tz = 'Asia/Kolkata';
+      const testLog = await db.on_duty_logs.create({
+        staff_id: staffId,
+        client_name: 'Test Client',
+        location: 'Office',
+        purpose: 'Site visit',
+        start_time: timezoneUtil.parseTimeInTimezone(`${baseDate} 09:00:00`, tz),
+        end_time: timezoneUtil.parseTimeInTimezone(`${baseDate} 17:00:00`, tz),
+        completed_end_time: timezoneUtil.parseTimeInTimezone(`${baseDate} 17:00:00`, tz),
+        status: 'Pending'
+      });
+
+      // 1. Try to set end_time greater than completed_end_time (e.g. 18:00)
+      const resGreater = await request(app)
+        .put(`/api/onduty/${testLog.id}`)
+        .set('x-access-token', employeeToken)
+        .send({
+          end_time: `${baseDate} 18:00:00`
+        });
+      expect(resGreater.status).toBe(400);
+      expect(resGreater.body.message).toMatch(/cannot be greater than the end time already completed/i);
+
+      // 2. Try to set end_time earlier than start_time (e.g. 08:00)
+      const resEarlier = await request(app)
+        .put(`/api/onduty/${testLog.id}`)
+        .set('x-access-token', employeeToken)
+        .send({
+          end_time: `${baseDate} 08:00:00`
+        });
+      expect(resEarlier.status).toBe(400);
+      expect(resEarlier.body.message).toMatch(/must be after the start time/i);
+
+      // 3. Set a valid earlier end_time (e.g. 14:00)
+      const resValid = await request(app)
+        .put(`/api/onduty/${testLog.id}`)
+        .set('x-access-token', employeeToken)
+        .send({
+          end_time: `${baseDate} 14:00:00`
+        });
+      expect(resValid.status).toBe(200);
+
+      // Cleanup
+      await testLog.destroy();
+    });
   });
 
   describe('DELETE /api/onduty/:id', () => {
