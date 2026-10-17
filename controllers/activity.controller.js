@@ -42,8 +42,28 @@ exports.getAllActivities = async (req, res) => {
 
         if (action) where.action = action;
         if (entity) where.entity = entity;
-        if (admin_id) where.admin_id = parseInt(admin_id);
-        if (affected_user_id) where.affected_user_id = parseInt(affected_user_id);
+        if (admin_id && affected_user_id) {
+            where.admin_id = parseInt(admin_id);
+            where.affected_user_id = parseInt(affected_user_id);
+        } else if (admin_id) {
+            const targetId = parseInt(admin_id);
+            if (where[Op.or]) {
+                where[Op.and] = where[Op.and] || [];
+                where[Op.and].push({
+                    [Op.or]: [
+                        { admin_id: targetId },
+                        { affected_user_id: targetId }
+                    ]
+                });
+            } else {
+                where[Op.or] = [
+                    { admin_id: targetId },
+                    { affected_user_id: targetId }
+                ];
+            }
+        } else if (affected_user_id) {
+            where.affected_user_id = parseInt(affected_user_id);
+        }
 
         // Handle date filtering - convert to UTC ISO format for reliable comparison
         if (startDate || endDate) {
@@ -123,6 +143,24 @@ exports.getActivitySummary = async (req, res) => {
                 { admin_id: { [Op.in]: subordinateIds } },
                 { affected_user_id: { [Op.in]: subordinateIds } }
             ];
+        }
+
+        if (req.query.admin_id) {
+            const targetId = parseInt(req.query.admin_id);
+            if (where[Op.or]) {
+                where[Op.and] = where[Op.and] || [];
+                where[Op.and].push({
+                    [Op.or]: [
+                        { admin_id: targetId },
+                        { affected_user_id: targetId }
+                    ]
+                });
+            } else {
+                where[Op.or] = [
+                    { admin_id: targetId },
+                    { affected_user_id: targetId }
+                ];
+            }
         }
 
         if (startDate || endDate) {
@@ -316,8 +354,28 @@ exports.exportActivities = async (req, res) => {
 
         if (action) where.action = action;
         if (entity) where.entity = entity;
-        if (admin_id) where.admin_id = parseInt(admin_id);
-        if (affected_user_id) where.affected_user_id = parseInt(affected_user_id);
+        if (admin_id && affected_user_id) {
+            where.admin_id = parseInt(admin_id);
+            where.affected_user_id = parseInt(affected_user_id);
+        } else if (admin_id) {
+            const targetId = parseInt(admin_id);
+            if (where[Op.or]) {
+                where[Op.and] = where[Op.and] || [];
+                where[Op.and].push({
+                    [Op.or]: [
+                        { admin_id: targetId },
+                        { affected_user_id: targetId }
+                    ]
+                });
+            } else {
+                where[Op.or] = [
+                    { admin_id: targetId },
+                    { affected_user_id: targetId }
+                ];
+            }
+        } else if (affected_user_id) {
+            where.affected_user_id = parseInt(affected_user_id);
+        }
 
         if (startDate || endDate) {
             where.createdAt = {};
@@ -343,6 +401,12 @@ exports.exportActivities = async (req, res) => {
                     attributes: ['staffid', 'firstname', 'lastname', 'email'],
                     as: 'admin',
                     foreignKey: 'admin_id'
+                },
+                {
+                    model: User,
+                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                    as: 'affected_user',
+                    foreignKey: 'affected_user_id'
                 }
             ],
             order: [['createdAt', 'DESC']]
@@ -353,12 +417,13 @@ exports.exportActivities = async (req, res) => {
 
         activities.forEach(activity => {
             const admin = activity.admin ? `${activity.admin.firstname} ${activity.admin.lastname}` : 'Unknown';
+            const affected = activity.affected_user ? `${activity.affected_user.firstname} ${activity.affected_user.lastname}` : '';
             const d = new Date(activity.createdAt);
             const timestamp = `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()} ${d.getHours() % 12 || 12}:${d.getMinutes().toString().padStart(2, '0')} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
             const description = (activity.description || '').replace(/"/g, '""');
             const device = detectDeviceFromActivity(activity);
 
-            csv += `"${timestamp}","${activity.action}","${activity.entity}","${admin}","${device}","","${description}"\n`;
+            csv += `"${timestamp}","${activity.action}","${activity.entity}","${admin}","${device}","${affected}","${description}"\n`;
         });
 
         res.setHeader('Content-Type', 'text/csv');

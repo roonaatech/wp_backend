@@ -494,10 +494,17 @@ exports.regularizeAttendance = async (req, res) => {
 
                 // 3. Update or Create
                 let isCreated = false;
+                let old_values = null;
                 if (targetLog) {
+                    old_values = {
+                        date: targetLog.date,
+                        check_in_time: targetLog.check_in_time ? timezoneUtil.formatTimeOnly(targetLog.check_in_time, tz) : null,
+                        check_out_time: targetLog.check_out_time ? timezoneUtil.formatTimeOnly(targetLog.check_out_time, tz) : null
+                    };
                     await targetLog.update({
                         check_in_time: parsedInDate,
                         check_out_time: parsedOutDate,
+                        punch_source: 'MANUAL',
                         phone_model: 'Manual Regularization (HR)'
                     });
                 } else {
@@ -506,6 +513,7 @@ exports.regularizeAttendance = async (req, res) => {
                         date,
                         check_in_time: parsedInDate,
                         check_out_time: parsedOutDate,
+                        punch_source: 'MANUAL',
                         phone_model: 'Manual Regularization (HR)',
                         ip_address: getClientIp(req)
                     });
@@ -531,7 +539,7 @@ exports.regularizeAttendance = async (req, res) => {
                 }
 
                 // 5. Activity Log
-                const actionDesc = `${isCreated ? 'Created' : 'Updated'} manual attendance for ${staff.firstname} ${staff.lastname} on ${date} (${check_in_time} to ${check_out_time}). Reason: ${reason}`;
+                const actionDesc = `${isCreated ? 'Created' : 'Updated'} manual attendance for ${staff.firstname} ${staff.lastname} on ${date} (${normIn.str} to ${normOut.str}). Reason: ${reason}${notes ? ` - ${notes}` : ''}`;
                 await logActivity({
                     admin_id: req.userId,
                     action: isCreated ? 'CREATE' : 'UPDATE',
@@ -539,13 +547,13 @@ exports.regularizeAttendance = async (req, res) => {
                     entity_id: targetLog.id,
                     affected_user_id: staff_id,
                     description: actionDesc,
+                    old_values,
                     new_values: {
-                        staff_id,
                         date,
-                        check_in_time: normIn.str,
-                        check_out_time: normOut.str,
+                        check_in_time: timezoneUtil.formatTimeOnly(parsedInDate, tz),
+                        check_out_time: timezoneUtil.formatTimeOnly(parsedOutDate, tz),
                         reason,
-                        notes
+                        notes: notes || undefined
                     },
                     ip_address: getClientIp(req),
                     user_agent: getUserAgent(req)
