@@ -163,7 +163,7 @@ exports.signin = async (req, res) => {
             }
         }
 
-        // 2. If user not found yet (Local Auth, or First-time Sync where userid is null), find by Email or Secondary Email
+        // 2. If user not found yet (Local Auth, or First-time Sync where userid is null), find by Official/Primary Email
         let isServiceAccount = false;
         if (!user) {
             const rawEmail = (req.body.email || '').trim();
@@ -172,9 +172,7 @@ exports.signin = async (req, res) => {
                 where: {
                     [Op.or]: [
                         { email: rawEmail },
-                        { secondary_email: rawEmail },
-                        db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('email')), rawEmail.toLowerCase()),
-                        db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('secondary_email')), rawEmail.toLowerCase())
+                        db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('email')), rawEmail.toLowerCase())
                     ]
                 }
             });
@@ -192,6 +190,33 @@ exports.signin = async (req, res) => {
                 if (user) {
                     isServiceAccount = true;
                 }
+            }
+
+            // If not found by primary email, check if the employee is attempting to log in with their personal/secondary email
+            // when an official email has already been assigned by HR.
+            if (!user) {
+                const userWithSecondary = await TblStaff.findOne({
+                    where: {
+                        [Op.or]: [
+                            { secondary_email: rawEmail },
+                            db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('secondary_email')), rawEmail.toLowerCase())
+                        ]
+                    }
+                });
+
+                if (userWithSecondary && userWithSecondary.email && userWithSecondary.email.toLowerCase() !== rawEmail.toLowerCase()) {
+                    return res.status(401).send({
+                        message: "Official email has been assigned to your account. Please log in using your official email address."
+                    });
+                }
+            }
+        } else {
+            // If user was resolved (e.g. via External Auth), ensure they didn't log in with their personal/secondary email
+            const rawEmail = (req.body.email || '').trim();
+            if (!isServiceAccount && user.secondary_email && user.secondary_email.toLowerCase() === rawEmail.toLowerCase() && user.email.toLowerCase() !== rawEmail.toLowerCase()) {
+                return res.status(401).send({
+                    message: "Official email has been assigned to your account. Please log in using your official email address."
+                });
             }
         }
 
@@ -595,6 +620,16 @@ exports.forgotPassword = async (req, res) => {
         });
 
         if (!user) {
+            const secondaryUser = await TblStaff.findOne({
+                where: db.Sequelize.where(db.Sequelize.fn('LOWER', db.Sequelize.col('secondary_email')), normalizedEmail)
+            });
+
+            if (secondaryUser && secondaryUser.email && secondaryUser.email.toLowerCase() !== normalizedEmail) {
+                return res.status(400).send({
+                    message: "Official email has been assigned to your account. Please use your official email address."
+                });
+            }
+
             return res.status(404).send({
                 message: "No user account found with this email address."
             });
