@@ -543,7 +543,7 @@ exports.getPendingLeaves = async (req, res) => {
             include: [{
                 model: Staff,
                 as: 'user',
-                attributes: ['firstname', 'lastname', 'email']
+                attributes: ['firstname', 'lastname', 'email', 'role']
             }],
             order: [['createdAt', 'ASC']]
         });
@@ -563,7 +563,7 @@ exports.getPendingLeaves = async (req, res) => {
             include: [{
                 model: Staff,
                 as: 'user',
-                attributes: ['firstname', 'lastname', 'email']
+                attributes: ['firstname', 'lastname', 'email', 'role']
             }],
             order: [['start_time', 'ASC']]
         });
@@ -622,7 +622,7 @@ exports.getPendingLeaves = async (req, res) => {
             include: [{
                 model: Staff,
                 as: 'user',
-                attributes: ['firstname', 'lastname', 'email']
+                attributes: ['firstname', 'lastname', 'email', 'role']
             }],
             order: [['createdAt', 'ASC']]
         });
@@ -678,13 +678,10 @@ exports.getManageableRequests = async (req, res) => {
 
         // Get subordinates (direct reportees) for filtering
         let subordinates = await Staff.findAll({
-            attributes: ['staffid', 'firstname', 'lastname', 'email'],
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role'],
             where: { approving_manager_id: req.userId, active: 1 },
             raw: true
         });
-        if (status === 'Pending') {
-            subordinates = subordinates.filter(s => Number(s.staffid) !== Number(req.userId));
-        }
         const subordinateIds = subordinates.map(s => s.staffid);
 
         // Get all active staff for 'all' permissions
@@ -695,24 +692,6 @@ exports.getManageableRequests = async (req, res) => {
                 where: { active: 1 },
                 raw: true
             });
-
-            // When querying Pending requests, exclude staff the current user cannot approve:
-            // 1. Cannot approve self (req.userId)
-            // 2. Lower member cannot approve requests of higher role member
-            if (status === 'Pending') {
-                const roles = await Role.findAll({ attributes: ['id', 'hierarchy_level'], raw: true });
-                const roleHierarchyMap = Object.fromEntries(roles.map(r => [r.id, r.hierarchy_level]));
-                const currentLevel = userRole ? userRole.hierarchy_level : 999;
-
-                allStaff = allStaff.filter(s => {
-                    if (Number(s.staffid) === Number(req.userId)) return false;
-                    if (currentLevel > 0) {
-                        const sLevel = roleHierarchyMap[s.role] ?? 999;
-                        if (sLevel < currentLevel) return false;
-                    }
-                    return true;
-                });
-            }
         }
 
         // Determine manageable staff for name filter dropdown
@@ -741,7 +720,7 @@ exports.getManageableRequests = async (req, res) => {
             leaveWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
         } else {
             // No name filter - apply permission-based filtering
-            if (!canApproveAllLeave || status === 'Pending') {
+            if (!canApproveAllLeave) {
                 leaveWhere.staff_id = { [Op.in]: leaveStaffIds.length > 0 ? leaveStaffIds : [-1] };
             }
         }
@@ -757,7 +736,7 @@ exports.getManageableRequests = async (req, res) => {
             include: [{
                 model: Staff,
                 as: 'user',
-                attributes: ['firstname', 'lastname', 'email']
+                attributes: ['firstname', 'lastname', 'email', 'role']
             }],
             order: [['createdAt', 'DESC']],
             limit: limit,
@@ -788,7 +767,7 @@ exports.getManageableRequests = async (req, res) => {
             onDutyWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
         } else {
             // No name filter - apply permission-based filtering
-            if (!canApproveAllOnDuty || status === 'Pending') {
+            if (!canApproveAllOnDuty) {
                 onDutyWhere.staff_id = { [Op.in]: onDutyStaffIds.length > 0 ? onDutyStaffIds : [-1] };
             }
         }
@@ -803,7 +782,7 @@ exports.getManageableRequests = async (req, res) => {
             include: [{
                 model: Staff,
                 as: 'user',
-                attributes: ['firstname', 'lastname', 'email']
+                attributes: ['firstname', 'lastname', 'email', 'role']
             }],
             order: [['start_time', 'DESC']],
             limit: limit,
@@ -883,7 +862,7 @@ exports.getManageableRequests = async (req, res) => {
             timeOffWhere.staff_id = { [Op.in]: filteredIds.length > 0 ? filteredIds : [] };
         } else {
             // No name filter - apply permission-based filtering
-            if (!canApproveAllTimeOff || status === 'Pending') {
+            if (!canApproveAllTimeOff) {
                 timeOffWhere.staff_id = { [Op.in]: timeOffStaffIds.length > 0 ? timeOffStaffIds : [-1] };
             }
         }
@@ -899,7 +878,7 @@ exports.getManageableRequests = async (req, res) => {
             include: [{
                 model: Staff,
                 as: 'user',
-                attributes: ['firstname', 'lastname', 'email']
+                attributes: ['firstname', 'lastname', 'email', 'role']
             }],
             order: [['createdAt', 'DESC']],
             limit: limit,
