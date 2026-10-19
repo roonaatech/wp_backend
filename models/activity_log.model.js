@@ -16,9 +16,9 @@ module.exports = (sequelize, Sequelize) => {
             comment: "Entity type: User, LeaveRequest, OnDutyLog, LeaveType, etc."
         },
         entity_id: {
-            type: Sequelize.INTEGER,
+            type: Sequelize.STRING(255),
             allowNull: true,
-            comment: "ID of the affected entity"
+            comment: "ID of the affected entity (numeric ID, date string, or UUID)"
         },
         admin_id: {
             type: Sequelize.INTEGER,

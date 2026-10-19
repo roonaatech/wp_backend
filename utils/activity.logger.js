@@ -27,7 +27,7 @@ const logActivity = async (params) => {
         const activityLog = await ActivityLog.create({
             action: params.action,
             entity: params.entity,
-            entity_id: params.entity_id || null,
+            entity_id: (params.entity_id !== undefined && params.entity_id !== null) ? String(params.entity_id) : null,
             admin_id: params.admin_id,
             affected_user_id: params.affected_user_id || null,
             old_values: params.old_values || null,
