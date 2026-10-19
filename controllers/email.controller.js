@@ -30,6 +30,7 @@ exports.updateConfig = async (req, res) => {
         // Deactivate old configs? Or just update the single one?
         // Assuming single config for now.
         let config = await EmailConfig.findOne();
+        const isNewConfig = !config;
 
         if (config) {
             config.provider_type = provider_type;
@@ -49,10 +50,10 @@ exports.updateConfig = async (req, res) => {
 
         await logActivity({
             admin_id: req.userId,
-            action: 'UPDATE',
+            action: isNewConfig ? 'CREATE' : 'UPDATE',
             entity: 'EmailConfig',
             entity_id: config.id,
-            description: `Updated email SMTP configuration (${from_email || config.from_email})`,
+            description: `${isNewConfig ? 'Configured' : 'Updated'} email SMTP configuration (${from_email || config.from_email})`,
             new_values: { provider_type, host, port, secure, auth_user, from_name, from_email },
             ip_address: getClientIp(req),
             user_agent: getUserAgent(req)

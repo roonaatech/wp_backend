@@ -235,10 +235,10 @@ exports.updateSetting = async (req, res) => {
 
         await logActivity({
             admin_id: req.userId,
-            action: 'UPDATE',
+            action: created ? 'CREATE' : 'UPDATE',
             entity: 'Setting',
             entity_id: setting.id,
-            description: `Updated system setting: ${key} to ${value}`,
+            description: `${created ? 'Created' : 'Updated'} system setting: ${key} to ${value}`,
             old_values: existingSetting ? { value: existingSetting.value } : null,
             new_values: { value: value },
             ip_address: req.ip || req.connection?.remoteAddress,

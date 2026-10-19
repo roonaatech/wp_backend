@@ -33,23 +33,42 @@ const getSessionTimeoutInSeconds = async () => {
     return JWT_EXPIRES_IN;
 };
 
-exports.signup = (req, res) => {
-    // Save User to Database
-    TblStaff.create({
-        firstname: req.body.firstname,
-        lastname: req.body.lastname,
-        email: req.body.email,
-        password: bcrypt.hashSync(req.body.password, 8),
-        datecreated: new Date(),
-        role: req.body.role ? req.body.role : 1, // Default role 1 (employee)
-        active: 1
-    })
-        .then(user => {
-            res.send({ message: "User was registered successfully!" });
-        })
-        .catch(err => {
-            res.status(500).send({ message: err.message });
+exports.signup = async (req, res) => {
+    try {
+        // Save User to Database
+        const user = await TblStaff.create({
+            firstname: req.body.firstname,
+            lastname: req.body.lastname,
+            email: req.body.email,
+            password: bcrypt.hashSync(req.body.password, 8),
+            datecreated: new Date(),
+            role: req.body.role ? req.body.role : 1, // Default role 1 (employee)
+            active: 1
         });
+
+        // Log user creation activity
+        await logActivity({
+            admin_id: user.staffid,
+            action: 'CREATE',
+            entity: 'User',
+            entity_id: user.staffid,
+            affected_user_id: user.staffid,
+            description: `New user self-registered: ${user.firstname} ${user.lastname} (${user.email})`,
+            new_values: {
+                staffid: user.staffid,
+                firstname: user.firstname,
+                lastname: user.lastname,
+                email: user.email,
+                role: user.role
+            },
+            ip_address: getClientIp(req),
+            user_agent: getUserAgent(req)
+        });
+
+        res.send({ message: "User was registered successfully!" });
+    } catch (err) {
+        res.status(500).send({ message: err.message });
+    }
 };
 
 exports.signin = async (req, res) => {
@@ -428,8 +447,25 @@ exports.signin = async (req, res) => {
         const tokenOptions = isServiceAccount ? { expiresIn: '36500d' } : { expiresIn: await getSessionTimeoutInSeconds() };
         var token = jwt.sign(tokenPayload, config.JWT_SECRET, tokenOptions);
 
-        // Detect login device type ("Web", "Mob App", or "Mob Browser")
-        const loginDevice = getClientDevice(req);
+        // If user was newly created from auth sync, log User CREATE activity
+        if (isNewUser) {
+            await logActivity({
+                admin_id: user.staffid,
+                action: 'CREATE',
+                entity: 'User',
+                entity_id: user.staffid,
+                affected_user_id: user.staffid,
+                description: `New user account initialized via authentication sync: ${user.firstname} ${user.lastname} (${user.email})`,
+                new_values: {
+                    staffid: user.staffid,
+                    firstname: user.firstname,
+                    lastname: user.lastname,
+                    email: user.email
+                },
+                ip_address: getClientIp(req),
+                user_agent: getUserAgent(req)
+            });
+        }
 
         // Log activity
         await logActivity({
