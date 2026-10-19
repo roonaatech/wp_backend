@@ -447,6 +447,9 @@ exports.signin = async (req, res) => {
         const tokenOptions = isServiceAccount ? { expiresIn: '36500d' } : { expiresIn: await getSessionTimeoutInSeconds() };
         var token = jwt.sign(tokenPayload, config.JWT_SECRET, tokenOptions);
 
+        // Detect login device type ("Web", "Mob App", or "Mob Browser")
+        const loginDevice = getClientDevice(req);
+
         // If user was newly created from auth sync, log User CREATE activity
         if (isNewUser) {
             await logActivity({
