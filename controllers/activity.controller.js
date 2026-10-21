@@ -390,6 +390,7 @@ exports.exportActivities = async (req, res) => {
         }
 
         const tz = await timezoneUtil.getAppTimezone();
+        const dateFmt = await timezoneUtil.getAppDateFormat();
         if (startDate || endDate) {
             const dateFilter = buildCreatedAtFilter(startDate, endDate, tz);
             if (dateFilter) {
@@ -422,7 +423,7 @@ exports.exportActivities = async (req, res) => {
         activities.forEach(activity => {
             const admin = activity.admin ? `${activity.admin.firstname} ${activity.admin.lastname}` : 'Unknown';
             const affected = activity.affected_user ? `${activity.affected_user.firstname} ${activity.affected_user.lastname}` : '';
-            const timestamp = timezoneUtil.formatInTimezone(activity.createdAt, tz);
+            const timestamp = timezoneUtil.formatInTimezone(activity.createdAt, tz, { dateFormat: dateFmt });
             const description = (activity.description || '').replace(/"/g, '""');
             const device = detectDeviceFromActivity(activity);
 

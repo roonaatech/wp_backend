@@ -27,12 +27,58 @@ const TIMEZONE_OPTIONS = [
  * Format a date/time in the application's configured timezone
  * @param {Date|string} date - Date to format
  * @param {string} timezone - IANA timezone string (e.g., 'Asia/Kolkata')
- * @param {object} options - Intl.DateTimeFormat options
+/**
+ * Format date only (no time)
+ * @param {Date|string} date - Date to format
+ * @param {string} timezone - IANA timezone string
+ * @param {string} dateFormat - Date format string (e.g. 'DD/MM/YYYY', 'DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD', 'MMM DD, YYYY')
  * @returns {string} Formatted date string
  */
+const formatDateOnly = (date, timezone = 'Asia/Kolkata', dateFormat = 'DD/MM/YYYY') => {
+    try {
+        const dateObj = typeof date === 'string' ? new Date(date) : date;
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            timeZone: timezone
+        });
+        const parts = formatter.formatToParts(dateObj);
+        const day = parts.find(p => p.type === 'day')?.value;
+        const month = parts.find(p => p.type === 'month')?.value;
+        const year = parts.find(p => p.type === 'year')?.value;
+
+        if (dateFormat === 'DD/MM/YYYY') return `${day}/${month}/${year}`;
+        if (dateFormat === 'DD-MM-YYYY') return `${day}-${month}-${year}`;
+        if (dateFormat === 'MM-DD-YYYY') return `${month}-${day}-${year}`;
+        if (dateFormat === 'YYYY-MM-DD') return `${year}-${month}-${day}`;
+        if (dateFormat === 'MMM DD, YYYY') {
+            const mShort = new Intl.DateTimeFormat('en-US', { timeZone: timezone, month: 'short' }).format(dateObj);
+            return `${mShort} ${day}, ${year}`;
+        }
+        return `${month}/${day}/${year}`;
+    } catch (e) {
+        return String(date);
+    }
+};
+
 const formatInTimezone = (date, timezone = 'Asia/Kolkata', options = {}) => {
     try {
         const dateObj = typeof date === 'string' ? new Date(date) : date;
+        const dateFormat = options.dateFormat || options.format;
+
+        if (dateFormat) {
+            const datePart = formatDateOnly(dateObj, timezone, dateFormat);
+            const timeFormatter = new Intl.DateTimeFormat('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: options.second ? '2-digit' : undefined,
+                hour12: options.hour12 !== undefined ? options.hour12 : true,
+                timeZone: timezone
+            });
+            const timePart = timeFormatter.format(dateObj);
+            return `${datePart}, ${timePart}`;
+        }
 
         const defaultOptions = {
             year: 'numeric',
@@ -51,23 +97,6 @@ const formatInTimezone = (date, timezone = 'Asia/Kolkata', options = {}) => {
         console.error('Error formatting date in timezone:', error);
         return new Date(date).toLocaleString();
     }
-};
-
-/**
- * Format date only (no time)
- * @param {Date|string} date - Date to format
- * @param {string} timezone - IANA timezone string
- * @returns {string} Formatted date string (MM/DD/YYYY)
- */
-const formatDateOnly = (date, timezone = 'Asia/Kolkata') => {
-    return formatInTimezone(date, timezone, {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: undefined,
-        minute: undefined,
-        hour12: undefined
-    });
 };
 
 /**
@@ -231,6 +260,23 @@ const getAppTimezone = async () => {
     }
 };
 
+/**
+ * Helper to get the configured application date format from database settings
+ * @returns {Promise<string>} Configured date format or 'DD/MM/YYYY' default
+ */
+const getAppDateFormat = async () => {
+    try {
+        const db = require('../models');
+        if (db && db.settings) {
+            const dfSetting = await db.settings.findOne({ where: { key: 'application_date_format' } });
+            return dfSetting?.value || 'DD/MM/YYYY';
+        }
+        return 'DD/MM/YYYY';
+    } catch (e) {
+        return 'DD/MM/YYYY';
+    }
+};
+
 module.exports = {
     TIMEZONE_OPTIONS,
     formatInTimezone,
@@ -242,6 +288,7 @@ module.exports = {
     getTimezoneOffset,
     parseTimeInTimezone,
     getUTCBounds,
-    getAppTimezone
+    getAppTimezone,
+    getAppDateFormat
 };
 
