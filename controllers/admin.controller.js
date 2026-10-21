@@ -4338,8 +4338,15 @@ exports.getStaffChangeHistory = async (req, res) => {
         // Date duration filter
         if (startDate || endDate) {
             whereClause.createdAt = {};
-            if (startDate) whereClause.createdAt[Op.gte] = new Date(startDate + 'T00:00:00');
-            if (endDate) whereClause.createdAt[Op.lte] = new Date(endDate + 'T23:59:59');
+            const tz = await getAppTimezone();
+            if (startDate) {
+                const [sUTC] = getUTCBounds(startDate, tz);
+                whereClause.createdAt[Op.gte] = sUTC;
+            }
+            if (endDate) {
+                const [, eUTC] = getUTCBounds(endDate, tz);
+                whereClause.createdAt[Op.lte] = eUTC;
+            }
         } else if (duration && duration !== 'all') {
             const now = new Date();
             if (duration === '7d') {

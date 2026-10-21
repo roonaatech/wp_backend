@@ -3,6 +3,24 @@ const ActivityLog = db.activity_logs;
 const User = db.user;
 const { Op } = require("sequelize");
 const { detectDeviceFromActivity } = require("../utils/activity.logger");
+const timezoneUtil = require("../utils/timezone.util");
+
+/**
+ * Helper to build createdAt date range filter in application timezone
+ */
+const buildCreatedAtFilter = (startDate, endDate, tz) => {
+    if (!startDate && !endDate) return null;
+    const filter = {};
+    if (startDate) {
+        const [startUTC] = timezoneUtil.getUTCBounds(startDate, tz);
+        filter[Op.gte] = startUTC;
+    }
+    if (endDate) {
+        const [, endUTC] = timezoneUtil.getUTCBounds(endDate, tz);
+        filter[Op.lte] = endUTC;
+    }
+    return filter;
+};
 
 /**
  * Helper function to get subordinate user IDs
@@ -65,20 +83,12 @@ exports.getAllActivities = async (req, res) => {
             where.affected_user_id = parseInt(affected_user_id);
         }
 
-        // Handle date filtering - convert to UTC ISO format for reliable comparison
+        // Handle date filtering - convert to application timezone bounds for reliable comparison
         if (startDate || endDate) {
-            where.createdAt = {};
-            if (startDate) {
-                // Parse as local date and convert to start of day
-                // Format: YYYY-MM-DD -> 2025-12-10 becomes 2025-12-10T00:00:00Z
-                const startISO = startDate + 'T00:00:00Z';
-                where.createdAt[db.Sequelize.Op.gte] = new Date(startISO);
-            }
-            if (endDate) {
-                // Parse as local date and convert to end of day
-                // Format: YYYY-MM-DD -> 2025-12-10 becomes 2025-12-10T23:59:59.999Z
-                const endISO = endDate + 'T23:59:59.999Z';
-                where.createdAt[db.Sequelize.Op.lte] = new Date(endISO);
+            const tz = await timezoneUtil.getAppTimezone();
+            const dateFilter = buildCreatedAtFilter(startDate, endDate, tz);
+            if (dateFilter) {
+                where.createdAt = dateFilter;
             }
         }
 
@@ -164,18 +174,10 @@ exports.getActivitySummary = async (req, res) => {
         }
 
         if (startDate || endDate) {
-            where.createdAt = {};
-            if (startDate) {
-                // Parse as local date and convert to start of day
-                // Format: YYYY-MM-DD -> 2025-12-10 becomes 2025-12-10T00:00:00Z
-                const startISO = startDate + 'T00:00:00Z';
-                where.createdAt[db.Sequelize.Op.gte] = new Date(startISO);
-            }
-            if (endDate) {
-                // Parse as local date and convert to end of day
-                // Format: YYYY-MM-DD -> 2025-12-10 becomes 2025-12-10T23:59:59.999Z
-                const endISO = endDate + 'T23:59:59.999Z';
-                where.createdAt[db.Sequelize.Op.lte] = new Date(endISO);
+            const tz = await timezoneUtil.getAppTimezone();
+            const dateFilter = buildCreatedAtFilter(startDate, endDate, tz);
+            if (dateFilter) {
+                where.createdAt = dateFilter;
             }
         }
 
@@ -277,7 +279,7 @@ exports.getActivitySummary = async (req, res) => {
 exports.getUserActivityHistory = async (req, res) => {
     try {
         const { userId } = req.params;
-        const { page = 1, limit = 20 } = req.query;
+        const { page = 1, limit = 20, startDate, endDate } = req.query;
 
         // Check if user has permission to view this user's activities
         if (req.activityPermission === 'subordinates') {
@@ -293,13 +295,23 @@ exports.getUserActivityHistory = async (req, res) => {
 
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
+        const where = {
+            [db.Sequelize.Op.or]: [
+                { admin_id: parseInt(userId) },
+                { affected_user_id: parseInt(userId) }
+            ]
+        };
+
+        if (startDate || endDate) {
+            const tz = await timezoneUtil.getAppTimezone();
+            const dateFilter = buildCreatedAtFilter(startDate, endDate, tz);
+            if (dateFilter) {
+                where.createdAt = dateFilter;
+            }
+        }
+
         const { count, rows } = await ActivityLog.findAndCountAll({
-            where: {
-                [db.Sequelize.Op.or]: [
-                    { admin_id: parseInt(userId) },
-                    { affected_user_id: parseInt(userId) }
-                ]
-            },
+            where,
             include: [
                 {
                     model: User,
@@ -377,19 +389,11 @@ exports.exportActivities = async (req, res) => {
             where.affected_user_id = parseInt(affected_user_id);
         }
 
+        const tz = await timezoneUtil.getAppTimezone();
         if (startDate || endDate) {
-            where.createdAt = {};
-            if (startDate) {
-                // Parse as local date and convert to start of day
-                // Format: YYYY-MM-DD -> 2025-12-10 becomes 2025-12-10T00:00:00Z
-                const startISO = startDate + 'T00:00:00Z';
-                where.createdAt[db.Sequelize.Op.gte] = new Date(startISO);
-            }
-            if (endDate) {
-                // Parse as local date and convert to end of day
-                // Format: YYYY-MM-DD -> 2025-12-10 becomes 2025-12-10T23:59:59.999Z
-                const endISO = endDate + 'T23:59:59.999Z';
-                where.createdAt[db.Sequelize.Op.lte] = new Date(endISO);
+            const dateFilter = buildCreatedAtFilter(startDate, endDate, tz);
+            if (dateFilter) {
+                where.createdAt = dateFilter;
             }
         }
 
@@ -418,8 +422,7 @@ exports.exportActivities = async (req, res) => {
         activities.forEach(activity => {
             const admin = activity.admin ? `${activity.admin.firstname} ${activity.admin.lastname}` : 'Unknown';
             const affected = activity.affected_user ? `${activity.affected_user.firstname} ${activity.affected_user.lastname}` : '';
-            const d = new Date(activity.createdAt);
-            const timestamp = `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()} ${d.getHours() % 12 || 12}:${d.getMinutes().toString().padStart(2, '0')} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
+            const timestamp = timezoneUtil.formatInTimezone(activity.createdAt, tz);
             const description = (activity.description || '').replace(/"/g, '""');
             const device = detectDeviceFromActivity(activity);
 

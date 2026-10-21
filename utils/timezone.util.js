@@ -200,6 +200,37 @@ const getTimezoneOffset = (timezone = 'Asia/Kolkata') => {
     }
 };
 
+/**
+ * Converts a "local" date string (YYYY-MM-DD) into UTC bounds [start, end]
+ * matching that full day (00:00:00.000 to 23:59:59.999) in the target timezone.
+ * @param {string} dateStr - YYYY-MM-DD
+ * @param {string} timezone - IANA timezone string
+ * @returns {[Date, Date]} [startUTC, endUTC]
+ */
+const getUTCBounds = (dateStr, timezone = 'Asia/Kolkata') => {
+    const cleanDate = String(dateStr).split('T')[0].split(' ')[0].trim();
+    const start = parseTimeInTimezone(`${cleanDate} 00:00:00`, timezone);
+    const end = new Date(parseTimeInTimezone(`${cleanDate} 23:59:59`, timezone).getTime() + 999);
+    return [start, end];
+};
+
+/**
+ * Helper to get the configured application timezone from database settings
+ * @returns {Promise<string>} Configured timezone or 'Asia/Kolkata' default
+ */
+const getAppTimezone = async () => {
+    try {
+        const db = require('../models');
+        if (db && db.settings) {
+            const tzSetting = await db.settings.findOne({ where: { key: 'application_timezone' } });
+            return tzSetting?.value || 'Asia/Kolkata';
+        }
+        return 'Asia/Kolkata';
+    } catch (e) {
+        return 'Asia/Kolkata';
+    }
+};
+
 module.exports = {
     TIMEZONE_OPTIONS,
     formatInTimezone,
@@ -209,5 +240,8 @@ module.exports = {
     getNowStringInTimezone,
     convertFromUTC,
     getTimezoneOffset,
-    parseTimeInTimezone
+    parseTimeInTimezone,
+    getUTCBounds,
+    getAppTimezone
 };
+
