@@ -154,5 +154,57 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
         expect(h2.compliant_day_value).toBe(1);
         expect(h2.holiday_name).toBe('VIJAYADHASAMI');
     });
+
+    test('Early check-in with kept scheduled time-off prevents double-counting overlap minutes', () => {
+        const config = {
+            complianceHours: 9, // 540 minutes
+            allowedLeavePerMonth: 1,
+            allowedTimeOffPerMonth: 2 // 120 minutes
+        };
+
+        // Scenario: Checked in at 08:52, checked out at 18:30 (578 mins total physical span)
+        // Kept scheduled time-off from 09:30 to 10:30 (60 mins)
+        const employeeRecords = {
+            attendanceRecords: [
+                {
+                    date: '2026-10-21',
+                    check_in_time_str: '08:52',
+                    check_out_time_str: '18:30',
+                    work_minutes: 578
+                }
+            ],
+            leaveDays: [],
+            timeoffRecords: [
+                {
+                    date: '2026-10-21',
+                    start_time: '09:30:00',
+                    end_time: '10:30:00',
+                    minutes: 60,
+                    reason: 'Doctor Appointment'
+                }
+            ],
+            ondutyRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+
+        // Verification:
+        // Day Breakdown:
+        // attendance_minutes: 578
+        // timeoff_overlap_minutes: 60
+        // adjusted attendance = 578 - 60 = 518
+        // credited time-off = 60
+        // effective_work_minutes = 518 + 60 = 578 (NOT 638!)
+        // 578 >= 540 => Compliant
+        const day = result.daily_breakdown.find(d => d.date === '2026-10-21');
+        expect(day).toBeDefined();
+        expect(day.attendance_minutes).toBe(578);
+        expect(day.timeoff_overlap_minutes).toBe(60);
+        expect(day.timeoff_credited_minutes).toBe(60);
+        expect(day.effective_work_minutes).toBe(578);
+        expect(day.is_compliant).toBe(true);
+        expect(result.compliant_days).toBe(1);
+    });
 });
+
 

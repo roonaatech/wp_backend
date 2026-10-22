@@ -42,6 +42,29 @@ const getWeekday = (dateStr) => {
     return '';
 };
 
+// Helper to convert time value (HH:MM, HH:MM:SS, Date object, or ISO string) to minutes from midnight
+const parseTimeToMinutes = (timeVal) => {
+    if (timeVal === undefined || timeVal === null || timeVal === '') return null;
+    if (typeof timeVal === 'number') return timeVal;
+    if (typeof timeVal === 'string') {
+        const parts = timeVal.trim().split(':');
+        if (parts.length >= 2) {
+            const h = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10);
+            if (!isNaN(h) && !isNaN(m)) {
+                return h * 60 + m;
+            }
+        }
+        const d = new Date(timeVal);
+        if (!isNaN(d.getTime())) {
+            return d.getHours() * 60 + d.getMinutes();
+        }
+    } else if (timeVal instanceof Date && !isNaN(timeVal.getTime())) {
+        return timeVal.getHours() * 60 + timeVal.getMinutes();
+    }
+    return null;
+};
+
 /**
  * Calculates monthly salary compliance and daily audit breakdown for an employee.
  *
@@ -215,8 +238,33 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             excessTimeOffMins = day.timeOffRequestedMins - creditedTimeOffMins;
         }
 
+        // --- Calculate Overlap between Attendance and Time-Off on this date ---
+        // Prevents double-counting when employee is physically clocked in during scheduled time-off
+        let overlapMins = 0;
+        if (day.attSessions?.length > 0 && day.timeOffRecords?.length > 0) {
+            for (const att of day.attSessions) {
+                const attStart = parseTimeToMinutes(att.check_in_time_str || att.check_in_time);
+                const attEnd = parseTimeToMinutes(att.check_out_time_str || att.check_out_time);
+                if (attStart !== null && attEnd !== null && attEnd > attStart) {
+                    for (const to of day.timeOffRecords) {
+                        const toStart = parseTimeToMinutes(to.start_time);
+                        const toEnd = parseTimeToMinutes(to.end_time);
+                        if (toStart !== null && toEnd !== null && toEnd > toStart) {
+                            const oStart = Math.max(attStart, toStart);
+                            const oEnd = Math.min(attEnd, toEnd);
+                            if (oEnd > oStart) {
+                                overlapMins += (oEnd - oStart);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        overlapMins = Math.min(overlapMins, day.attMins, day.timeOffRequestedMins);
+
         // --- Calculate Effective Working Minutes ---
-        const effectiveWorkMins = day.attMins + day.onDutyMins + creditedTimeOffMins;
+        const adjustedAttMins = Math.max(0, day.attMins - overlapMins);
+        const effectiveWorkMins = adjustedAttMins + day.onDutyMins + creditedTimeOffMins;
 
         // --- Decide Day Compliance Outcome ---
         let isCompliant = false;
@@ -315,6 +363,7 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             weekday: weekday,
             type: dayType,
             attendance_minutes: day.attMins,
+            timeoff_overlap_minutes: overlapMins,
             onduty_minutes: day.onDutyMins,
             timeoff_requested_minutes: day.timeOffRequestedMins,
             timeoff_credited_minutes: creditedTimeOffMins,
