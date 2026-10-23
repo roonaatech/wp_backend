@@ -2296,8 +2296,9 @@ exports.getMonthlySummary = async (req, res) => {
                     });
                 });
 
-                // Add Sundays to daily_breakdown (Weekly Off)
+                // Add Sundays to daily_breakdown (Weekly Off - Compliant)
                 const existingDates = new Set(compliance.daily_breakdown.map(d => d.date));
+                let sundaysCompliantDays = 0;
                 sundaysTillToday.forEach(sun => {
                     const dStr = sun.date;
                     if (joinDateStr && dStr < joinDateStr) {
@@ -2317,15 +2318,31 @@ exports.getMonthlySummary = async (req, res) => {
                             leave_days: 0,
                             leave_credited: 0,
                             leave_excess: 0,
-                            is_compliant: false,
-                            compliant_day_value: 0.0,
-                            status_label: 'Weekly Off',
-                            remarks: 'Sunday (Weekly Off)'
+                            is_compliant: true,
+                            compliant_day_value: 1.0,
+                            status_label: 'Compliant',
+                            remarks: 'Sunday (Weekly Off - Compliant)'
                         });
                         existingDates.add(dStr);
+                        sundaysCompliantDays += 1.0;
+                    } else {
+                        // If Sunday already had an entry (e.g. employee clocked in or requested leave/timeoff)
+                        const existingEntry = compliance.daily_breakdown.find(d => d.date === dStr);
+                        if (existingEntry && !existingEntry.is_compliant) {
+                            const prevVal = existingEntry.compliant_day_value || 0.0;
+                            existingEntry.is_compliant = true;
+                            existingEntry.compliant_day_value = 1.0;
+                            existingEntry.status_label = 'Compliant';
+                            existingEntry.remarks = existingEntry.remarks
+                                ? `${existingEntry.remarks} • Sunday Weekly Off (Compliant)`
+                                : 'Sunday (Weekly Off - Compliant)';
+                            sundaysCompliantDays += (1.0 - prevVal);
+                            compliance.non_compliant_days = Math.max(0, compliance.non_compliant_days - (1.0 - prevVal));
+                        }
                     }
                 });
 
+                compliance.compliant_days = Math.round((compliance.compliant_days + sundaysCompliantDays) * 10) / 10;
                 compliance.daily_breakdown.sort((a, b) => a.date.localeCompare(b.date));
             }
 
@@ -2382,6 +2399,7 @@ exports.getMonthlySummary = async (req, res) => {
                 onduty_minutes: s.onduty_minutes,
                 holidays_count: holidaysList.length,
                 holidays: holidaysList,
+                sundays_count: sundaysTillToday.filter(sun => !joinDateStr || sun.date >= joinDateStr).length,
                 compliant_days: attendanceEnabled ? compliance.compliant_days : 0,
                 non_compliant_days: attendanceEnabled ? Math.round((compliance.non_compliant_days + totalAbsentDays) * 10) / 10 : 0,
                 quota_summary: compliance.quota_summary,

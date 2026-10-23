@@ -155,32 +155,31 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
         expect(h2.holiday_name).toBe('VIJAYADHASAMI');
     });
 
-    test('Early check-in with kept scheduled time-off prevents double-counting overlap minutes', () => {
+    test('Effective work time properly calculates as attendance + credited time-off + on-duty', () => {
         const config = {
             complianceHours: 9, // 540 minutes
             allowedLeavePerMonth: 1,
             allowedTimeOffPerMonth: 2 // 120 minutes
         };
 
-        // Scenario: Checked in at 08:52, checked out at 18:30 (578 mins total physical span)
-        // Kept scheduled time-off from 09:30 to 10:30 (60 mins)
+        // Scenario: 8h 55m Attendance (535 mins) + 2h Time-Off (120 mins) = 10h 55m (655 mins)
         const employeeRecords = {
             attendanceRecords: [
                 {
-                    date: '2026-10-21',
-                    check_in_time_str: '08:52',
-                    check_out_time_str: '18:30',
-                    work_minutes: 578
+                    date: '2026-10-13',
+                    check_in_time_str: '09:36',
+                    check_out_time_str: '18:32',
+                    work_minutes: 535
                 }
             ],
             leaveDays: [],
             timeoffRecords: [
                 {
-                    date: '2026-10-21',
-                    start_time: '09:30:00',
-                    end_time: '10:30:00',
-                    minutes: 60,
-                    reason: 'Doctor Appointment'
+                    date: '2026-10-13',
+                    start_time: '14:00:00',
+                    end_time: '16:00:00',
+                    minutes: 120,
+                    reason: 'Personal'
                 }
             ],
             ondutyRecords: []
@@ -189,20 +188,43 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
         const result = calculateMonthlyCompliance(employeeRecords, config);
 
         // Verification:
-        // Day Breakdown:
-        // attendance_minutes: 578
-        // timeoff_overlap_minutes: 60
-        // adjusted attendance = 578 - 60 = 518
-        // credited time-off = 60
-        // effective_work_minutes = 518 + 60 = 578 (NOT 638!)
-        // 578 >= 540 => Compliant
-        const day = result.daily_breakdown.find(d => d.date === '2026-10-21');
+        // attendance_minutes: 535 (8h 55m)
+        // timeoff_credited_minutes: 120 (2h)
+        // effective_work_minutes: 535 + 120 = 655 (10h 55m)
+        // 655 >= 540 => Compliant
+        const day = result.daily_breakdown.find(d => d.date === '2026-10-13');
         expect(day).toBeDefined();
-        expect(day.attendance_minutes).toBe(578);
-        expect(day.timeoff_overlap_minutes).toBe(60);
-        expect(day.timeoff_credited_minutes).toBe(60);
-        expect(day.effective_work_minutes).toBe(578);
+        expect(day.attendance_minutes).toBe(535);
+        expect(day.timeoff_credited_minutes).toBe(120);
+        expect(day.effective_work_minutes).toBe(655);
+        expect(day.remarks).toBe('8h 55m Att + 2h Time-Off = 10h 55m >= 9h target');
         expect(day.is_compliant).toBe(true);
+        expect(result.compliant_days).toBe(1);
+    });
+
+    test('Sundays are marked as Compliant weekly off days', () => {
+        const config = {
+            complianceHours: 9,
+            allowedLeavePerMonth: 1,
+            allowedTimeOffPerMonth: 2
+        };
+
+        // 2026-10-04 is a Sunday
+        const employeeRecords = {
+            attendanceRecords: [
+                { date: '2026-10-04', work_minutes: 120 } // Worked 2 hours on Sunday
+            ],
+            leaveDays: [],
+            timeoffRecords: [],
+            ondutyRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+        const sun = result.daily_breakdown.find(d => d.date === '2026-10-04');
+        expect(sun).toBeDefined();
+        expect(sun.is_compliant).toBe(true);
+        expect(sun.compliant_day_value).toBe(1);
+        expect(sun.remarks).toContain('Sunday Weekly Off (Compliant)');
         expect(result.compliant_days).toBe(1);
     });
 });

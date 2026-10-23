@@ -206,6 +206,8 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
 
         if (day.isHoliday) {
             dayType = 'Holiday';
+        } else if (weekday === 'Sun' && !hasWork && !hasLeave && !hasTimeOff) {
+            dayType = 'Sunday';
         } else if (hasLeave && (hasWork || hasTimeOff)) {
             dayType = 'Combined';
         } else if (hasLeave) {
@@ -238,33 +240,9 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             excessTimeOffMins = day.timeOffRequestedMins - creditedTimeOffMins;
         }
 
-        // --- Calculate Overlap between Attendance and Time-Off on this date ---
-        // Prevents double-counting when employee is physically clocked in during scheduled time-off
-        let overlapMins = 0;
-        if (day.attSessions?.length > 0 && day.timeOffRecords?.length > 0) {
-            for (const att of day.attSessions) {
-                const attStart = parseTimeToMinutes(att.check_in_time_str || att.check_in_time);
-                const attEnd = parseTimeToMinutes(att.check_out_time_str || att.check_out_time);
-                if (attStart !== null && attEnd !== null && attEnd > attStart) {
-                    for (const to of day.timeOffRecords) {
-                        const toStart = parseTimeToMinutes(to.start_time);
-                        const toEnd = parseTimeToMinutes(to.end_time);
-                        if (toStart !== null && toEnd !== null && toEnd > toStart) {
-                            const oStart = Math.max(attStart, toStart);
-                            const oEnd = Math.min(attEnd, toEnd);
-                            if (oEnd > oStart) {
-                                overlapMins += (oEnd - oStart);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        overlapMins = Math.min(overlapMins, day.attMins, day.timeOffRequestedMins);
-
         // --- Calculate Effective Working Minutes ---
-        const adjustedAttMins = Math.max(0, day.attMins - overlapMins);
-        const effectiveWorkMins = adjustedAttMins + day.onDutyMins + creditedTimeOffMins;
+        // Effective Work Time = Attendance Minutes + On-Duty Minutes + Credited Time-Off Minutes
+        const effectiveWorkMins = day.attMins + day.onDutyMins + creditedTimeOffMins;
 
         // --- Decide Day Compliance Outcome ---
         let isCompliant = false;
@@ -276,6 +254,15 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             isCompliant = true;
             compliantDayValue = 1.0;
             remarks = `Company Holiday: ${day.holidayName || 'Holiday'} (Compliant)`;
+        } else if (weekday === 'Sun') {
+            // Sunday (Weekly Off) - fully compliant paid day
+            isCompliant = true;
+            compliantDayValue = 1.0;
+            if (hasWork) {
+                remarks = `Sunday Weekly Off (Compliant) • Worked ${formatDuration(day.attMins + day.onDutyMins)}`;
+            } else {
+                remarks = 'Sunday (Weekly Off - Compliant)';
+            }
         } else if (dayType === 'Leave') {
             // Pure leave day
             if (creditedLeave >= 1.0) {
@@ -363,7 +350,7 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             weekday: weekday,
             type: dayType,
             attendance_minutes: day.attMins,
-            timeoff_overlap_minutes: overlapMins,
+            timeoff_overlap_minutes: 0,
             onduty_minutes: day.onDutyMins,
             timeoff_requested_minutes: day.timeOffRequestedMins,
             timeoff_credited_minutes: creditedTimeOffMins,
