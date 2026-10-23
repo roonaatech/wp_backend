@@ -16,6 +16,7 @@ const EmployeeFamilyMember = db.employee_family_members;
 const EmployeeDocument = db.employee_documents;
 const Op = db.Sequelize.Op;
 const { normalizeWorkMode } = require("../utils/workmode.util");
+const { normalizeEmploymentType } = require("../utils/employmentType.util");
 
 // Helper to get error message
 const getErrorMessage = (err) => {
@@ -33,7 +34,7 @@ exports.onboardEmployee = async (req, res) => {
     const {
         // User Credentials
         firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, abis_access, send_welcome_email,
-        work_mode, hybrid_office_days,
+        work_mode, hybrid_office_days, employment_type,
         date_of_joining,
         allocate_leaves,
         casual_leave_days,
@@ -112,6 +113,7 @@ exports.onboardEmployee = async (req, res) => {
 
         // Format work mode and hybrid in-office days
         const selectedWorkMode = normalizeWorkMode(work_mode);
+        const selectedEmploymentType = normalizeEmploymentType(employment_type);
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -143,6 +145,7 @@ exports.onboardEmployee = async (req, res) => {
             abis_access: abis_access === 'true' || abis_access === true,
             work_mode: selectedWorkMode,
             hybrid_office_days: validHybridDays,
+            employment_type: selectedEmploymentType,
             active: 1
         }, { transaction });
 
@@ -445,7 +448,7 @@ exports.getEmployeeExtendedProfile = async (req, res) => {
 
     try {
         const user = await User.findByPk(id, {
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access', 'face_image_path', 'face_registered_at', 'work_mode', 'hybrid_office_days'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'gender', 'last_login', 'abis_access', 'face_image_path', 'face_registered_at', 'work_mode', 'hybrid_office_days', 'employment_type'],
             include: [
                 { model: EmployeeProfile, as: 'profile_info' },
                 { model: EmployeeEducation, as: 'educations' },
@@ -511,7 +514,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
     const {
         // User Credentials
         firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, active, abis_access,
-        work_mode, hybrid_office_days,
+        work_mode, hybrid_office_days, employment_type,
         date_of_joining,
         
         // Personal Details
@@ -700,6 +703,16 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
                 }
             } else {
                 updateUserData.hybrid_office_days = null;
+            }
+        }
+
+        if (employment_type !== undefined) {
+            const selectedEmpType = normalizeEmploymentType(employment_type);
+            updateUserData.employment_type = selectedEmpType;
+            if (user.employment_type !== selectedEmpType) {
+                oldVals.employment_type = user.employment_type || 'Full-time';
+                newVals.employment_type = selectedEmpType;
+                changeDescriptions.push(`employment type to "${selectedEmpType}"`);
             }
         }
 
@@ -992,7 +1005,7 @@ exports.updateEmployeeExtendedProfile = async (req, res) => {
         await transaction.commit();
 
         // Log admin update with diffs
-        const hasOrgChanges = Boolean(newVals.approving_manager || newVals.role || newVals.work_mode || newVals.active !== undefined);
+        const hasOrgChanges = Boolean(newVals.approving_manager || newVals.role || newVals.work_mode || newVals.employment_type || newVals.active !== undefined);
         
         // Build clear, informative description
         let description = '';
@@ -1719,7 +1732,8 @@ exports.approveCandidateOnboarding = async (req, res) => {
         casual_leave_days,
         sick_leave_days,
         work_mode,
-        hybrid_office_days
+        hybrid_office_days,
+        employment_type
     } = req.body;
 
     if (!email || !role || !approving_manager_id || !date_of_joining) {
@@ -1777,6 +1791,7 @@ exports.approveCandidateOnboarding = async (req, res) => {
 
         // Format work mode and hybrid office days
         const selectedWorkMode = work_mode !== undefined ? normalizeWorkMode(work_mode) : normalizeWorkMode(user.work_mode);
+        const selectedEmploymentType = employment_type !== undefined ? normalizeEmploymentType(employment_type) : normalizeEmploymentType(user.employment_type);
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -1818,6 +1833,7 @@ exports.approveCandidateOnboarding = async (req, res) => {
             abis_access: abis_access === 'true' || abis_access === true,
             work_mode: selectedWorkMode,
             hybrid_office_days: validHybridDays,
+            employment_type: selectedEmploymentType,
             ...passwordUpdate
         }, { transaction });
 

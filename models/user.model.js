@@ -110,6 +110,12 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.JSON,
             allowNull: true,
             comment: 'JSON array of days in week (e.g. ["Monday","Wednesday"]) employee attends office when work_mode is Hybrid'
+        },
+        employment_type: {
+            type: Sequelize.STRING(20),
+            allowNull: false,
+            defaultValue: 'Full-time',
+            comment: 'Employment type: Full-time or Part-time'
         }
     }, {
         tableName: 'users',

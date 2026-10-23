@@ -177,36 +177,6 @@ exports.getTerminalStatus = async (req, res) => {
     }
 };
 
-// Backward-compatible alias for existing mobile/kiosk clients
-exports.getFaceStatus = exports.getTerminalStatus;
-
-/**
- * Register employee face (DEPRECATED - QR attendance in use)
- */
-exports.registerFace = async (req, res) => {
-    return res.status(400).send({
-        message: "Face recognition attendance is deprecated. WorkPulse uses QR code badge attendance."
-    });
-};
-
-/**
- * Remove employee face (DEPRECATED - QR attendance in use)
- */
-exports.removeFace = async (req, res) => {
-    return res.status(400).send({
-        message: "Face recognition attendance is deprecated. WorkPulse uses QR code badge attendance."
-    });
-};
-
-/**
- * Identify employee face (DEPRECATED - QR attendance in use)
- */
-exports.identifyFace = async (req, res) => {
-    return res.status(400).send({
-        matched: false,
-        message: "Face recognition attendance is deprecated. WorkPulse uses QR code badge attendance."
-    });
-};
 
 /**
  * Check an employee's current attendance status for today
@@ -471,15 +441,7 @@ exports.getMyAttendedDates = async (req, res) => {
     }
 };
 
-/**
- * Perform combined credentials and facial match check-in or check-out
- * POST /api/attendance/check-in-out-with-face
- */
-exports.checkInOutWithFace = async (req, res) => {
-    return res.status(400).send({
-        message: "Face recognition attendance is deprecated. Please scan your employee QR badge."
-    });
-};
+
 
 
 
@@ -865,7 +827,7 @@ exports.getStaffList = async (req, res) => {
     try {
         const users = await User.findAll({
             where: { active: 1 },
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'face_descriptor'],
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role'],
             include: [
                 {
                     model: Role,
@@ -883,8 +845,7 @@ exports.getStaffList = async (req, res) => {
             lastname: u.lastname,
             name: `${u.firstname} ${u.lastname}`.trim(),
             email: u.email,
-            roleName: u.role_info?.display_name || u.role_info?.name || 'Employee',
-            hasFaceRegistered: !!(u.face_descriptor && u.face_descriptor.length > 0)
+            roleName: u.role_info?.display_name || u.role_info?.name || 'Employee'
         }));
 
         res.status(200).send(staff);

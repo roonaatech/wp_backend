@@ -497,6 +497,7 @@ exports.signin = async (req, res) => {
             gender: isServiceAccount ? null : user.gender,
             work_mode: isServiceAccount ? 'Office' : normalizeWorkMode(user.work_mode),
             hybrid_office_days: isServiceAccount ? null : (user.hybrid_office_days || []),
+            employment_type: isServiceAccount ? 'Full-time' : (user.employment_type || 'Full-time'),
             isFirstLogin: isNewUser,
             mustChangePassword,
             isTemporaryPassword,
@@ -885,6 +886,7 @@ exports.exchangeQRToken = async (req, res) => {
             can_access_attendance_portal: userRole ? (userRole.can_access_attendance_portal === true) : false,
             work_mode: normalizeWorkMode(user.work_mode),
             hybrid_office_days: user.hybrid_office_days || [],
+            employment_type: user.employment_type || 'Full-time',
             mustChangePassword,
             mustCompleteDeclaration
         });

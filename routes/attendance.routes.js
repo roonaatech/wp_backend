@@ -90,44 +90,6 @@ module.exports = function (app) {
         controller.getTerminalStatus
     );
 
-    // Backward-compatibility alias for legacy clients
-    app.get(
-        "/api/attendance/face-status",
-        [requireAttendanceModule, verifyToken],
-        controller.getFaceStatus
-    );
-
-    // Deprecated Face Recognition Endpoints (Return 400 with helpful migration guidance)
-    app.post(
-        "/api/attendance/check-in-out-with-face", 
-        [requireAttendanceModule, verifyToken, canAccessAttendancePortal], 
-        controller.checkInOutWithFace
-    );
-
-    app.post(
-        "/api/attendance/identify-face", 
-        [requireAttendanceModule, verifyToken, canAccessAttendancePortal], 
-        controller.identifyFace
-    );
-
-    app.post(
-        "/api/attendance/register-face", 
-        [requireAttendanceModule, verifyToken], 
-        controller.registerFace
-    );
-
-    app.post(
-        "/api/admin/users/:id/register-face", 
-        [requireAttendanceModule, verifyToken, canAccessWebApp], 
-        controller.registerFace
-    );
-
-    app.delete(
-        "/api/admin/users/:id/face",
-        [requireAttendanceModule, verifyToken, canAccessWebApp],
-        controller.removeFace
-    );
-
     // Admin/Manager/Employee: Fetch attendance logs with filters
     app.get(
         "/api/admin/attendance-logs",

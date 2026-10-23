@@ -12,6 +12,7 @@ const birthdayUtil = require("../utils/birthday.util");
 const anniversaryUtil = require("../utils/anniversary.util");
 const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
+const { normalizeEmploymentType } = require("../utils/employmentType.util");
 const { getActiveHolidaysSetForYear, getActiveHolidaysMap, toDateString } = require("../utils/holiday.helper");
 const { isAttendanceModuleEnabled } = require("../middleware/moduleGuard");
 
@@ -117,7 +118,7 @@ exports.getIncompleteProfiles = async (req, res) => {
 };
 
 exports.createUser = async (req, res) => {
-    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, work_mode, hybrid_office_days } = req.body;
+    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, work_mode, hybrid_office_days, employment_type } = req.body;
 
     // Validate input
     if (!firstname || !lastname || !email || !password || !role || !gender || !approving_manager_id) {
@@ -175,6 +176,7 @@ exports.createUser = async (req, res) => {
 
         // Parse work mode and hybrid days
         const selectedWorkMode = normalizeWorkMode(work_mode);
+        const selectedEmploymentType = normalizeEmploymentType(employment_type);
         let validHybridDays = null;
         if (selectedWorkMode === 'Hybrid') {
             const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -208,6 +210,7 @@ exports.createUser = async (req, res) => {
             gender: gender,
             work_mode: selectedWorkMode,
             hybrid_office_days: validHybridDays,
+            employment_type: selectedEmploymentType,
             active: 1
         });
 
@@ -261,7 +264,7 @@ exports.createUser = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
     const { id } = req.params;
-    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, work_mode, hybrid_office_days } = req.body;
+    const { firstname, lastname, email, secondary_email, password, role, approving_manager_id, gender, work_mode, hybrid_office_days, employment_type } = req.body;
 
     const isDeactivating = req.body.active === 0 || req.body.active === false || req.body.active === '0';
 
@@ -410,6 +413,16 @@ exports.updateUser = async (req, res) => {
             }
             if (Array.isArray(rawDays)) {
                 updateData.hybrid_office_days = rawDays.filter(d => allowedDays.includes(d));
+            }
+        }
+
+        if (employment_type !== undefined) {
+            const selectedEmpType = normalizeEmploymentType(employment_type);
+            updateData.employment_type = selectedEmpType;
+            if (targetUser.employment_type !== selectedEmpType) {
+                changedFields.push(`Employment type changed from "${targetUser.employment_type || 'Full-time'}" to "${selectedEmpType}"`);
+                oldValues.employment_type = targetUser.employment_type || 'Full-time';
+                newValues.employment_type = selectedEmpType;
             }
         }
 
@@ -739,6 +752,8 @@ exports.getAllUsers = async (req, res) => {
         const userType = req.query.userType || ''; // 'workpulse' or 'external'
         const manager = req.query.manager || ''; // Selected manager id
         const workMode = req.query.work_mode || req.query.workMode || '';
+        const employmentTypeFilter = req.query.employment_type || req.query.employmentType || '';
+        const genderFilter = req.query.gender || '';
 
         // Build where clause using AND conditions
         const andConditions = [];
@@ -829,6 +844,33 @@ exports.getAllUsers = async (req, res) => {
             }
         }
 
+        // Employment Type constraint
+        if (employmentTypeFilter) {
+            const types = employmentTypeFilter.split(',').map(t => normalizeEmploymentType(t.trim())).filter(Boolean);
+            if (types.length > 0) {
+                andConditions.push({ employment_type: { [Op.in]: types } });
+            }
+        }
+
+        // Gender constraint
+        if (genderFilter) {
+            const genders = genderFilter.split(',').map(g => g.trim()).filter(Boolean);
+            const hasUnspecified = genders.some(g => ['unspecified', 'not specified', 'null'].includes(g.toLowerCase()));
+            const specifiedGenders = genders.filter(g => !['unspecified', 'not specified', 'null'].includes(g.toLowerCase()));
+
+            const genderConditions = [];
+            if (specifiedGenders.length > 0) {
+                genderConditions.push({ gender: { [Op.in]: specifiedGenders } });
+            }
+            if (hasUnspecified) {
+                genderConditions.push({ gender: null });
+                genderConditions.push({ gender: '' });
+            }
+            if (genderConditions.length > 0) {
+                andConditions.push({ [Op.or]: genderConditions });
+            }
+        }
+
         // Status constraint
         if (status) {
             const statuses = status.split(',').map(s => s.trim());
@@ -899,7 +941,7 @@ exports.getAllUsers = async (req, res) => {
 
         const queryOptions = {
             where: whereClause,
-            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login', 'face_image_path', 'face_registered_at', 'work_mode', 'hybrid_office_days'],
+            attributes: ['staffid', 'userid', 'firstname', 'lastname', 'email', 'secondary_email', 'role', 'active', 'approving_manager_id', 'admin', 'gender', 'last_login', 'face_image_path', 'face_registered_at', 'work_mode', 'hybrid_office_days', 'employment_type'],
             include: [
                 { model: EmployeeProfile, as: 'profile_info', required: false, attributes: ['id', 'image_path', 'onboarding_status', 'consent_given', 'date_of_birth'] },
                 { model: db.employee_documents, as: 'documents', required: false, where: { document_type: 'photo' }, attributes: ['id', 'file_path', 'document_type'] }
@@ -2684,7 +2726,7 @@ exports.getDashboardStats = async (req, res) => {
         const userStaffFilter = canViewAllReports ? {} : { staffid: { [Op.in]: reporteeIds } };
         const staffList = await TblStaff.findAll({
             where: userStaffFilter,
-            attributes: ['staffid', 'role', 'active', 'gender', 'work_mode', 'face_descriptor', 'datecreated'],
+            attributes: ['staffid', 'role', 'active', 'gender', 'work_mode', 'datecreated'],
             raw: true
         });
 

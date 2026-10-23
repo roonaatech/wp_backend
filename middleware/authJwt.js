@@ -145,12 +145,6 @@ const isAdminOrAbove = async (req, res, next) => {
     }
 };
 
-/**
- * Middleware for face removal (DEPRECATED - QR attendance in use)
- */
-const canRemoveFace = async (req, res, next) => {
-    next();
-};
 
 /**
  * Middleware to check if user can access webapp
@@ -582,12 +576,6 @@ const canAccessAttendancePortal = async (req, res, next) => {
     }
 };
 
-/**
- * Middleware for face registration (DEPRECATED - QR attendance in use)
- */
-const canRegisterFaceId = async (req, res, next) => {
-    next();
-};
 
 const canViewAttendanceReport = async (req, res, next) => {
     try {
@@ -789,7 +777,6 @@ const authJwt = {
     isManagerOrAdmin: isManagerOrAdmin,
     isAdmin: isAdmin,
     isAdminOrAbove: isAdminOrAbove,
-    canRemoveFace: canRemoveFace,
     canAccessWebApp: canAccessWebApp,
     canViewDashboard: canViewDashboard,
     canManageLeaveTypes: canManageLeaveTypes,
@@ -808,7 +795,6 @@ const authJwt = {
     canManageSchedule: canManageSchedule,
     canApproveTimeOff: canApproveTimeOff,
     canAccessAttendancePortal: canAccessAttendancePortal,
-    canRegisterFaceId: canRegisterFaceId,
     canViewAttendanceReport: canViewAttendanceReport,
     canManageAttendance: canManageAttendance,
     canEditAttendance: canEditAttendance,
