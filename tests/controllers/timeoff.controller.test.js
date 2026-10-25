@@ -66,6 +66,35 @@ describe('Time Off Controller', () => {
       expect(res.body.message).toContain('Time-off cannot be requested for dates more than 0 working day(s) in the past');
     });
 
+    it('should reject time off when start time is before office start time', async () => {
+      await db.settings.upsert({
+        key: 'office_start_time',
+        value: '09:30',
+        category: 'attendance',
+        data_type: 'string'
+      });
+      await db.settings.upsert({
+        key: 'time_off_past_days_allowed',
+        value: '30',
+        category: 'time_off',
+        data_type: 'number'
+      });
+
+      const res = await request(app)
+        .post('/api/timeoff/apply')
+        .set('x-access-token', employeeToken)
+        .send({
+          date: '2026-10-26',
+          start_time: '08:30',
+          end_time: '10:30',
+          reason: 'Early time off test'
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('Time-off start time');
+      expect(res.body.message).toContain('cannot be before office start time');
+    });
+
     it('should reject time off requested for Sunday', async () => {
       const res = await request(app)
         .post('/api/timeoff/apply')

@@ -277,6 +277,16 @@ const getAppDateFormat = async () => {
     }
 };
 
+/**
+ * Helper to get date-only string in timezone (YYYY-MM-DD)
+ * @param {Date|string} dateObj - Date to format
+ * @param {string} timezone - IANA timezone string
+ * @returns {string|null} YYYY-MM-DD string
+ */
+const getDateInTimezone = (dateObj, timezone = 'Asia/Kolkata') => {
+    return formatDateOnly(dateObj, timezone, 'YYYY-MM-DD');
+};
+
 module.exports = {
     TIMEZONE_OPTIONS,
     formatInTimezone,
@@ -289,6 +299,7 @@ module.exports = {
     parseTimeInTimezone,
     getUTCBounds,
     getAppTimezone,
-    getAppDateFormat
+    getAppDateFormat,
+    getDateInTimezone
 };
 

@@ -180,33 +180,31 @@ exports.updateSetting = async (req, res) => {
             await setting.save();
         }
 
-        // Auto-sync attendance_compliance_hours when office start or end time is updated
+        // Auto-sync attendance_compliance_hours when office start or end time is updated ONLY if not already set
         if (key === 'office_start_time' || key === 'office_end_time') {
             try {
-                const otherKey = key === 'office_start_time' ? 'office_end_time' : 'office_start_time';
-                const otherSetting = await Setting.findOne({ where: { key: otherKey } });
-                const startTime = key === 'office_start_time' ? value : otherSetting?.value;
-                const endTime = key === 'office_end_time' ? value : otherSetting?.value;
-                if (startTime && endTime) {
-                    const [sh, sm] = startTime.split(':').map(Number);
-                    const [eh, em] = endTime.split(':').map(Number);
-                    const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
-                    if (diff > 0) {
-                        const complianceHrs = String(Math.round((diff / 60) * 100) / 100);
-                        const [compSetting] = await Setting.findOrCreate({
-                            where: { key: 'attendance_compliance_hours' },
-                            defaults: {
+                const compSetting = await Setting.findOne({ where: { key: 'attendance_compliance_hours' } });
+                if (!compSetting || !compSetting.value) {
+                    const otherKey = key === 'office_start_time' ? 'office_end_time' : 'office_start_time';
+                    const otherSetting = await Setting.findOne({ where: { key: otherKey } });
+                    const startTime = key === 'office_start_time' ? value : otherSetting?.value;
+                    const endTime = key === 'office_end_time' ? value : otherSetting?.value;
+                    if (startTime && endTime) {
+                        const [sh, sm] = startTime.split(':').map(Number);
+                        const [eh, em] = endTime.split(':').map(Number);
+                        const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+                        if (diff > 0) {
+                            const complianceHrs = String(Math.round((diff / 60) * 100) / 100);
+                            await Setting.create({
+                                key: 'attendance_compliance_hours',
                                 value: complianceHrs,
                                 category: 'attendance',
                                 data_type: 'number',
                                 is_public: true,
                                 display_order: 1,
                                 updated_by: req.userId
-                            }
-                        });
-                        compSetting.value = complianceHrs;
-                        compSetting.updated_by = req.userId;
-                        await compSetting.save();
+                            });
+                        }
                     }
                 }
             } catch (syncErr) {

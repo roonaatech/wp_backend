@@ -1856,7 +1856,7 @@ exports.getMonthlySummary = async (req, res) => {
                     { check_in_time: { [Op.between]: [sUTC, eUTC] } }
                 ]
             },
-            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }],
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email', 'employment_type'] }],
             order: [['date', 'ASC'], ['check_in_time', 'ASC']]
         }) : [];
 
@@ -1867,7 +1867,7 @@ exports.getMonthlySummary = async (req, res) => {
                 start_date: { [Op.lte]: endDate },
                 end_date: { [Op.gte]: startDate }
             },
-            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }]
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email', 'employment_type'] }]
         });
 
         // --- Fetch Time-Off Requests in date range ---
@@ -1876,7 +1876,7 @@ exports.getMonthlySummary = async (req, res) => {
                 ...staffFilter,
                 date: { [Op.between]: [startDate, endDate] }
             },
-            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }]
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email', 'employment_type'] }]
         });
 
         // --- Fetch On-Duty Logs in date range ---
@@ -1885,7 +1885,7 @@ exports.getMonthlySummary = async (req, res) => {
                 ...staffFilter,
                 start_time: { [Op.between]: [sUTC, eUTC] }
             },
-            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email'] }]
+            include: [{ model: Staff, as: 'user', attributes: ['staffid', 'firstname', 'lastname', 'email', 'employment_type'] }]
         });
 
         // --- Aggregate per employee ---
@@ -1894,11 +1894,13 @@ exports.getMonthlySummary = async (req, res) => {
 
         const ensureStaff = (staffId, userData) => {
             if (!staffMap[staffId]) {
+                const empType = userData?.employment_type || 'Full-time';
                 staffMap[staffId] = {
                     staff_id: staffId,
                     firstname: userData?.firstname || 'Unknown',
                     lastname: userData?.lastname || '',
                     email: userData?.email || '',
+                    employment_type: empType,
                     datecreated: userData?.datecreated || null,
                     present_days: 0,
                     work_minutes: 0,
@@ -1922,7 +1924,7 @@ exports.getMonthlySummary = async (req, res) => {
         }
         const activeStaffList = await Staff.findAll({
             where: baseStaffWhere,
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'datecreated']
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'datecreated', 'employment_type']
         });
         activeStaffList.forEach(st => ensureStaff(st.staffid, st));
 
@@ -2217,9 +2219,16 @@ exports.getMonthlySummary = async (req, res) => {
             });
 
             // Calculate Salary Compliance (Compliant Days) and Day-by-Day Breakdown
+            const empType = s.employment_type || 'Full-time';
+            const empTargetHours = empType === 'Part-time'
+                ? (attConfig.complianceHoursPartTime || 4.5)
+                : (attConfig.complianceHoursFullTime || attConfig.complianceHours || 9);
+
             let compliance = {
                 compliant_days: 0,
                 non_compliant_days: 0,
+                employment_type: empType,
+                compliance_hours: empTargetHours,
                 quota_summary: {
                     allowed_leave_days: attConfig.allowedLeavePerMonth,
                     allowed_timeoff_minutes: attConfig.allowedTimeOffPerMonth * 60,
@@ -2236,9 +2245,13 @@ exports.getMonthlySummary = async (req, res) => {
                     attendanceRecords: s.attendance_records,
                     leaveDays: s.leave_days_list,
                     timeoffRecords: s.timeoff_records,
-                    ondutyRecords: s.onduty_records
+                    ondutyRecords: s.onduty_records,
+                    employment_type: empType
                 }, {
-                    complianceHours: attConfig.complianceHours,
+                    complianceHours: empTargetHours,
+                    complianceHoursFullTime: attConfig.complianceHoursFullTime || attConfig.complianceHours || 9,
+                    complianceHoursPartTime: attConfig.complianceHoursPartTime || 4.5,
+                    employmentType: empType,
                     allowedLeavePerMonth: attConfig.allowedLeavePerMonth,
                     allowedTimeOffPerMonth: attConfig.allowedTimeOffPerMonth,
                     holidays: holidaysList,
@@ -2429,6 +2442,8 @@ exports.getMonthlySummary = async (req, res) => {
                 firstname: s.firstname,
                 lastname: s.lastname,
                 email: s.email,
+                employment_type: empType,
+                target_compliance_hours: empTargetHours,
                 present_days: attendanceEnabled ? presentDays : 0,
                 absent_days: attendanceEnabled ? totalAbsentDays : 0,
                 absent_dates: attendanceEnabled ? absentDatesList : [],
@@ -2462,6 +2477,8 @@ exports.getMonthlySummary = async (req, res) => {
             today: todayStr,
             attendance_enabled: attendanceEnabled,
             compliance_hours: attendanceEnabled ? attConfig.complianceHours : null,
+            compliance_hours_full_time: attendanceEnabled ? (attConfig.complianceHoursFullTime || attConfig.complianceHours) : null,
+            compliance_hours_part_time: attendanceEnabled ? attConfig.complianceHoursPartTime : null,
             allowed_leave_per_month: attConfig.allowedLeavePerMonth,
             allowed_time_off_per_month: attConfig.allowedTimeOffPerMonth,
             office_start_time: attConfig.startTime,

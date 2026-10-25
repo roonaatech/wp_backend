@@ -8,6 +8,7 @@ const Setting = db.settings;
 const EmployeeDevice = db.employee_devices;
 const LeaveRequest = db.leave_requests;
 const TimeOffRequest = db.time_off_requests;
+const OnDutyLog = db.on_duty_logs;
 const Op = db.Sequelize.Op;
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
 const timezoneUtil = require("../utils/timezone.util");
@@ -470,6 +471,13 @@ const formatDateInTimezone = (dateObj, tz) => {
     }
 };
 
+// Helper to get date-only string in app timezone as YYYY-MM-DD
+const getDateInTimezone = (dateObj, tz) => {
+    if (!dateObj) return null;
+    const formatted = formatDateInTimezone(dateObj, tz);
+    return formatted ? formatted.split(' ')[0] : null;
+};
+
 /**
  * Get detailed attendance logs for reports
  * GET /api/admin/attendance-logs
@@ -516,10 +524,13 @@ exports.getAttendanceLogsReport = async (req, res) => {
             whereClause.punch_source = punchSource;
         }
 
+        const ftHours = attConfig?.complianceHoursFullTime || attConfig?.complianceHours || 9;
+        const ptHours = attConfig?.complianceHoursPartTime || 4.5;
+        const ftThresholdMinutes = Math.round(ftHours * 60);
+        const ptThresholdMinutes = Math.round(ptHours * 60);
+
         // Compliance filter
         if (compliance && compliance !== 'all') {
-            const compHours = attConfig?.complianceHours || 9;
-            const thresholdMinutes = compHours * 60;
             const compLower = String(compliance).toLowerCase();
 
             if (compLower === 'in_progress') {
@@ -530,13 +541,13 @@ exports.getAttendanceLogsReport = async (req, res) => {
                 whereClause.check_out_time = { [Op.ne]: null };
                 if (!whereClause[Op.and]) whereClause[Op.and] = [];
                 whereClause[Op.and].push(
-                    db.sequelize.literal(`(CASE WHEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) > 0 THEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) WHEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) > 0 THEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) / 60 ELSE 0 END) >= ${thresholdMinutes}`)
+                    db.sequelize.literal(`(CASE WHEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) > 0 THEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) WHEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) > 0 THEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) / 60 ELSE 0 END) >= (CASE WHEN \`user\`.\`employment_type\` = 'Part-time' THEN ${ptThresholdMinutes} ELSE ${ftThresholdMinutes} END)`)
                 );
             } else if (compLower === 'non_compliant') {
                 whereClause.check_out_time = { [Op.ne]: null };
                 if (!whereClause[Op.and]) whereClause[Op.and] = [];
                 whereClause[Op.and].push(
-                    db.sequelize.literal(`(CASE WHEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) > 0 THEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) WHEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) > 0 THEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) / 60 ELSE 0 END) < ${thresholdMinutes}`)
+                    db.sequelize.literal(`(CASE WHEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) > 0 THEN TIMESTAMPDIFF(MINUTE, check_in_time, check_out_time) WHEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) > 0 THEN TIME_TO_SEC(TIMEDIFF(TIME(check_out_time), TIME(check_in_time))) / 60 ELSE 0 END) < (CASE WHEN \`user\`.\`employment_type\` = 'Part-time' THEN ${ptThresholdMinutes} ELSE ${ftThresholdMinutes} END)`)
                 );
             }
         }
@@ -582,7 +593,7 @@ exports.getAttendanceLogsReport = async (req, res) => {
             include: [
                 {
                     model: User,
-                    attributes: ['firstname', 'lastname', 'email'],
+                    attributes: ['firstname', 'lastname', 'email', 'employment_type'],
                     include: [
                         {
                             model: EmployeeProfile,
@@ -599,7 +610,57 @@ exports.getAttendanceLogsReport = async (req, res) => {
             offset: offsetVal
         });
 
-        // Format dates & snapshots
+        // Fetch approved time-off and on-duty records for the returned employees and dates
+        const distinctStaffIds = [...new Set(rows.map(r => r.staff_id).filter(Boolean))];
+        const distinctDates = [...new Set(rows.map(r => r.date).filter(Boolean))];
+        const dayActivityMap = {};
+
+        if (distinctStaffIds.length > 0 && distinctDates.length > 0) {
+            const timeOffs = await TimeOffRequest.findAll({
+                where: {
+                    staff_id: { [Op.in]: distinctStaffIds },
+                    date: { [Op.in]: distinctDates },
+                    status: 'Approved'
+                },
+                attributes: ['staff_id', 'date', 'start_time', 'end_time']
+            });
+
+            timeOffs.forEach(to => {
+                const k = `${to.staff_id}_${to.date}`;
+                if (!dayActivityMap[k]) dayActivityMap[k] = { timeoffMins: 0, ondutyMins: 0 };
+                let m = 0;
+                if (to.start_time && to.end_time) {
+                    const [sh, sm] = to.start_time.split(':').map(Number);
+                    const [eh, em] = to.end_time.split(':').map(Number);
+                    const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+                    if (diff > 0) m = diff;
+                }
+                dayActivityMap[k].timeoffMins += m;
+            });
+
+            const onDuties = await OnDutyLog.findAll({
+                where: {
+                    staff_id: { [Op.in]: distinctStaffIds },
+                    status: 'Approved'
+                },
+                attributes: ['staff_id', 'start_time', 'end_time', 'completed_end_time']
+            });
+
+            onDuties.forEach(od => {
+                const endT = od.completed_end_time || od.end_time;
+                if (!od.start_time || !endT) return;
+                const dStr = getDateInTimezone(od.start_time, tz);
+                if (!distinctDates.includes(dStr)) return;
+                const k = `${od.staff_id}_${dStr}`;
+                if (!dayActivityMap[k]) dayActivityMap[k] = { timeoffMins: 0, ondutyMins: 0 };
+                const diffMs = new Date(endT).getTime() - new Date(od.start_time).getTime();
+                if (diffMs > 0) {
+                    dayActivityMap[k].ondutyMins += Math.floor(diffMs / 60000);
+                }
+            });
+        }
+
+        // Format dates, snapshots, and calculate compliance based on captured hours (attendance + on-duty + time-off)
         const reportsList = rows.map(item => {
             const plain = item.get({ plain: true });
             
@@ -613,13 +674,43 @@ exports.getAttendanceLogsReport = async (req, res) => {
                 plain.snapshot_url = plain.snapshot_path.replace(/\\/g, '/');
             }
 
+            const k = `${plain.staff_id}_${plain.date}`;
+            const extra = dayActivityMap[k] || { timeoffMins: 0, ondutyMins: 0 };
+
+            // Calculate work minutes for this session
+            let sessionMins = 0;
+            if (item.check_in_time && item.check_out_time) {
+                const diffMs = new Date(item.check_out_time).getTime() - new Date(item.check_in_time).getTime();
+                if (diffMs > 0) sessionMins = Math.floor(diffMs / 60000);
+            }
+
+            const empType = plain.user?.employment_type || 'Full-time';
+            const isPartTime = empType === 'Part-time';
+            const empTargetHours = isPartTime ? ptHours : ftHours;
+            const empTargetMins = Math.round(empTargetHours * 60);
+
+            // Captured effective work minutes for the day (attendance + onduty + timeoff)
+            const effectiveWorkMins = sessionMins + extra.ondutyMins + extra.timeoffMins;
+
+            plain.employment_type = empType;
+            plain.target_compliance_hours = empTargetHours;
+            plain.session_work_minutes = sessionMins;
+            plain.day_onduty_minutes = extra.ondutyMins;
+            plain.day_timeoff_minutes = extra.timeoffMins;
+            plain.day_effective_work_minutes = effectiveWorkMins;
+            plain.is_compliant = Boolean(item.check_out_time && effectiveWorkMins >= empTargetMins);
+            plain.is_active = Boolean(item.check_in_time && !item.check_out_time);
+
             return plain;
         });
+
         res.status(200).send({
             totalItems: count,
             totalPages: Math.ceil(count / limitVal),
             currentPage: parseInt(page),
             compliance_hours: attConfig.complianceHours,
+            compliance_hours_full_time: ftHours,
+            compliance_hours_part_time: ptHours,
             office_start_time: attConfig.startTime,
             office_end_time: attConfig.endTime,
             reports: reportsList

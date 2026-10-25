@@ -78,8 +78,26 @@ const parseTimeToMinutes = (timeVal) => {
  * @param {number} config.allowedLeavePerMonth - Allowed paid leaves per month (e.g. 1)
  * @param {number} config.allowedTimeOffPerMonth - Allowed time-off hours per month (e.g. 2)
  */
+const { normalizeEmploymentType } = require('./employmentType.util');
+
 function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
-    const complianceHours = config.complianceHours && config.complianceHours > 0 ? Number(config.complianceHours) : 9;
+    const empType = normalizeEmploymentType(config.employmentType || employeeRecords.employment_type || 'Full-time');
+    const isPartTime = empType === 'Part-time';
+
+    let defaultHours = 9;
+    if (isPartTime) {
+        defaultHours = config.complianceHoursPartTime && config.complianceHoursPartTime > 0
+            ? Number(config.complianceHoursPartTime)
+            : 4.5;
+    } else {
+        defaultHours = config.complianceHoursFullTime && config.complianceHoursFullTime > 0
+            ? Number(config.complianceHoursFullTime)
+            : 9;
+    }
+
+    const complianceHours = config.complianceHours && config.complianceHours > 0 
+        ? Number(config.complianceHours) 
+        : defaultHours;
     const allowedLeaveDays = config.allowedLeavePerMonth !== undefined && config.allowedLeavePerMonth >= 0 ? Number(config.allowedLeavePerMonth) : 1;
     const allowedTimeOffHours = config.allowedTimeOffPerMonth !== undefined && config.allowedTimeOffPerMonth >= 0 ? Number(config.allowedTimeOffPerMonth) : 2;
 
@@ -349,6 +367,8 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             date: dStr,
             weekday: weekday,
             type: dayType,
+            employment_type: empType,
+            target_hours: complianceHours,
             attendance_minutes: day.attMins,
             timeoff_overlap_minutes: 0,
             onduty_minutes: day.onDutyMins,
@@ -371,6 +391,8 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
         compliant_days: Math.round(totalCompliantDays * 10) / 10,
         non_compliant_days: Math.round(totalNonCompliantDays * 10) / 10,
         holidays_count: holidaysMap.size,
+        employment_type: empType,
+        compliance_hours: complianceHours,
         quota_summary: {
             allowed_leave_days: allowedLeaveDays,
             used_leave_days: Math.round(usedLeaveDays * 10) / 10,

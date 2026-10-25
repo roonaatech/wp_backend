@@ -87,7 +87,10 @@ const formatTimeToHHMM = (dateObj, tz = 'Asia/Kolkata') => {
 exports.getMissedAttendance = async (req, res) => {
     try {
         const tz = await getAppTimezone();
-        const complianceHours = await getComplianceHours();
+        const attConfig = await getAttendanceConfig();
+        const complianceHours = attConfig.complianceHours;
+        const complianceHoursFullTime = attConfig.complianceHoursFullTime || attConfig.complianceHours || 9;
+        const complianceHoursPartTime = attConfig.complianceHoursPartTime || 4.5;
         const officeTimes = await getOfficeTimings();
 
         // Determine date range in application timezone
@@ -139,7 +142,7 @@ exports.getMissedAttendance = async (req, res) => {
                     attributes: ['image_path']
                 }
             ],
-            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id'],
+            attributes: ['staffid', 'firstname', 'lastname', 'email', 'role', 'approving_manager_id', 'employment_type'],
             order: [['firstname', 'ASC'], ['lastname', 'ASC']]
         });
 
@@ -291,9 +294,16 @@ exports.getMissedAttendance = async (req, res) => {
                     existingCheckInStr = formatTimeToHHMM(openLog.check_in_time, tz);
                 }
 
+                // Employee employment type and compliance target
+                const empType = staff.employment_type || 'Full-time';
+                const isPartTime = empType === 'Part-time';
+                const empTargetHours = isPartTime ? complianceHoursPartTime : complianceHoursFullTime;
+
                 // Suggested check-in and check-out values
                 const suggestedCheckIn = existingCheckInStr || defaultCheckIn;
-                const suggestedCheckOut = existingCheckInStr ? calculateCheckoutTime(suggestedCheckIn, complianceHours, defaultCheckOut) : defaultCheckOut;
+                const suggestedCheckOut = existingCheckInStr
+                    ? calculateCheckoutTime(suggestedCheckIn, empTargetHours, defaultCheckOut)
+                    : (isPartTime ? calculateCheckoutTime(defaultCheckIn, empTargetHours, defaultCheckOut) : defaultCheckOut);
 
                 const empName = `${staff.firstname || ''} ${staff.lastname || ''}`.trim();
                 let finalMissedType = missedType;
@@ -320,6 +330,8 @@ exports.getMissedAttendance = async (req, res) => {
                     staff_id: staff.staffid,
                     employee_name: empName,
                     email: staff.email,
+                    employment_type: empType,
+                    target_compliance_hours: empTargetHours,
                     role_name: staff.role_info?.display_name || staff.role_info?.name || 'Staff',
                     avatar: staff.profile_info?.image_path || null,
                     date: dateStr,
@@ -338,6 +350,8 @@ exports.getMissedAttendance = async (req, res) => {
         res.status(200).send({
             success: true,
             compliance_hours: complianceHours,
+            compliance_hours_full_time: complianceHoursFullTime,
+            compliance_hours_part_time: complianceHoursPartTime,
             default_check_in: defaultCheckIn,
             default_check_out: defaultCheckOut,
             timezone: tz,
@@ -611,7 +625,7 @@ exports.getRecentRegularizations = async (req, res) => {
                 {
                     model: User,
                     as: 'user',
-                    attributes: ['staffid', 'firstname', 'lastname', 'email'],
+                    attributes: ['staffid', 'firstname', 'lastname', 'email', 'employment_type'],
                     include: [
                         {
                             model: EmployeeProfile,
@@ -629,6 +643,8 @@ exports.getRecentRegularizations = async (req, res) => {
             limit
         });
 
+        const config = await getAttendanceConfig();
+
         const formatted = logs.map(log => {
             const plain = log.get({ plain: true });
             return {
@@ -636,6 +652,7 @@ exports.getRecentRegularizations = async (req, res) => {
                 staff_id: plain.staff_id,
                 employee_name: plain.user ? `${plain.user.firstname || ''} ${plain.user.lastname || ''}`.trim() : 'Unknown',
                 email: plain.user?.email,
+                employment_type: plain.user?.employment_type || 'Full-time',
                 avatar: plain.user?.profile_info?.image_path,
                 date: plain.date,
                 check_in_time: formatTimeToHHMM(plain.check_in_time, tz),
@@ -648,7 +665,9 @@ exports.getRecentRegularizations = async (req, res) => {
 
         res.status(200).send({
             success: true,
-            recent: formatted
+            recent: formatted,
+            compliance_hours: config.complianceHoursFullTime || config.complianceHours,
+            compliance_hours_part_time: config.complianceHoursPartTime || 4.5
         });
 
     } catch (err) {

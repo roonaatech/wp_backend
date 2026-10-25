@@ -43,6 +43,36 @@ describe('On-Duty Controller', () => {
       expect(res.status).toBe(400);
     });
 
+    it('should reject on-duty before office hours start time', async () => {
+      await db.settings.upsert({
+        key: 'office_start_time',
+        value: '23:59',
+        category: 'attendance',
+        data_type: 'string'
+      });
+
+      const onDutyData = {
+        client_name: 'Acme Corp',
+        purpose: 'Client meeting',
+        location: 'Mumbai'
+      };
+
+      const res = await request(app)
+        .post('/api/onduty/start')
+        .set('x-access-token', employeeToken)
+        .send(onDutyData);
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('On-duty cannot be started before office hours start time');
+
+      await db.settings.upsert({
+        key: 'office_start_time',
+        value: '09:30',
+        category: 'attendance',
+        data_type: 'string'
+      });
+    });
+
     it('should reject request without authentication', async () => {
       const res = await request(app)
         .post('/api/onduty/start')

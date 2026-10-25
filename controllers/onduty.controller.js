@@ -8,6 +8,18 @@ const hierarchyUtil = require("../utils/hierarchy.util");
 const timezoneUtil = require("../utils/timezone.util");
 const Setting = db.settings;
 const { isDateHoliday, toDateString } = require("../utils/holiday.helper");
+const { getAttendanceConfig } = require("../utils/attendanceConfig");
+
+// Helper to format 24h time string (e.g. "09:30") into 12h format (e.g. "09:30 AM")
+const formatTime12h = (timeStr) => {
+    if (!timeStr) return '';
+    const parts = timeStr.split(':').map(Number);
+    const h = parts[0];
+    const m = parts[1] || 0;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+};
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -44,9 +56,26 @@ exports.startOnDuty = async (req, res) => {
         return res.status(400).send({ message: "Client name, location, and purpose are required" });
     }
 
+    const tz = await getAppTimezone();
+    const attConfig = await getAttendanceConfig();
+    const officeStartTime = attConfig?.startTime || '09:30';
+
+    // Validate that on-duty is not started before office hours start time
+    const timeFormatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    });
+    const currentTimeStr = timeFormatter.format(new Date());
+    if (currentTimeStr < officeStartTime) {
+        return res.status(400).send({
+            message: `On-duty cannot be started before office hours start time (${formatTime12h(officeStartTime)}).`
+        });
+    }
+
     // Check if today is a company holiday
     try {
-        const tz = await getAppTimezone();
         const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
         const todayStr = formatter.format(new Date());
         const holiday = await isDateHoliday(todayStr);

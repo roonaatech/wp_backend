@@ -107,10 +107,16 @@ const validateTimeOffHours = async (staff_id, date, start_time, end_time, exclud
     const reqEndFmt = formatTime12h(end_time);
 
     if (officeEndSec > officeStartSec) {
-        if (startSec < officeStartSec || startSec >= officeEndSec) {
+        if (startSec < officeStartSec) {
             return {
                 valid: false,
-                message: `Time-off start time (${reqStartFmt}) must be within configured office hours (${officeStartFmt} - ${officeEndFmt}). Requests outside office hours are not allowed.`
+                message: `Time-off start time (${reqStartFmt}) cannot be before office start time (${officeStartFmt}). Requests must start on or after office start time.`
+            };
+        }
+        if (startSec >= officeEndSec) {
+            return {
+                valid: false,
+                message: `Time-off start time (${reqStartFmt}) cannot be on or after office end time (${officeEndFmt}).`
             };
         }
         if (endSec <= officeStartSec || endSec > officeEndSec) {

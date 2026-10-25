@@ -227,6 +227,86 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
         expect(sun.remarks).toContain('Sunday Weekly Off (Compliant)');
         expect(result.compliant_days).toBe(1);
     });
+
+    it('calculates compliance correctly for part-time employees with configured part-time hours', () => {
+        const config = {
+            complianceHoursFullTime: 9,
+            complianceHoursPartTime: 4.5,
+            allowedLeavePerMonth: 1,
+            allowedTimeOffPerMonth: 2
+        };
+
+        const employeeRecords = {
+            employment_type: 'Part-time',
+            attendanceRecords: [
+                { date: '2026-10-05', work_minutes: 270 }, // 4.5h (Monday) - exact match
+                { date: '2026-10-06', work_minutes: 180 }, // 3h attendance (Tuesday)
+                { date: '2026-10-07', work_minutes: 240 }  // 4h attendance (Wednesday - below 4.5h)
+            ],
+            leaveDays: [],
+            timeoffRecords: [
+                { date: '2026-10-06', minutes: 90 } // 1.5h time-off on Tuesday => 3h + 1.5h = 4.5h
+            ],
+            ondutyRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+        expect(result.employment_type).toBe('Part-time');
+        expect(result.compliance_hours).toBe(4.5);
+
+        const day1 = result.daily_breakdown.find(d => d.date === '2026-10-05');
+        expect(day1.is_compliant).toBe(true);
+        expect(day1.compliant_day_value).toBe(1);
+        expect(day1.target_hours).toBe(4.5);
+
+        const day2 = result.daily_breakdown.find(d => d.date === '2026-10-06');
+        expect(day2.is_compliant).toBe(true);
+        expect(day2.compliant_day_value).toBe(1);
+        expect(day2.effective_work_minutes).toBe(270);
+
+        const day3 = result.daily_breakdown.find(d => d.date === '2026-10-07');
+        expect(day3.is_compliant).toBe(false);
+        expect(day3.compliant_day_value).toBe(0);
+
+        expect(result.compliant_days).toBe(2);
+        expect(result.non_compliant_days).toBe(1);
+    });
+
+    it('differentiates full-time and part-time for the same 5-hour work duration', () => {
+        const config = {
+            complianceHoursFullTime: 9,
+            complianceHoursPartTime: 5,
+            allowedLeavePerMonth: 1,
+            allowedTimeOffPerMonth: 2
+        };
+
+        // 5 hours = 300 minutes
+        const ftRecords = {
+            employment_type: 'Full-time',
+            attendanceRecords: [{ date: '2026-10-05', work_minutes: 300 }],
+            leaveDays: [],
+            timeoffRecords: [],
+            ondutyRecords: []
+        };
+
+        const ptRecords = {
+            employment_type: 'Part-time',
+            attendanceRecords: [{ date: '2026-10-05', work_minutes: 300 }],
+            leaveDays: [],
+            timeoffRecords: [],
+            ondutyRecords: []
+        };
+
+        const ftResult = calculateMonthlyCompliance(ftRecords, config);
+        const ptResult = calculateMonthlyCompliance(ptRecords, config);
+
+        expect(ftResult.compliant_days).toBe(0);
+        expect(ftResult.daily_breakdown[0].is_compliant).toBe(false);
+
+        expect(ptResult.compliant_days).toBe(1);
+        expect(ptResult.daily_breakdown[0].is_compliant).toBe(true);
+    });
 });
+
 
 

@@ -239,12 +239,22 @@ async function seedSettings() {
         {
             key: 'attendance_compliance_hours',
             value: '9',
-            description: 'Minimum required hours an employee must be in office per day for attendance compliance',
+            description: 'Minimum required hours (attendance + time-off + on-duty) an employee must complete per day for full-time attendance compliance',
             category: 'attendance',
             data_type: 'number',
             validation_rules: '{"min": 1, "max": 24, "step": 0.5, "required": true}',
             is_public: true,
             display_order: 1
+        },
+        {
+            key: 'attendance_compliance_hours_part_time',
+            value: '4.5',
+            description: 'Minimum required hours (attendance + time-off + on-duty) an employee must complete per day for part-time attendance compliance',
+            category: 'attendance',
+            data_type: 'number',
+            validation_rules: '{"min": 0.5, "max": 24, "step": 0.5, "required": true}',
+            is_public: true,
+            display_order: 2
         },
         {
             key: 'office_start_time',
