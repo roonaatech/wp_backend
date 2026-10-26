@@ -23,40 +23,163 @@ const TIMEZONE_OPTIONS = [
     { value: 'UTC', label: 'UTC' }
 ];
 
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 /**
- * Format a date/time in the application's configured timezone
- * @param {Date|string} date - Date to format
- * @param {string} timezone - IANA timezone string (e.g., 'Asia/Kolkata')
+ * Parse date components safely without unwanted timezone shifting for naked date/datetime strings
+ */
+const parseDateComponents = (date, timezone = 'Asia/Kolkata') => {
+    if (!date) return null;
+
+    if (typeof date === 'string') {
+        const trimmed = date.trim();
+        // Pure date string: YYYY-MM-DD
+        const dateMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (dateMatch) {
+            const [, y, m, d] = dateMatch;
+            const mIdx = parseInt(m, 10) - 1;
+            return {
+                year: y,
+                month: m,
+                day: d,
+                hour: null,
+                minute: null,
+                second: null,
+                mShort: SHORT_MONTHS[mIdx] || m
+            };
+        }
+        // Naked datetime string without timezone offset: YYYY-MM-DD HH:mm(:ss)?
+        const dtMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+        if (dtMatch) {
+            const [, y, m, d, hh, mm, ss] = dtMatch;
+            const mIdx = parseInt(m, 10) - 1;
+            return {
+                year: y,
+                month: m,
+                day: d,
+                hour: parseInt(hh, 10),
+                minute: mm,
+                second: ss || '00',
+                mShort: SHORT_MONTHS[mIdx] || m
+            };
+        }
+    }
+
+    // Date object or ISO string with timezone offset (e.g., ends in 'Z' or '+05:30')
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    if (isNaN(dateObj.getTime())) return null;
+
+    const formatter = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        hourCycle: 'h23',
+        timeZone: timezone
+    });
+    const parts = formatter.formatToParts(dateObj);
+    const p = {};
+    parts.forEach(part => { p[part.type] = part.value; });
+    const safeHour = parseInt(p.hour, 10) % 24;
+    const mShort = new Intl.DateTimeFormat('en-US', { timeZone: timezone, month: 'short' }).format(dateObj);
+
+    return {
+        year: p.year,
+        month: p.month,
+        day: p.day,
+        hour: safeHour,
+        minute: p.minute,
+        second: p.second,
+        mShort
+    };
+};
+
 /**
  * Format date only (no time)
  * @param {Date|string} date - Date to format
  * @param {string} timezone - IANA timezone string
- * @param {string} dateFormat - Date format string (e.g. 'DD/MM/YYYY', 'DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD', 'MMM DD, YYYY')
+ * @param {string} dateFormat - Date format string (e.g. 'DD/MM/YYYY', 'DD-MM-YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'MMM DD, YYYY')
  * @returns {string} Formatted date string
  */
 const formatDateOnly = (date, timezone = 'Asia/Kolkata', dateFormat = 'DD/MM/YYYY') => {
     try {
-        const dateObj = typeof date === 'string' ? new Date(date) : date;
-        const formatter = new Intl.DateTimeFormat('en-US', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            timeZone: timezone
-        });
-        const parts = formatter.formatToParts(dateObj);
-        const day = parts.find(p => p.type === 'day')?.value;
-        const month = parts.find(p => p.type === 'month')?.value;
-        const year = parts.find(p => p.type === 'year')?.value;
+        if (!date) return '';
+        const comp = parseDateComponents(date, timezone);
+        if (!comp) return String(date);
+
+        const { year, month, day, mShort } = comp;
 
         if (dateFormat === 'DD/MM/YYYY') return `${day}/${month}/${year}`;
         if (dateFormat === 'DD-MM-YYYY') return `${day}-${month}-${year}`;
+        if (dateFormat === 'MM/DD/YYYY') return `${month}/${day}/${year}`;
         if (dateFormat === 'MM-DD-YYYY') return `${month}-${day}-${year}`;
         if (dateFormat === 'YYYY-MM-DD') return `${year}-${month}-${day}`;
-        if (dateFormat === 'MMM DD, YYYY') {
-            const mShort = new Intl.DateTimeFormat('en-US', { timeZone: timezone, month: 'short' }).format(dateObj);
-            return `${mShort} ${day}, ${year}`;
+        if (dateFormat === 'YYYY/MM/DD') return `${year}/${month}/${day}`;
+        if (dateFormat === 'MMM DD, YYYY') return `${mShort} ${day}, ${year}`;
+        if (dateFormat === 'DD MMM YYYY') return `${day} ${mShort} ${year}`;
+        if (dateFormat === 'DD MMM, YYYY') return `${day} ${mShort}, ${year}`;
+        return `${day}/${month}/${year}`;
+    } catch (e) {
+        return String(date);
+    }
+};
+
+/**
+ * Format time only (no date)
+ * @param {Date|string} date - Date to format
+ * @param {string} timezone - IANA timezone string
+ * @param {string} timeFormat - '12h' or '24h'
+ * @returns {string} Formatted time string
+ */
+const formatTimeOnly = (date, timezone = 'Asia/Kolkata', timeFormat = '12h') => {
+    try {
+        if (!date) return '';
+        const is24h = timeFormat === '24h';
+
+        // Check if string is already a pure time string (e.g. "09:30" or "14:30:00")
+        if (typeof date === 'string') {
+            const timeOnlyMatch = date.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+            if (timeOnlyMatch) {
+                const h = parseInt(timeOnlyMatch[1], 10);
+                const m = timeOnlyMatch[2];
+                if (is24h) return `${String(h).padStart(2, '0')}:${m}`;
+                const ampm = h >= 12 ? 'PM' : 'AM';
+                const h12 = h % 12 || 12;
+                return `${String(h12).padStart(2, '0')}:${m} ${ampm}`;
+            }
         }
-        return `${month}/${day}/${year}`;
+
+        const comp = parseDateComponents(date, timezone);
+        if (!comp || comp.hour === null) return '';
+        const h = comp.hour;
+        const m = comp.minute;
+        if (is24h) return `${String(h).padStart(2, '0')}:${m}`;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        return `${String(h12).padStart(2, '0')}:${m} ${ampm}`;
+    } catch (e) {
+        return String(date);
+    }
+};
+
+/**
+ * Format date and time
+ * @param {Date|string} date - Date to format
+ * @param {string} timezone - IANA timezone string
+ * @param {string} dateFormat - Date format string
+ * @param {string} timeFormat - '12h' or '24h'
+ * @returns {string} Formatted date and time string
+ */
+const formatDateTime = (date, timezone = 'Asia/Kolkata', dateFormat = 'DD/MM/YYYY', timeFormat = '12h') => {
+    try {
+        if (!date) return '';
+        const datePart = formatDateOnly(date, timezone, dateFormat);
+        const timePart = formatTimeOnly(date, timezone, timeFormat);
+        if (!timePart) return datePart;
+        return `${datePart} ${timePart}`;
     } catch (e) {
         return String(date);
     }
@@ -68,15 +191,10 @@ const formatInTimezone = (date, timezone = 'Asia/Kolkata', options = {}) => {
         const dateFormat = options.dateFormat || options.format;
 
         if (dateFormat) {
+            const timeFormat = options.hour12 === false ? '24h' : '12h';
             const datePart = formatDateOnly(dateObj, timezone, dateFormat);
-            const timeFormatter = new Intl.DateTimeFormat('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: options.second ? '2-digit' : undefined,
-                hour12: options.hour12 !== undefined ? options.hour12 : true,
-                timeZone: timezone
-            });
-            const timePart = timeFormatter.format(dateObj);
+            const timePart = formatTimeOnly(dateObj, timezone, timeFormat);
+            if (!timePart) return datePart;
             return `${datePart}, ${timePart}`;
         }
 
@@ -97,23 +215,6 @@ const formatInTimezone = (date, timezone = 'Asia/Kolkata', options = {}) => {
         console.error('Error formatting date in timezone:', error);
         return new Date(date).toLocaleString();
     }
-};
-
-/**
- * Format time only (no date)
- * @param {Date|string} date - Date to format
- * @param {string} timezone - IANA timezone string
- * @returns {string} Formatted time string (HH:MM AM/PM)
- */
-const formatTimeOnly = (date, timezone = 'Asia/Kolkata') => {
-    return formatInTimezone(date, timezone, {
-        year: undefined,
-        month: undefined,
-        day: undefined,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-    });
 };
 
 /**
@@ -243,21 +344,56 @@ const getUTCBounds = (dateStr, timezone = 'Asia/Kolkata') => {
     return [start, end];
 };
 
+// In-memory cache for application settings to support synchronous helpers
+let cachedSettings = {
+    timezone: 'Asia/Kolkata',
+    dateFormat: 'DD/MM/YYYY',
+    timeFormat: '12h'
+};
+
+/**
+ * Fetch application settings from database (timezone, date format, time format)
+ * @returns {Promise<{timezone: string, dateFormat: string, timeFormat: string}>}
+ */
+const getAppSettings = async () => {
+    try {
+        const db = require('../models');
+        if (db && db.settings) {
+            const settings = await db.settings.findAll({
+                where: {
+                    key: ['application_timezone', 'application_date_format', 'application_time_format']
+                }
+            });
+            const map = {};
+            settings.forEach(s => { map[s.key] = s.value; });
+            cachedSettings = {
+                timezone: map['application_timezone'] || 'Asia/Kolkata',
+                dateFormat: map['application_date_format'] || 'DD/MM/YYYY',
+                timeFormat: map['application_time_format'] || '12h'
+            };
+            return { ...cachedSettings };
+        }
+    } catch (e) {
+        console.error('Error fetching app settings in timezone.util:', e);
+    }
+    return { ...cachedSettings };
+};
+
+/**
+ * Get synchronously cached application settings
+ * @returns {{timezone: string, dateFormat: string, timeFormat: string}}
+ */
+const getCachedAppSettings = () => {
+    return { ...cachedSettings };
+};
+
 /**
  * Helper to get the configured application timezone from database settings
  * @returns {Promise<string>} Configured timezone or 'Asia/Kolkata' default
  */
 const getAppTimezone = async () => {
-    try {
-        const db = require('../models');
-        if (db && db.settings) {
-            const tzSetting = await db.settings.findOne({ where: { key: 'application_timezone' } });
-            return tzSetting?.value || 'Asia/Kolkata';
-        }
-        return 'Asia/Kolkata';
-    } catch (e) {
-        return 'Asia/Kolkata';
-    }
+    const settings = await getAppSettings();
+    return settings.timezone;
 };
 
 /**
@@ -265,16 +401,39 @@ const getAppTimezone = async () => {
  * @returns {Promise<string>} Configured date format or 'DD/MM/YYYY' default
  */
 const getAppDateFormat = async () => {
-    try {
-        const db = require('../models');
-        if (db && db.settings) {
-            const dfSetting = await db.settings.findOne({ where: { key: 'application_date_format' } });
-            return dfSetting?.value || 'DD/MM/YYYY';
-        }
-        return 'DD/MM/YYYY';
-    } catch (e) {
-        return 'DD/MM/YYYY';
-    }
+    const settings = await getAppSettings();
+    return settings.dateFormat;
+};
+
+/**
+ * Helper to get the configured application time format from database settings
+ * @returns {Promise<string>} Configured time format ('12h' or '24h')
+ */
+const getAppTimeFormat = async () => {
+    const settings = await getAppSettings();
+    return settings.timeFormat;
+};
+
+/**
+ * Format date using application settings
+ * @param {Date|string} date
+ * @returns {Promise<string>}
+ */
+const formatAppDate = async (date) => {
+    if (!date) return '';
+    const { timezone, dateFormat } = await getAppSettings();
+    return formatDateOnly(date, timezone, dateFormat);
+};
+
+/**
+ * Format datetime using application settings
+ * @param {Date|string} date
+ * @returns {Promise<string>}
+ */
+const formatAppDateTime = async (date) => {
+    if (!date) return '';
+    const { timezone, dateFormat, timeFormat } = await getAppSettings();
+    return formatDateTime(date, timezone, dateFormat, timeFormat);
 };
 
 /**
@@ -292,14 +451,21 @@ module.exports = {
     formatInTimezone,
     formatDateOnly,
     formatTimeOnly,
+    formatDateTime,
     getCurrentTimeInTimezone,
     getNowStringInTimezone,
     convertFromUTC,
     getTimezoneOffset,
     parseTimeInTimezone,
     getUTCBounds,
+    getAppSettings,
+    getCachedAppSettings,
     getAppTimezone,
     getAppDateFormat,
+    getAppTimeFormat,
+    formatAppDate,
+    formatAppDateTime,
     getDateInTimezone
 };
+
 

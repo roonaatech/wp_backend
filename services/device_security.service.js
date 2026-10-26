@@ -5,6 +5,7 @@ const User = db.user;
 const Role = db.roles;
 const Setting = db.settings;
 const emailService = require("../utils/email.service");
+const timezoneUtil = require("../utils/timezone.util");
 const { Op } = db.Sequelize;
 
 /**
@@ -411,8 +412,7 @@ class DeviceSecurityService {
             const attemptingName = attemptingUser ? `${attemptingUser.firstname} ${attemptingUser.lastname}` : 'Unknown';
             const attemptingEmail = attemptingUser?.email || 'N/A';
             const boundName = boundUser ? `${boundUser.firstname} ${boundUser.lastname}` : 'Unknown';
-            const boundEmail = boundUser?.email || 'N/A';
-            const formattedTime = new Date(detectedAt).toLocaleString('en-US', { timeZoneName: 'short' });
+            const formattedTime = await timezoneUtil.formatAppDateTime(detectedAt);
 
             const subject = `⚠️ [WorkPulse Security Alert] Proxy Attendance Attempt Detected - Device Conflict (#${violationId})`;
 

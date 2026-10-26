@@ -65,6 +65,9 @@ exports.notifyNextLevelIfManagerOnLeave = async (manager, applicant, requestType
                     variables.purpose = requestDetails.purpose;
                     variables.start_time = requestDetails.start_time;
                     variables.end_time = requestDetails.end_time || '';
+                    variables.start_date = requestDetails.start_time;
+                    variables.end_date = requestDetails.end_time || '';
+                    variables.reason = requestDetails.reason || `${requestDetails.purpose || ''} at ${requestDetails.client_name || ''}`;
                 }
 
                 await emailService.sendTemplateEmail(grandManager.email, templateSlug, variables);

@@ -6,6 +6,7 @@ const anniversaryUtil = require('./anniversary.util');
 const seedBirthdayTemplates = require('./seed_birthday_template');
 const seedAnniversaryTemplates = require('./seed_anniversary_template');
 const { getAppTimezone } = require('./hierarchy.util');
+const timezoneUtil = require('./timezone.util');
 const { Op } = require('sequelize');
 
 // Live task handles, kept so a schedule change can re-register them without
@@ -113,6 +114,8 @@ const startPendingRequestReminderCron = async () => {
                 const ccEmail = grandManager && grandManager.email ? grandManager.email : null;
 
                 if (manager.email) {
+                    const { dateFormat } = await timezoneUtil.getAppSettings();
+                    const appliedDate = timezoneUtil.formatDateOnly(req.createdAt, tz, dateFormat);
                     const subject = `Reminder: Pending ${type} request for ${user.firstname} ${user.lastname}`;
                     const body = `
                         <p>Dear ${manager.firstname},</p>
@@ -121,7 +124,7 @@ const startPendingRequestReminderCron = async () => {
                         <p>Request Details:</p>
                         <ul>
                             <li><strong>Type:</strong> ${type}</li>
-                            <li><strong>Date Applied:</strong> ${new Date(req.createdAt).toLocaleDateString()}</li>
+                            <li><strong>Date Applied:</strong> ${appliedDate}</li>
                         </ul>
                     `;
 

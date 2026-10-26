@@ -79,11 +79,52 @@ class EmailService {
             let subject = template.subject;
             let body = template.body;
 
+            // Fetch date/time settings for consistent email formatting
+            const timezoneUtil = require("./timezone.util");
+            const { timezone, dateFormat, timeFormat } = await timezoneUtil.getAppSettings();
+
+            // Prepare formatted variables based on settings
+            const formattedVariables = { ...(variables || {}) };
+            for (const key in formattedVariables) {
+                const val = formattedVariables[key];
+                if (val === null || val === undefined) continue;
+
+                if (val instanceof Date) {
+                    if (key.includes('time') || (val.getHours() !== 0 || val.getMinutes() !== 0 || val.getSeconds() !== 0)) {
+                        formattedVariables[key] = timezoneUtil.formatDateTime(val, timezone, dateFormat, timeFormat);
+                    } else {
+                        formattedVariables[key] = timezoneUtil.formatDateOnly(val, timezone, dateFormat);
+                    }
+                } else if (typeof val === 'string') {
+                    const trimmed = val.trim();
+                    // ISO Date Only: e.g. "2026-10-27"
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+                        formattedVariables[key] = timezoneUtil.formatDateOnly(trimmed, timezone, dateFormat);
+                    }
+                    // ISO/SQL Datetime: e.g. "2026-10-27 09:30:00" or "2026-10-27T09:30:00" or "2026-10-27 09:30"
+                    else if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/.test(trimmed)) {
+                        formattedVariables[key] = timezoneUtil.formatDateTime(trimmed, timezone, dateFormat, timeFormat);
+                    }
+                    // Pure Time: e.g. "09:30" or "14:30:00"
+                    else if (key.includes('time') && /^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
+                        formattedVariables[key] = timezoneUtil.formatTimeOnly(trimmed, timezone, timeFormat);
+                    }
+                }
+            }
+
+            // Ensure aliases for period/dates if one is provided
+            if (!formattedVariables.start_date && formattedVariables.start_time) {
+                formattedVariables.start_date = formattedVariables.start_time;
+            }
+            if (!formattedVariables.end_date && formattedVariables.end_time) {
+                formattedVariables.end_date = formattedVariables.end_time;
+            }
+
             // Replace variables
-            for (const key in variables) {
+            for (const key in formattedVariables) {
                 const regex = new RegExp(`{{${key}}}`, 'g');
-                subject = subject.replace(regex, variables[key]);
-                body = body.replace(regex, variables[key]);
+                subject = subject.replace(regex, formattedVariables[key]);
+                body = body.replace(regex, formattedVariables[key]);
             }
 
             // Find user by primary email to check for secondary_email
