@@ -12,6 +12,7 @@ const EmployeeProfile = db.employee_profiles;
 const timezoneUtil = require('../utils/timezone.util');
 const { logActivity, getClientIp, getUserAgent } = require('../utils/activity.logger');
 const { isDateHoliday, getActiveHolidaysMap } = require('../utils/holiday.helper');
+const abisService = require('../services/abis.service');
 
 /**
  * Helper to get the configured application timezone from database settings
@@ -258,6 +259,22 @@ exports.getMissedAttendance = async (req, res) => {
         // Fetch company holidays in date range to exclude from missed attendance
         const holidaysMap = await getActiveHolidaysMap(startDate, endDate);
 
+        // Fetch ABiS staff login and logout times for the date range
+        // If single staff filter is active, pass that staff's email to ABiS
+        const singleStaffEmail = (targetStaffIds && targetStaffIds.size === 1 && filteredStaff.length === 1)
+            ? filteredStaff[0]?.email
+            : null;
+
+        let abisTimingsMap = new Map();
+        try {
+            abisTimingsMap = await abisService.fetchStaffLoginTimesMap({
+                datesList,
+                email: singleStaffEmail
+            });
+        } catch (abisErr) {
+            console.error("Error fetching ABiS login times:", abisErr.message);
+        }
+
         // Build list of missed attendance records
         const missedItems = [];
         const pendingLeavesList = [];
@@ -299,11 +316,32 @@ exports.getMissedAttendance = async (req, res) => {
                 const isPartTime = empType === 'Part-time';
                 const empTargetHours = isPartTime ? complianceHoursPartTime : complianceHoursFullTime;
 
-                // Suggested check-in and check-out values
-                const suggestedCheckIn = existingCheckInStr || defaultCheckIn;
-                const suggestedCheckOut = existingCheckInStr
-                    ? calculateCheckoutTime(suggestedCheckIn, empTargetHours, defaultCheckOut)
-                    : (isPartTime ? calculateCheckoutTime(defaultCheckIn, empTargetHours, defaultCheckOut) : defaultCheckOut);
+                // Look up ABiS login/logout time for this employee and date
+                const staffEmail = (staff.email || '').trim().toLowerCase();
+                const staffSecEmail = (staff.secondary_email || '').trim().toLowerCase();
+                const abisRecord = (staffEmail && abisTimingsMap.get(`${staffEmail}_${dateStr}`)) ||
+                                   (staffSecEmail && abisTimingsMap.get(`${staffSecEmail}_${dateStr}`)) ||
+                                   null;
+
+                const abisLogin = abisRecord ? abisRecord.login_time : null;
+                const abisLogout = abisRecord ? abisRecord.logout_time : null;
+
+                // Suggested check-in and check-out values:
+                // Map login_time = check-in and logout_time = check-out from ABiS
+                // If open log already recorded check-in in DB, keep it; otherwise use ABiS login or default office start
+                const suggestedCheckIn = existingCheckInStr || abisLogin || defaultCheckIn;
+
+                // If ABiS provides logout_time, use it directly
+                // Else if check-in exists (either from DB or ABiS login), auto-calculate compliant check-out
+                // Otherwise fallback to default office end time
+                let suggestedCheckOut;
+                if (abisLogout) {
+                    suggestedCheckOut = abisLogout;
+                } else if (existingCheckInStr || abisLogin) {
+                    suggestedCheckOut = calculateCheckoutTime(suggestedCheckIn, empTargetHours, defaultCheckOut);
+                } else {
+                    suggestedCheckOut = isPartTime ? calculateCheckoutTime(defaultCheckIn, empTargetHours, defaultCheckOut) : defaultCheckOut;
+                }
 
                 const empName = `${staff.firstname || ''} ${staff.lastname || ''}`.trim();
                 let finalMissedType = missedType;
@@ -340,6 +378,9 @@ exports.getMissedAttendance = async (req, res) => {
                     existing_check_in_time: existingCheckInStr,
                     check_in_time: suggestedCheckIn,
                     check_out_time: suggestedCheckOut,
+                    abis_login_time: abisRecord?.raw_login_time || null,
+                    abis_logout_time: abisRecord?.raw_logout_time || null,
+                    has_abis_data: Boolean(abisLogin || abisLogout),
                     reason: 'Work From Home',
                     notes: '',
                     leave_info: leave
@@ -673,5 +714,36 @@ exports.getRecentRegularizations = async (req, res) => {
     } catch (err) {
         console.error("Error in getRecentRegularizations:", err);
         res.status(500).send({ message: err.message || "Failed to fetch recent regularizations." });
+    }
+};
+
+/**
+ * GET /api/attendance/abis-login-times
+ * Query external ABiS application API for employee login/logout times
+ * Query params:
+ *   date: YYYY-MM-DD (defaults to today)
+ *   email: optional employee email
+ */
+exports.getAbisStaffLoginTimes = async (req, res) => {
+    try {
+        const tz = await getAppTimezone();
+        const nowInTz = timezoneUtil.getNowStringInTimezone(tz).split(' ')[0];
+        const date = req.query.date || nowInTz;
+        const email = req.query.email ? String(req.query.email).trim() : null;
+
+        const records = await abisService.fetchStaffLoginTimes({ date, email });
+
+        return res.status(200).send({
+            success: true,
+            date,
+            count: records.length,
+            data: records
+        });
+    } catch (err) {
+        console.error("Error in getAbisStaffLoginTimes:", err);
+        return res.status(500).send({
+            success: false,
+            message: err.message || "Failed to fetch login times from ABiS."
+        });
     }
 };

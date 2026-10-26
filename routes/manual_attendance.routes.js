@@ -31,4 +31,11 @@ module.exports = function (app) {
         [requireAttendanceModule, verifyToken, canManageManualAttendance],
         controller.getRecentRegularizations
     );
+
+    // Get staff login and logout times from external ABiS application
+    app.get(
+        "/api/attendance/abis-login-times",
+        [requireAttendanceModule, verifyToken, canManageManualAttendance],
+        controller.getAbisStaffLoginTimes
+    );
 };
