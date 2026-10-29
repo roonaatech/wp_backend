@@ -122,37 +122,75 @@ async function runMobileLoginConflictTest() {
         console.log(`✅ Device actively bound to User 1 in database (Device ID: ${boundDeviceUser1.device_id}, Staff ID: ${boundDeviceUser1.staff_id}).`);
 
         // ---------------------------------------------------------------------------------
-        // STEP 2: On the SAME mobile phone, User 2 attempts to log in via Mobile Web Browser
+        // STEP 2A: User 2 on their OWN separate phone on the SAME office Wi-Fi IP is ALLOWED
         // ---------------------------------------------------------------------------------
-        console.log("\n--- STEP 2: User 2 attempts to LOG IN via Mobile Web Browser on the SAME phone ---");
-        const mock2 = createMockReqRes({
+        console.log("\n--- STEP 2A: User 2 logs in on their OWN separate phone on the SAME office Wi-Fi IP ---");
+        const user2SeparatePhoneId = `wp-dev-app-user2-phone-${Date.now()}`;
+        const mock2A = createMockReqRes({
             body: {
                 email: user2.email,
                 password: testPassword,
                 forceLocal: true,
-                client_type: 'mobile_browser',
-                deviceId: mobileBrowserDeviceId,
-                deviceName: "Android Device - Chrome (393x873)",
-                is_mobile: true
+                is_mobile_app: true,
+                client_type: 'mobile_app',
+                deviceId: user2SeparatePhoneId,
+                deviceName: "Samsung SM-S911B (Android 14)"
             },
             headers: {
                 'x-is-mobile': 'true',
-                'x-device-id': mobileBrowserDeviceId,
-                'x-device-name': "Android Device - Chrome (393x873)",
-                'user-agent': mobileBrowserUa
+                'x-is-mobile-app': 'true',
+                'x-device-id': user2SeparatePhoneId,
+                'x-device-name': "Samsung SM-S911B (Android 14)",
+                'user-agent': mobileAppUa
+            },
+            ip: testIp // Same office Wi-Fi IP as User 1!
+        });
+
+        await authController.signin(mock2A.req, mock2A.res);
+        const status2A = mock2A.getStatus();
+        const data2A = mock2A.getData();
+
+        if (status2A !== 200 || !data2A.accessToken) {
+            throw new Error(`FALSE POSITIVE BUG: User 2 was blocked on their own phone simply because they shared office Wi-Fi IP with User 1! Status: ${status2A}, Data: ${JSON.stringify(data2A)}`);
+        }
+        console.log("✅ User 2 successfully logged in on their own phone without false conflict on shared Wi-Fi.");
+
+        // Clean User 2 separate device for next steps
+        await db.employee_devices.destroy({ where: { staff_id: user2.staffid } });
+
+        // ---------------------------------------------------------------------------------
+        // STEP 2B: User 2 attempts to log in on User 1's SAME phone -> STRICTLY BLOCKED!
+        // ---------------------------------------------------------------------------------
+        console.log("\n--- STEP 2B: User 2 attempts to log in on User 1's SAME phone ---");
+        const mock2B = createMockReqRes({
+            body: {
+                email: user2.email,
+                password: testPassword,
+                forceLocal: true,
+                is_mobile_app: true,
+                client_type: 'mobile_app',
+                deviceId: physicalMobileDeviceId, // Same phone hardware ID!
+                deviceName: "Samsung SM-S911B (Android 14)"
+            },
+            headers: {
+                'x-is-mobile': 'true',
+                'x-is-mobile-app': 'true',
+                'x-device-id': physicalMobileDeviceId,
+                'x-device-name': "Samsung SM-S911B (Android 14)",
+                'user-agent': mobileAppUa
             },
             ip: testIp
         });
 
-        await authController.signin(mock2.req, mock2.res);
-        const status2 = mock2.getStatus();
-        const data2 = mock2.getData();
+        await authController.signin(mock2B.req, mock2B.res);
+        const status2B = mock2B.getStatus();
+        const data2B = mock2B.getData();
 
-        if (status2 !== 403 || !data2.deviceViolation) {
-            throw new Error(`SECURITY FAILURE: User 2 was able to log in on User 1's mobile phone! Status: ${status2}, Data: ${JSON.stringify(data2)}`);
+        if (status2B !== 403 || !data2B.deviceViolation) {
+            throw new Error(`SECURITY FAILURE: User 2 was able to log in on User 1's mobile phone! Status: ${status2B}, Data: ${JSON.stringify(data2B)}`);
         }
-        console.log("✅ User 2 was STRICTLY BLOCKED from logging in on mobile browser with 403 Device Violation!");
-        console.log(`   ℹ️ Message: "${data2.message}"`);
+        console.log("✅ User 2 was STRICTLY BLOCKED from logging in on User 1's phone with 403 Device Violation!");
+        console.log(`   ℹ️ Message: "${data2B.message}"`);
 
         // ---------------------------------------------------------------------------------
         // STEP 3: Admin clears/resets User 1's device binding -> Mobile device is freed!
@@ -171,24 +209,25 @@ async function runMobileLoginConflictTest() {
         console.log("✅ Verified User 1 has no active device binding in database.");
 
         // ---------------------------------------------------------------------------------
-        // STEP 4: User 2 re-attempts login on Mobile Browser on that phone -> SUCCEEDS & BOUND!
+        // STEP 4: User 2 re-attempts login on that phone after reset -> SUCCEEDS & BOUND!
         // ---------------------------------------------------------------------------------
-        console.log("\n--- STEP 4: User 2 re-attempts login on Mobile Web Browser after User 1 reset ---");
+        console.log("\n--- STEP 4: User 2 logs into the transferred phone after User 1 reset ---");
         const mock4 = createMockReqRes({
             body: {
                 email: user2.email,
                 password: testPassword,
                 forceLocal: true,
-                client_type: 'mobile_browser',
-                deviceId: mobileBrowserDeviceId,
-                deviceName: "Android Device - Chrome (393x873)",
-                is_mobile: true
+                is_mobile_app: true,
+                client_type: 'mobile_app',
+                deviceId: physicalMobileDeviceId,
+                deviceName: "Samsung SM-S911B (Android 14)"
             },
             headers: {
                 'x-is-mobile': 'true',
-                'x-device-id': mobileBrowserDeviceId,
-                'x-device-name': "Android Device - Chrome (393x873)",
-                'user-agent': mobileBrowserUa
+                'x-is-mobile-app': 'true',
+                'x-device-id': physicalMobileDeviceId,
+                'x-device-name': "Samsung SM-S911B (Android 14)",
+                'user-agent': mobileAppUa
             },
             ip: testIp
         });

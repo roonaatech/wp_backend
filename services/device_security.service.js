@@ -171,74 +171,11 @@ class DeviceSecurityService {
                 }
             });
 
-            // 2. Cross-platform physical mobile device conflict detection (Mobile App <-> Mobile Web on the same phone)
-            if (!conflictDevice && isMobileDevice) {
-                const candidateDevices = await EmployeeDevice.findAll({
-                    where: {
-                        staff_id: { [Op.ne]: staffId },
-                        is_active: true
-                    }
-                });
-
-                if (candidateDevices.length > 0) {
-                    const clientModel = this.extractDeviceModel({ userAgent, deviceName, deviceId: cleanDeviceId, deviceModel });
-                    const isClientIos = /iPhone|iPad/i.test(userAgent || '') || /iPhone|iPad/i.test(deviceName || '');
-                    const isClientAndroid = /Android/i.test(userAgent || '') || /Android/i.test(deviceName || '');
-                    const cleanClientIp = this.normalizeIp(ipAddress);
-
-                    for (const candidate of candidateDevices) {
-                        const candidateUa = candidate.user_agent || '';
-                        const candidateDevName = candidate.device_name || '';
-                        const candidateDevId = candidate.device_id || '';
-                        const candidateModel = this.extractDeviceModel({ userAgent: candidateUa, deviceName: candidateDevName, deviceId: candidateDevId });
-                        const isCandidateIos = /iPhone|iPad/i.test(candidateDevName) || /iPhone|iPad/i.test(candidateUa) || candidateDevId.includes('iOS') || candidateDevId.includes('iPhone');
-                        const isCandidateAndroid = /Android/i.test(candidateUa) || /Android/i.test(candidateDevName) || candidateDevId.includes('Android') || candidateDevId.includes('SM-') || candidateDevId.includes('Pixel');
-                        const cleanCandidateIp = this.normalizeIp(candidate.ip_address);
-
-                        let isModelMatch = false;
-                        if (clientModel && candidateModel) {
-                            const c1 = clientModel.toLowerCase().replace(/[^a-z0-9]/g, '');
-                            const c2 = candidateModel.toLowerCase().replace(/[^a-z0-9]/g, '');
-                            if (c1 === c2 || c1.includes(c2) || c2.includes(c1)) {
-                                isModelMatch = true;
-                            }
-                        } else if (clientModel && (
-                            candidateDevName.toLowerCase().includes(clientModel.toLowerCase()) ||
-                            candidateDevId.toLowerCase().includes(clientModel.toLowerCase()) ||
-                            candidateUa.toLowerCase().includes(clientModel.toLowerCase())
-                        )) {
-                            isModelMatch = true;
-                        } else if (candidateModel && (
-                            (deviceName && deviceName.toLowerCase().includes(candidateModel.toLowerCase())) ||
-                            cleanDeviceId.toLowerCase().includes(candidateModel.toLowerCase()) ||
-                            (userAgent && userAgent.toLowerCase().includes(candidateModel.toLowerCase()))
-                        )) {
-                            isModelMatch = true;
-                        } else if (isClientIos && isCandidateIos) {
-                            isModelMatch = true;
-                        }
-
-                        // Verify same network IP
-                        const isIpMatch = Boolean(
-                            cleanClientIp && cleanCandidateIp &&
-                            (cleanClientIp === cleanCandidateIp || cleanClientIp === '127.0.0.1' || cleanCandidateIp === '127.0.0.1')
-                        );
-
-                        if (isModelMatch && isIpMatch) {
-                            conflictDevice = candidate;
-                            console.log(`[DeviceSecurityService] Cross-platform physical device match detected: Model '${clientModel || candidateModel || 'Mobile'}' on IP ${cleanClientIp} matches bound device #${candidate.id} (Staff ID: ${candidate.staff_id}).`);
-                            break;
-                        } else if (isClientAndroid && isCandidateAndroid && isIpMatch) {
-                            // If both are Android phones on the exact same IP and neither reported a contradictory model (e.g. Chrome UA reduction where clientModel is null)
-                            if (!clientModel || !candidateModel) {
-                                conflictDevice = candidate;
-                                console.log(`[DeviceSecurityService] Cross-platform Android phone match on same IP detected: Candidate #${candidate.id} (Staff ID: ${candidate.staff_id}) vs Staff ID: ${staffId} on ${cleanClientIp}.`);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            // Direct hardware-seeded deviceId match is the only 100% deterministic, false-positive-free
+            // mechanism to identify physical mobile device sharing. Heuristic matching based on IP address
+            // and device model MUST NEVER be used because all employees in an office share the exact same
+            // public Wi-Fi IP address (NAT), causing innocent colleagues with similar phones (or iPhones/Androids)
+            // to falsely conflict with one another.
 
             if (conflictDevice) {
                 // Fetch attempting user and original bound user details
@@ -412,6 +349,7 @@ class DeviceSecurityService {
             const attemptingName = attemptingUser ? `${attemptingUser.firstname} ${attemptingUser.lastname}` : 'Unknown';
             const attemptingEmail = attemptingUser?.email || 'N/A';
             const boundName = boundUser ? `${boundUser.firstname} ${boundUser.lastname}` : 'Unknown';
+            const boundEmail = boundUser?.email || 'N/A';
             const formattedTime = await timezoneUtil.formatAppDateTime(detectedAt);
 
             const subject = `⚠️ [WorkPulse Security Alert] Proxy Attendance Attempt Detected - Device Conflict (#${violationId})`;

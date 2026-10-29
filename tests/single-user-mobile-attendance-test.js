@@ -63,28 +63,28 @@ async function runSingleUserMobileAttendanceTest() {
         console.log("✅ Dynamic QR badge token generated for User 1 with bound device ID embedded.");
 
         // ---------------------------------------------------------------------------------
-        // STEP 2: On the SAME mobile phone, User 2 logs into web app and requests badge
+        // STEP 2: User 2 on a SEPARATE phone on the SAME office Wi-Fi IP is ALLOWED
         // ---------------------------------------------------------------------------------
-        console.log("\n--- STEP 2: User 2 opens mobile web browser on the SAME phone to request badge ---");
-        const user2WebCheck = await deviceSecurity.verifyAndBindDevice({
+        console.log("\n--- STEP 2: User 2 uses their OWN separate phone on the SAME office Wi-Fi IP ---");
+        const user2SeparatePhoneId = `wp-dev-app-user2-phone-${Date.now()}`;
+        const user2SeparateCheck = await deviceSecurity.verifyAndBindDevice({
             staffId: user2.staffid,
-            deviceId: mobileBrowserDeviceId,
-            deviceName: "Android Device - Chrome (393x873)",
-            userAgent: mobileBrowserUa,
-            ipAddress: "192.168.1.100",
+            deviceId: user2SeparatePhoneId,
+            deviceName: "Android Device - Samsung SM-S911B",
+            userAgent: mobileAppUa,
+            ipAddress: "192.168.1.100", // Same office Wi-Fi IP!
             isMobile: true,
-            isMobileApp: false, // mobile browser
+            isMobileApp: true,
             action: "SMART_BADGE_ACCESS"
         });
 
-        if (user2WebCheck.allowed) {
-            throw new Error("SECURITY FAILURE: User 2 was NOT blocked from generating dynamic badge on mobile web browser!");
+        if (!user2SeparateCheck.allowed) {
+            throw new Error(`FALSE POSITIVE BUG: User 2 was blocked on their own phone simply because they shared office Wi-Fi IP with User 1: ${user2SeparateCheck.error}`);
         }
-        if (!user2WebCheck.violationLogged) {
-            throw new Error(`Expected violationLogged: true for mobile web conflict, but got: ${JSON.stringify(user2WebCheck)}`);
-        }
-        console.log("✅ User 2 was STRICTLY BLOCKED on mobile web browser with Device Conflict alert:");
-        console.log(`   ℹ️ Message: "${user2WebCheck.error}"`);
+        console.log("✅ User 2 successfully verified on their own phone without false conflict on shared Wi-Fi.");
+
+        // Clean User 2 separate device for next steps
+        await db.employee_devices.destroy({ where: { staff_id: user2.staffid } });
 
         // ---------------------------------------------------------------------------------
         // STEP 3: User 2 opens the WorkPulse Mobile App on the SAME phone to check in
@@ -127,17 +127,17 @@ async function runSingleUserMobileAttendanceTest() {
         console.log("✅ Verified User 1 has no active device binding in database.");
 
         // ---------------------------------------------------------------------------------
-        // STEP 5: User 2 re-attempts badge access on mobile browser -> ALLOWED & BOUND!
+        // STEP 5: User 2 binds this phone on Mobile App after User 1 reset -> ALLOWED & BOUND!
         // ---------------------------------------------------------------------------------
-        console.log("\n--- STEP 5: User 2 re-attempts badge access on mobile browser after User 1 reset ---");
+        console.log("\n--- STEP 5: User 2 binds the transferred phone on Mobile App after User 1 reset ---");
         const user2AllowedCheck = await deviceSecurity.verifyAndBindDevice({
             staffId: user2.staffid,
-            deviceId: mobileBrowserDeviceId,
-            deviceName: "Android Device - Chrome (393x873)",
-            userAgent: mobileBrowserUa,
+            deviceId: physicalMobileDeviceId,
+            deviceName: "Samsung SM-S911B (Android 14)",
+            userAgent: mobileAppUa,
             ipAddress: "192.168.1.100",
             isMobile: true,
-            isMobileApp: false,
+            isMobileApp: true,
             action: "SMART_BADGE_ACCESS"
         });
 
