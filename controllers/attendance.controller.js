@@ -6,6 +6,7 @@ const TblStaff = db.user;
 const Setting = db.settings;
 const timezoneUtil = require("../utils/timezone.util");
 const { logActivity, getClientIp, getUserAgent } = require("../utils/activity.logger");
+const { checkAttendanceCheckInConflict } = require("../utils/eventOverlap.util");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -42,21 +43,16 @@ exports.checkIn = async (req, res) => {
             });
         }
 
-        // Verify employee is not on approved full-day leave today
-        const LeaveRequest = db.leave_requests;
-        const Op = db.Sequelize.Op;
-        const approvedFullDayLeave = await LeaveRequest.findOne({
-            where: {
-                staff_id: req.userId,
-                status: 'Approved',
-                start_date: { [Op.lte]: todayDateOnly },
-                end_date: { [Op.gte]: todayDateOnly }
-            }
+        // Verify no event conflicts (Leave applied, Live On-Duty, or in-progress Time-Off)
+        const currentTimeStr = nowString.split(' ')[1] || '00:00:00';
+        const conflictCheck = await checkAttendanceCheckInConflict(req.userId, todayDateOnly, currentTimeStr, {
+            ip: getClientIp(req),
+            userAgent: getUserAgent(req)
         });
 
-        if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+        if (conflictCheck.conflict) {
             return res.status(400).send({
-                message: "You are on approved leave for today. Attendance check-in is not allowed."
+                message: conflictCheck.message
             });
         }
 

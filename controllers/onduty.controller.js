@@ -9,6 +9,7 @@ const timezoneUtil = require("../utils/timezone.util");
 const Setting = db.settings;
 const { isDateHoliday, toDateString } = require("../utils/holiday.helper");
 const { getAttendanceConfig } = require("../utils/attendanceConfig");
+const { checkOnDutyStartConflict } = require("../utils/eventOverlap.util");
 
 // Helper to format 24h time string (e.g. "09:30") into 12h format (e.g. "09:30 AM")
 const formatTime12h = (timeStr) => {
@@ -66,16 +67,26 @@ exports.startOnDuty = async (req, res) => {
         });
     }
 
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const todayStr = formatter.format(new Date());
+
     // Check if today is a company holiday
     try {
-        const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
-        const todayStr = formatter.format(new Date());
         const holiday = await isDateHoliday(todayStr);
         if (holiday.isHoliday) {
             return res.status(400).send({ message: `On-duty cannot be started on a company holiday (${holiday.holidayName}).` });
         }
     } catch (e) {
         console.error("Error checking holiday for on-duty:", e);
+    }
+
+    // Check for conflicting events (Live on-duty, Leave today, or existing/in-progress time-off)
+    const conflictCheck = await checkOnDutyStartConflict(req.userId, todayStr, currentTimeStr, {
+        ip: getClientIp(req),
+        userAgent: getUserAgent(req)
+    });
+    if (conflictCheck.conflict) {
+        return res.status(400).send({ message: conflictCheck.message });
     }
 
     // Store actual UTC timestamp (Date object), NOT a formatted string

@@ -65,6 +65,59 @@ const parseTimeToMinutes = (timeVal) => {
     return null;
 };
 
+// Helper to extract comparable interval range from session records
+const getIntervalTimeRange = (item, startKey, endKey) => {
+    if (!item) return null;
+    const startVal = item[startKey];
+    const endVal = item[endKey];
+    if (!startVal || !endVal) return null;
+
+    const sDate = new Date(startVal);
+    const eDate = new Date(endVal);
+    if (!isNaN(sDate.getTime()) && !isNaN(eDate.getTime()) && sDate.getFullYear() > 2000 && eDate.getFullYear() > 2000) {
+        if (eDate.getTime() > sDate.getTime()) {
+            return {
+                type: 'epoch',
+                start: sDate.getTime(),
+                end: eDate.getTime()
+            };
+        }
+    }
+
+    const sMins = parseTimeToMinutes(startVal);
+    const eMins = parseTimeToMinutes(endVal);
+    if (sMins !== null && eMins !== null && eMins > sMins) {
+        return {
+            type: 'minutes',
+            start: sMins,
+            end: eMins
+        };
+    }
+
+    return null;
+};
+
+// Helper to calculate overlap in minutes between two interval ranges
+const calculateRangeOverlapMinutes = (r1, r2) => {
+    if (!r1 || !r2) return 0;
+    if (r1.type === 'epoch' && r2.type === 'epoch') {
+        const overlapMs = Math.max(0, Math.min(r1.end, r2.end) - Math.max(r1.start, r2.start));
+        return Math.floor(overlapMs / 60000);
+    }
+    const toDailyMinutes = (r) => {
+        if (r.type === 'minutes') return r;
+        const dStart = new Date(r.start);
+        const dEnd = new Date(r.end);
+        return {
+            start: dStart.getHours() * 60 + dStart.getMinutes(),
+            end: dEnd.getHours() * 60 + dEnd.getMinutes()
+        };
+    };
+    const m1 = toDailyMinutes(r1);
+    const m2 = toDailyMinutes(r2);
+    return Math.max(0, Math.min(m1.end, m2.end) - Math.max(m1.start, m2.start));
+};
+
 /**
  * Calculates monthly salary compliance and daily audit breakdown for an employee.
  *
@@ -258,9 +311,28 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             excessTimeOffMins = day.timeOffRequestedMins - creditedTimeOffMins;
         }
 
+        // --- Calculate On-Duty & Attendance Overlap ---
+        let onDutyAttOverlapMins = 0;
+        if (day.attSessions.length > 0 && day.onDutyRecords.length > 0) {
+            for (const att of day.attSessions) {
+                const attRange = getIntervalTimeRange(att, 'check_in_time', 'check_out_time');
+                if (!attRange) continue;
+                for (const od of day.onDutyRecords) {
+                    const odRange = getIntervalTimeRange(od, 'start_time', 'end_time');
+                    if (!odRange) continue;
+                    onDutyAttOverlapMins += calculateRangeOverlapMinutes(attRange, odRange);
+                }
+            }
+        }
+        // Actual attendance = total attendance hours minus on-duty overlap
+        const actualAttMins = Math.max(0, day.attMins - onDutyAttOverlapMins);
+
         // --- Calculate Effective Working Minutes ---
-        // Effective Work Time = Attendance Minutes + On-Duty Minutes + Credited Time-Off Minutes
-        const effectiveWorkMins = day.attMins + day.onDutyMins + creditedTimeOffMins;
+        // Effective Work Time:
+        // - actual attendance + on-duty hours
+        // - If time-off limit is not reached: credited time-off added
+        // - If time-off limit is reached: excess time-off reduced from attendance
+        const effectiveWorkMins = Math.max(0, actualAttMins + day.onDutyMins + creditedTimeOffMins - excessTimeOffMins);
 
         // --- Decide Day Compliance Outcome ---
         let isCompliant = false;
@@ -324,13 +396,19 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
                 compliantDayValue = 1.0;
 
                 const parts = [];
-                if (day.attMins > 0) parts.push(`${formatDuration(day.attMins)} Att`);
+                if (day.attMins > 0) {
+                    if (onDutyAttOverlapMins > 0) {
+                        parts.push(`${formatDuration(actualAttMins)} Actual Att (${formatDuration(day.attMins)} total - ${formatDuration(onDutyAttOverlapMins)} OD overlap)`);
+                    } else {
+                        parts.push(`${formatDuration(day.attMins)} Att`);
+                    }
+                }
                 if (day.onDutyMins > 0) parts.push(`${formatDuration(day.onDutyMins)} OD`);
                 if (creditedTimeOffMins > 0) parts.push(`${formatDuration(creditedTimeOffMins)} Time-Off`);
                 
                 let details = parts.join(' + ') + ` = ${formatDuration(effectiveWorkMins)} >= ${complianceHours}h target`;
                 if (excessTimeOffMins > 0) {
-                    details += ` (${formatDuration(excessTimeOffMins)} excess time-off uncredited)`;
+                    details += ` (-${formatDuration(excessTimeOffMins)} excess time-off deducted)`;
                 }
                 remarks = details;
             } else {
@@ -338,7 +416,13 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
                 compliantDayValue = 0.0;
 
                 const parts = [];
-                if (day.attMins > 0) parts.push(`${formatDuration(day.attMins)} Att`);
+                if (day.attMins > 0) {
+                    if (onDutyAttOverlapMins > 0) {
+                        parts.push(`${formatDuration(actualAttMins)} Actual Att (${formatDuration(day.attMins)} total - ${formatDuration(onDutyAttOverlapMins)} OD overlap)`);
+                    } else {
+                        parts.push(`${formatDuration(day.attMins)} Att`);
+                    }
+                }
                 if (day.onDutyMins > 0) parts.push(`${formatDuration(day.onDutyMins)} OD`);
                 if (creditedTimeOffMins > 0) parts.push(`${formatDuration(creditedTimeOffMins)} Time-Off credited`);
                 
@@ -347,7 +431,7 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
                               ` < ${complianceHours}h target (${formatDuration(shortMins)} short)`;
 
                 if (excessTimeOffMins > 0) {
-                    details += ` [${formatDuration(excessTimeOffMins)} time-off uncredited due to monthly limit]`;
+                    details += ` [-${formatDuration(excessTimeOffMins)} excess time-off deducted (limit reached)]`;
                 }
                 remarks = details;
             }
@@ -370,6 +454,8 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             employment_type: empType,
             target_hours: complianceHours,
             attendance_minutes: day.attMins,
+            actual_attendance_minutes: actualAttMins,
+            onduty_attendance_overlap_minutes: onDutyAttOverlapMins,
             timeoff_overlap_minutes: 0,
             onduty_minutes: day.onDutyMins,
             timeoff_requested_minutes: day.timeOffRequestedMins,

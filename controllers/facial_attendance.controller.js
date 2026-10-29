@@ -21,6 +21,7 @@ const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
 const { isDateHoliday } = require("../utils/holiday.helper");
 const { isAttendanceModuleEnabled } = require("../middleware/moduleGuard");
+const { checkAttendanceCheckInConflict } = require("../utils/eventOverlap.util");
 
 // Cache of pending QR badge attendance confirmations (expires in 60 seconds)
 const pendingQrConfirmations = new Map();
@@ -249,21 +250,21 @@ exports.getAttendanceStatus = async (req, res) => {
             });
         }
 
-        // Check if employee is on approved full-day leave today
-        const approvedFullDayLeave = await LeaveRequest.findOne({
+        // Check if employee has leave applied for today (Pending or Approved)
+        const appliedLeave = await LeaveRequest.findOne({
             where: {
                 staff_id: user.staffid,
-                status: 'Approved',
+                status: { [Op.in]: ['Pending', 'Approved'] },
                 start_date: { [Op.lte]: todayDateOnly },
                 end_date: { [Op.gte]: todayDateOnly }
             }
         });
 
-        if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+        if (appliedLeave) {
             return res.status(200).send({
                 status: 'ON_LEAVE',
                 employeeName: `${user.firstname} ${user.lastname}`,
-                leaveType: approvedFullDayLeave.leave_type || 'Leave'
+                leaveType: appliedLeave.leave_type || 'Leave'
             });
         }
 
@@ -984,20 +985,17 @@ exports.recordKioskAttendance = async (req, res) => {
                 });
             }
 
-            // Verify employee is not on approved full-day leave today
-            const approvedFullDayLeave = await LeaveRequest.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    status: 'Approved',
-                    start_date: { [Op.lte]: todayDateOnly },
-                    end_date: { [Op.gte]: todayDateOnly }
-                }
+            // Verify no event conflicts (Leave applied, Live On-Duty, or in-progress Time-Off)
+            const currentTimeStr = formattedNowTime ? formattedNowTime.split(' ')[1] : '00:00:00';
+            const conflictCheck = await checkAttendanceCheckInConflict(user.staffid, todayDateOnly, currentTimeStr, {
+                ip: getClientIp(req),
+                userAgent: getUserAgent(req)
             });
 
-            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+            if (conflictCheck.conflict) {
                 return res.status(400).send({
                     success: false,
-                    message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not allowed.`
+                    message: conflictCheck.message
                 });
             }
 
@@ -1507,19 +1505,16 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                     });
                 }
 
-                const approvedFullDayLeave = await LeaveRequest.findOne({
-                    where: {
-                        staff_id: user.staffid,
-                        status: 'Approved',
-                        start_date: { [Op.lte]: todayDateOnly },
-                        end_date: { [Op.gte]: todayDateOnly }
-                    }
+                const currentTimeStr = formattedNowTime ? formattedNowTime.split(' ')[1] : '00:00:00';
+                const conflictCheck = await checkAttendanceCheckInConflict(user.staffid, todayDateOnly, currentTimeStr, {
+                    ip: getClientIp(req),
+                    userAgent: getUserAgent(req)
                 });
 
-                if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+                if (conflictCheck.conflict) {
                     return res.status(400).send({
                         success: false,
-                        message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not allowed.`
+                        message: conflictCheck.message
                     });
                 }
 
@@ -1748,20 +1743,17 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                 });
             }
 
-            // Check if employee is on approved full-day leave today
-            const approvedFullDayLeave = await LeaveRequest.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    status: 'Approved',
-                    start_date: { [Op.lte]: todayDateOnly },
-                    end_date: { [Op.gte]: todayDateOnly }
-                }
+            // Check for conflicting events (Leave applied, Live On-Duty, or in-progress Time-Off)
+            const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
+            const conflictCheck = await checkAttendanceCheckInConflict(user.staffid, todayDateOnly, currentTimeStr, {
+                ip: getClientIp(req),
+                userAgent: getUserAgent(req)
             });
 
-            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+            if (conflictCheck.conflict) {
                 return res.status(400).send({
                     success: false,
-                    message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not allowed.`
+                    message: conflictCheck.message
                 });
             }
 
@@ -2131,19 +2123,16 @@ exports.wfhPunch = async (req, res) => {
                 });
             }
 
-            const approvedFullDayLeave = await LeaveRequest.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    status: 'Approved',
-                    start_date: { [Op.lte]: todayDateOnly },
-                    end_date: { [Op.gte]: todayDateOnly }
-                }
+            const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
+            const conflictCheck = await checkAttendanceCheckInConflict(user.staffid, todayDateOnly, currentTimeStr, {
+                ip: getClientIp(req),
+                userAgent: getUserAgent(req)
             });
 
-            if (approvedFullDayLeave && !approvedFullDayLeave.is_half_day) {
+            if (conflictCheck.conflict) {
                 return res.status(400).send({
                     success: false,
-                    message: `${user.firstname} ${user.lastname} is on approved leave today. Attendance check-in is not permitted.`
+                    message: conflictCheck.message
                 });
             }
         }

@@ -38,7 +38,7 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
         const result = calculateMonthlyCompliance(employeeRecords, config);
 
         // Day 1: 5h att + 3h OD + 1h time-off = 9h >= 9h => Compliant (1 day)
-        // Day 2: 7h att + 1h time-off (1h remaining in 2h pool) = 8h < 9h => Non-Compliant (0 days)
+        // Day 2: 7h att + 1h time-off (1h remaining in 2h pool) - 1h excess deducted (limit reached) = 7h < 9h => Non-Compliant (0 days)
         // Day 3: Leave 1d (1d remaining in 1d pool) => Compliant (1 day)
         // Day 4: Leave 1d (0d remaining in pool) => Non-Compliant (0 days)
         // Total Compliant Days = 2 days!
@@ -60,9 +60,9 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
         const d2 = result.daily_breakdown.find(d => d.date === '2026-09-02');
         expect(d2.is_compliant).toBe(false);
         expect(d2.compliant_day_value).toBe(0);
-        expect(d2.effective_work_minutes).toBe(8 * 60);
+        expect(d2.effective_work_minutes).toBe(7 * 60); // 7h att + 1h credited - 1h excess deducted = 7h!
         expect(d2.timeoff_credited_minutes).toBe(60); // only 1h remaining from 2h pool!
-        expect(d2.timeoff_excess_minutes).toBe(60); // 1h excess uncredited
+        expect(d2.timeoff_excess_minutes).toBe(60); // 1h excess deducted
 
         // Day 3 verification
         const d3 = result.daily_breakdown.find(d => d.date === '2026-09-03');
@@ -305,6 +305,121 @@ describe('salaryCompliance.util - calculateMonthlyCompliance', () => {
 
         expect(ptResult.compliant_days).toBe(1);
         expect(ptResult.daily_breakdown[0].is_compliant).toBe(true);
+    });
+
+    test('On-Duty Scenario 1: Between office hours - attendance out of OD (total - OD = actual attendance)', () => {
+        const config = { complianceHours: 9, allowedLeavePerMonth: 1, allowedTimeOffPerMonth: 2 };
+        // Employee checked in 09:30, went on OD 14:00 - 16:00 (2h), checkout 18:30 (total 9h = 540m)
+        const employeeRecords = {
+            attendanceRecords: [{
+                date: '2026-10-12',
+                check_in_time: '2026-10-12 09:30:00',
+                check_out_time: '2026-10-12 18:30:00',
+                work_minutes: 540
+            }],
+            ondutyRecords: [{
+                date: '2026-10-12',
+                start_time: '2026-10-12 14:00:00',
+                end_time: '2026-10-12 16:00:00',
+                minutes: 120
+            }],
+            leaveDays: [],
+            timeoffRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+        const day = result.daily_breakdown[0];
+
+        expect(day.attendance_minutes).toBe(540);
+        expect(day.onduty_attendance_overlap_minutes).toBe(120);
+        expect(day.actual_attendance_minutes).toBe(420); // 7 hours
+        expect(day.onduty_minutes).toBe(120); // 2 hours
+        expect(day.effective_work_minutes).toBe(540); // 7h actual + 2h OD = 9h compliant
+        expect(day.is_compliant).toBe(true);
+    });
+
+    test('On-Duty Scenario 2: Before coming to office - OD in morning, close OD upon arrival, check in', () => {
+        const config = { complianceHours: 9, allowedLeavePerMonth: 1, allowedTimeOffPerMonth: 2 };
+        // OD 09:30 to 11:30 (2h = 120m), attendance 11:30 to 18:30 (7h = 420m)
+        const employeeRecords = {
+            attendanceRecords: [{
+                date: '2026-10-13',
+                check_in_time: '2026-10-13 11:30:00',
+                check_out_time: '2026-10-13 18:30:00',
+                work_minutes: 420
+            }],
+            ondutyRecords: [{
+                date: '2026-10-13',
+                start_time: '2026-10-13 09:30:00',
+                end_time: '2026-10-13 11:30:00',
+                minutes: 120
+            }],
+            leaveDays: [],
+            timeoffRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+        const day = result.daily_breakdown[0];
+
+        expect(day.onduty_attendance_overlap_minutes).toBe(0);
+        expect(day.actual_attendance_minutes).toBe(420);
+        expect(day.effective_work_minutes).toBe(540); // 420 + 120 = 540 (9h)
+        expect(day.is_compliant).toBe(true);
+    });
+
+    test('On-Duty Scenario 3: End of the day - checkout for attendance, start OD, complete OD', () => {
+        const config = { complianceHours: 9, allowedLeavePerMonth: 1, allowedTimeOffPerMonth: 2 };
+        // Attendance 09:30 to 17:30 (8h = 480m), OD 17:30 to 19:30 (2h = 120m)
+        const employeeRecords = {
+            attendanceRecords: [{
+                date: '2026-10-14',
+                check_in_time: '2026-10-14 09:30:00',
+                check_out_time: '2026-10-14 17:30:00',
+                work_minutes: 480
+            }],
+            ondutyRecords: [{
+                date: '2026-10-14',
+                start_time: '2026-10-14 17:30:00',
+                end_time: '2026-10-14 19:30:00',
+                minutes: 120
+            }],
+            leaveDays: [],
+            timeoffRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+        const day = result.daily_breakdown[0];
+
+        expect(day.onduty_attendance_overlap_minutes).toBe(0);
+        expect(day.actual_attendance_minutes).toBe(480);
+        expect(day.effective_work_minutes).toBe(600); // 480 + 120 = 600 (10h)
+        expect(day.is_compliant).toBe(true);
+    });
+
+    test('Time-Off limit reached already: time-off hours are reduced from attendance hours', () => {
+        const config = { complianceHours: 9, allowedLeavePerMonth: 1, allowedTimeOffPerMonth: 0 }; // 0 quota
+        // Attendance: 8 hours (480m). Time-off: 1 hour (60m). Quota is 0, so 60m is excess.
+        const employeeRecords = {
+            attendanceRecords: [{
+                date: '2026-10-15',
+                work_minutes: 480
+            }],
+            timeoffRecords: [{
+                date: '2026-10-15',
+                minutes: 60
+            }],
+            leaveDays: [],
+            ondutyRecords: []
+        };
+
+        const result = calculateMonthlyCompliance(employeeRecords, config);
+        const day = result.daily_breakdown[0];
+
+        expect(day.timeoff_credited_minutes).toBe(0);
+        expect(day.timeoff_excess_minutes).toBe(60);
+        // Reduced from attendance: 480 - 60 = 420 mins (7 hours)
+        expect(day.effective_work_minutes).toBe(420);
+        expect(day.is_compliant).toBe(false);
     });
 });
 

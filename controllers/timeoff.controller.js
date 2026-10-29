@@ -9,6 +9,7 @@ const emailService = require("../utils/email.service");
 const hierarchyUtil = require("../utils/hierarchy.util");
 const { getAttendanceConfig } = require("../utils/attendanceConfig");
 const { isDateHoliday, toDateString } = require("../utils/holiday.helper");
+const { checkTimeOffConflict } = require("../utils/eventOverlap.util");
 
 // Helper to calculate hours difference
 const calculateHours = (start, end) => {
@@ -226,6 +227,12 @@ exports.applyTimeOff = async (req, res) => {
             });
         }
 
+        // Check for conflicting events (Leave applied, Live On-Duty, Existing On-Duty, or Existing Time-Off)
+        const conflictCheck = await checkTimeOffConflict(req.userId, dateOnly);
+        if (conflictCheck.conflict) {
+            return res.status(400).send({ message: conflictCheck.message });
+        }
+
         // Check for overlapping Time-Off requests
         const overlappingRequest = await TimeOffRequest.findOne({
             where: {
@@ -388,6 +395,12 @@ exports.updateTimeOffDetails = async (req, res) => {
             const validation = await validateTimeOffHours(req.userId, newDate, newStart, newEnd, id);
             if (!validation.valid) {
                 return res.status(400).send({ message: validation.message });
+            }
+
+            // Check for conflicting events (Leave applied, Live On-Duty, Existing On-Duty, or Existing Time-Off)
+            const conflictCheck = await checkTimeOffConflict(req.userId, checkDate, id);
+            if (conflictCheck.conflict) {
+                return res.status(400).send({ message: conflictCheck.message });
             }
 
             // Check for overlapping Time-Off requests (excluding current one)

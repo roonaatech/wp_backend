@@ -17,6 +17,7 @@ const {
     calculateWorkingDays,
     toDateString
 } = require("../utils/holiday.helper");
+const { checkLeaveConflict } = require("../utils/eventOverlap.util");
 
 // Helper to get application timezone
 const getAppTimezone = async () => {
@@ -205,28 +206,16 @@ exports.applyLeave = async (req, res) => {
         // -----------------------------
 
 
-        // Check if attendance check-in has already been recorded on any of the selected dates
+        // Check if attendance check-in, time-off, or on-duty has already been recorded on any of the selected dates
         const startDateOnly = String(start_date).split('T')[0].split(' ')[0];
         const endDateOnly = String(end_date).split('T')[0].split(' ')[0];
         const minDate = startDateOnly <= endDateOnly ? startDateOnly : endDateOnly;
         const maxDate = startDateOnly <= endDateOnly ? endDateOnly : startDateOnly;
 
-        const attendedLog = await AttendanceLog.findOne({
-            where: {
-                staff_id: req.userId,
-                date: {
-                    [Op.between]: [minDate, maxDate]
-                },
-                check_in_time: {
-                    [Op.ne]: null
-                }
-            },
-            order: [['date', 'ASC']]
-        });
-
-        if (attendedLog) {
+        const conflictCheck = await checkLeaveConflict(req.userId, minDate, maxDate);
+        if (conflictCheck.conflict) {
             return res.status(400).send({
-                message: `Attendance check-in has already been recorded on ${attendedLog.date}. Leave cannot be applied for days on which attendance has been recorded.`
+                message: conflictCheck.message
             });
         }
 
@@ -1163,23 +1152,11 @@ exports.updateLeaveDetails = async (req, res) => {
             const minEditDate = checkStartDate <= checkEndDate ? checkStartDate : checkEndDate;
             const maxEditDate = checkStartDate <= checkEndDate ? checkEndDate : checkStartDate;
 
-            // Check if attendance check-in has already been recorded on any of the target dates
-            const attendedLog = await AttendanceLog.findOne({
-                where: {
-                    staff_id: req.userId,
-                    date: {
-                        [Op.between]: [minEditDate, maxEditDate]
-                    },
-                    check_in_time: {
-                        [Op.ne]: null
-                    }
-                },
-                order: [['date', 'ASC']]
-            });
-
-            if (attendedLog) {
+            // Check if attendance, time-off, or on-duty has already been recorded on any of the target dates
+            const conflictCheck = await checkLeaveConflict(req.userId, minEditDate, maxEditDate, id);
+            if (conflictCheck.conflict) {
                 return res.status(400).send({
-                    message: `Attendance check-in has already been recorded on ${attendedLog.date}. Leave cannot be applied for days on which attendance has been recorded.`
+                    message: conflictCheck.message
                 });
             }
 
