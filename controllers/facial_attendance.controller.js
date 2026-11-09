@@ -21,7 +21,7 @@ const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
 const { isDateHoliday } = require("../utils/holiday.helper");
 const { isAttendanceModuleEnabled } = require("../middleware/moduleGuard");
-const { checkAttendanceCheckInConflict } = require("../utils/eventOverlap.util");
+const { checkAttendanceCheckInConflict, timeStringToMinutes, formatToHHMMSS } = require("../utils/eventOverlap.util");
 
 // Cache of pending QR badge attendance confirmations (expires in 60 seconds)
 const pendingQrConfirmations = new Map();
@@ -64,6 +64,60 @@ const formatTime12h = (timeStr) => {
     const ampm = h >= 12 ? 'PM' : 'AM';
     h = h % 12 || 12;
     return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+};
+
+// Helper to build a standardized todayTimeOff payload with duration status flags
+const buildTodayTimeOffPayload = (activeTimeOff, currentTimeStr = null) => {
+    if (!activeTimeOff) return null;
+    const currentMins = currentTimeStr ? timeStringToMinutes(currentTimeStr) : null;
+    const startM = timeStringToMinutes(activeTimeOff.start_time);
+    const endM = timeStringToMinutes(activeTimeOff.end_time);
+    const isInProgress = Boolean(
+        currentMins !== null && startM !== null && endM !== null &&
+        currentMins >= startM && currentMins <= endM
+    );
+    const isUpcoming = Boolean(
+        currentMins !== null && startM !== null && currentMins < startM
+    );
+    const isEnded = Boolean(
+        currentMins !== null && endM !== null && currentMins > endM
+    );
+    return {
+        id: activeTimeOff.id,
+        date: activeTimeOff.date,
+        start_time: activeTimeOff.start_time,
+        end_time: activeTimeOff.end_time,
+        formattedStartTime: formatTime12h(activeTimeOff.start_time),
+        formattedEndTime: formatTime12h(activeTimeOff.end_time),
+        timeRange: `${formatTime12h(activeTimeOff.start_time)} – ${formatTime12h(activeTimeOff.end_time)}`,
+        status: activeTimeOff.status,
+        reason: activeTimeOff.reason,
+        isInProgress,
+        isUpcoming,
+        isEnded
+    };
+};
+
+// Helper to find today's relevant Pending/Approved time-off record (preferring in-progress, then upcoming)
+const findRelevantTodayTimeOff = async (staffId, todayDateOnly, currentTimeStr = null) => {
+    const timeOffs = await TimeOffRequest.findAll({
+        where: {
+            staff_id: staffId,
+            date: todayDateOnly,
+            status: { [Op.in]: ['Pending', 'Approved'] }
+        },
+        order: [['start_time', 'ASC']]
+    });
+    if (!timeOffs || timeOffs.length === 0) return null;
+    const items = timeOffs.map(to => ({
+        record: to,
+        payload: buildTodayTimeOffPayload(to, currentTimeStr)
+    }));
+    const inProg = items.find(i => i.payload.isInProgress);
+    if (inProg) return inProg;
+    const upcoming = items.find(i => i.payload.isUpcoming);
+    if (upcoming) return upcoming;
+    return items[items.length - 1];
 };
 
 /**
@@ -353,26 +407,10 @@ exports.getMyTodayAttendance = async (req, res) => {
         // 5. Check for today's time-off request (Pending or Approved)
         let todayTimeOff = null;
         try {
-            const activeTimeOff = await TimeOffRequest.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    date: todayDateOnly,
-                    status: { [Op.in]: ['Pending', 'Approved'] }
-                },
-                order: [['start_time', 'ASC']]
-            });
-            if (activeTimeOff) {
-                todayTimeOff = {
-                    id: activeTimeOff.id,
-                    date: activeTimeOff.date,
-                    start_time: activeTimeOff.start_time,
-                    end_time: activeTimeOff.end_time,
-                    formattedStartTime: formatTime12h(activeTimeOff.start_time),
-                    formattedEndTime: formatTime12h(activeTimeOff.end_time),
-                    timeRange: `${formatTime12h(activeTimeOff.start_time)} – ${formatTime12h(activeTimeOff.end_time)}`,
-                    status: activeTimeOff.status,
-                    reason: activeTimeOff.reason
-                };
+            const currentTimeStr = nowString.split(' ')[1] || '00:00:00';
+            const foundTo = await findRelevantTodayTimeOff(user.staffid, todayDateOnly, currentTimeStr);
+            if (foundTo) {
+                todayTimeOff = foundTo.payload;
             }
         } catch (toErr) {
             console.error("Error fetching today time-off in getMyTodayAttendance:", toErr);
@@ -1290,26 +1328,10 @@ exports.getMyBadgeData = async (req, res) => {
         // Check for today's time-off request (Pending or Approved)
         let todayTimeOff = null;
         try {
-            const activeTimeOff = await TimeOffRequest.findOne({
-                where: {
-                    staff_id: user.staffid,
-                    date: todayDateOnly,
-                    status: { [Op.in]: ['Pending', 'Approved'] }
-                },
-                order: [['start_time', 'ASC']]
-            });
-            if (activeTimeOff) {
-                todayTimeOff = {
-                    id: activeTimeOff.id,
-                    date: activeTimeOff.date,
-                    start_time: activeTimeOff.start_time,
-                    end_time: activeTimeOff.end_time,
-                    formattedStartTime: formatTime12h(activeTimeOff.start_time),
-                    formattedEndTime: formatTime12h(activeTimeOff.end_time),
-                    timeRange: `${formatTime12h(activeTimeOff.start_time)} – ${formatTime12h(activeTimeOff.end_time)}`,
-                    status: activeTimeOff.status,
-                    reason: activeTimeOff.reason
-                };
+            const currentTimeStr = nowString.split(' ')[1] || '00:00:00';
+            const foundTo = await findRelevantTodayTimeOff(user.staffid, todayDateOnly, currentTimeStr);
+            if (foundTo && !foundTo.payload.isEnded) {
+                todayTimeOff = foundTo.payload;
             }
         } catch (toErr) {
             console.error("Error fetching today time-off in getMyBadgeData:", toErr);
@@ -1508,7 +1530,8 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                 const currentTimeStr = formattedNowTime ? formattedNowTime.split(' ')[1] : '00:00:00';
                 const conflictCheck = await checkAttendanceCheckInConflict(user.staffid, todayDateOnly, currentTimeStr, {
                     ip: getClientIp(req),
-                    userAgent: getUserAgent(req)
+                    userAgent: getUserAgent(req),
+                    skipTimeOffTruncation: true
                 });
 
                 if (conflictCheck.conflict) {
@@ -1542,19 +1565,21 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                 });
 
                 let timeOffCancelled = false;
+                let timeOffStopped = false;
                 let timeOffNote = '';
                 const cancelTimeOff = req.body.cancelTimeOff === true || req.body.cancelTimeOff === 'true';
+                const stopTimeOff = req.body.stopTimeOff === true || req.body.stopTimeOff === 'true';
 
                 if (pending.todayTimeOff) {
-                    if (cancelTimeOff) {
-                        try {
-                            const toRecord = await TimeOffRequest.findByPk(pending.todayTimeOff.id);
-                            if (toRecord) {
+                    try {
+                        const toRecord = await TimeOffRequest.findByPk(pending.todayTimeOff.id);
+                        if (toRecord) {
+                            if (cancelTimeOff) {
                                 await toRecord.destroy();
                                 timeOffCancelled = true;
                                 timeOffNote = ` Scheduled time-off (${pending.todayTimeOff.timeRange}) was cancelled and monthly quota preserved.`;
                                 await logActivity({
-                                    admin_id: req.userId || pending.adminId,
+                                    admin_id: req.userId || pending.adminId || user.staffid,
                                     action: 'CANCEL_TIMEOFF_ON_CHECKIN',
                                     entity: 'TimeOffRequest',
                                     entity_id: pending.todayTimeOff.id,
@@ -1563,12 +1588,31 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                                     ip_address: getClientIp(req),
                                     user_agent: getUserAgent(req)
                                 });
+                            } else if (stopTimeOff || pending.todayTimeOff.isInProgress) {
+                                const oldEndTime = toRecord.end_time;
+                                const newEndTime = formatToHHMMSS(currentTimeStr);
+                                toRecord.end_time = newEndTime;
+                                await toRecord.save();
+                                timeOffStopped = true;
+                                const updatedRange = `${formatTime12h(toRecord.start_time)} – ${formatTime12h(newEndTime)}`;
+                                timeOffNote = ` Time-off stopped and end time updated to ${formatTime12h(newEndTime)} (${updatedRange}).`;
+                                await logActivity({
+                                    admin_id: req.userId || pending.adminId || user.staffid,
+                                    action: 'STOP_TIMEOFF_ON_CHECKIN',
+                                    entity: 'TimeOffRequest',
+                                    entity_id: toRecord.id,
+                                    affected_user_id: user.staffid,
+                                    description: `Time-off end time updated from ${oldEndTime} to ${newEndTime} upon QR badge check-in`,
+                                    new_values: { end_time: newEndTime },
+                                    ip_address: getClientIp(req),
+                                    user_agent: getUserAgent(req)
+                                });
+                            } else {
+                                timeOffNote = ` Scheduled time-off (${pending.todayTimeOff.timeRange}) remains active.`;
                             }
-                        } catch (toErr) {
-                            console.error("Error cancelling time-off on QR check-in:", toErr);
                         }
-                    } else {
-                        timeOffNote = ` Scheduled time-off (${pending.todayTimeOff.timeRange}) remains active.`;
+                    } catch (toErr) {
+                        console.error("Error handling time-off on QR check-in:", toErr);
                     }
                 }
 
@@ -1581,6 +1625,7 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                     time: displayTime,
                     avatarUrl: pending.avatarUrl,
                     timeOffCancelled,
+                    timeOffStopped,
                     message: `Welcome, ${user.firstname}! Check-in recorded at ${displayTime}.${timeOffNote}`
                 });
             } else {
@@ -1747,7 +1792,8 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
             const conflictCheck = await checkAttendanceCheckInConflict(user.staffid, todayDateOnly, currentTimeStr, {
                 ip: getClientIp(req),
-                userAgent: getUserAgent(req)
+                userAgent: getUserAgent(req),
+                previewOnly: true
             });
 
             if (conflictCheck.conflict) {
@@ -1788,26 +1834,10 @@ exports.scanQrBadgeAttendance = async (req, res) => {
         let todayTimeOff = null;
         if (actionType === 'CHECK_IN') {
             try {
-                const activeTimeOff = await TimeOffRequest.findOne({
-                    where: {
-                        staff_id: user.staffid,
-                        date: todayDateOnly,
-                        status: { [Op.in]: ['Pending', 'Approved'] }
-                    },
-                    order: [['start_time', 'ASC']]
-                });
-                if (activeTimeOff) {
-                    todayTimeOff = {
-                        id: activeTimeOff.id,
-                        date: activeTimeOff.date,
-                        start_time: activeTimeOff.start_time,
-                        end_time: activeTimeOff.end_time,
-                        formattedStartTime: formatTime12h(activeTimeOff.start_time),
-                        formattedEndTime: formatTime12h(activeTimeOff.end_time),
-                        timeRange: `${formatTime12h(activeTimeOff.start_time)} – ${formatTime12h(activeTimeOff.end_time)}`,
-                        status: activeTimeOff.status,
-                        reason: activeTimeOff.reason
-                    };
+                const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
+                const foundTo = await findRelevantTodayTimeOff(user.staffid, todayDateOnly, currentTimeStr);
+                if (foundTo && !foundTo.payload.isEnded) {
+                    todayTimeOff = foundTo.payload;
                 }
             } catch (toErr) {
                 console.error("Error querying time-off for QR scan:", toErr);
@@ -1845,7 +1875,9 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             todayTimeOff,
             hasTimeOff: Boolean(todayTimeOff),
             message: todayTimeOff
-                ? `Scheduled time-off (${todayTimeOff.timeRange}) is active today. Confirm check-in?`
+                ? (todayTimeOff.isInProgress
+                    ? `Time-off (${todayTimeOff.timeRange}) is currently in progress. Cancel time-off or stop time-off and check in?`
+                    : `Scheduled time-off (${todayTimeOff.timeRange}) is active today. Confirm check-in?`)
                 : `Do you want to ${actionType === 'CHECK_IN' ? 'Check In' : 'Check Out'} as ${user.firstname} ${user.lastname}?`
         });
 
@@ -2126,7 +2158,8 @@ exports.wfhPunch = async (req, res) => {
             const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
             const conflictCheck = await checkAttendanceCheckInConflict(user.staffid, todayDateOnly, currentTimeStr, {
                 ip: getClientIp(req),
-                userAgent: getUserAgent(req)
+                userAgent: getUserAgent(req),
+                skipTimeOffTruncation: true
             });
 
             if (conflictCheck.conflict) {
@@ -2195,34 +2228,22 @@ exports.wfhPunch = async (req, res) => {
                 user_agent: userAgent
             });
 
-            // Handle time-off cancellation if employee chose to cancel it upon check-in
+            // Handle time-off cancellation or stopping if employee checked in during/before time-off
             let timeOffCancelled = false;
+            let timeOffStopped = false;
             let timeOffDetails = null;
+            const cancelTimeOff = req.body.cancelTimeOff === true || req.body.cancelTimeOff === 'true';
+            const stopTimeOff = req.body.stopTimeOff === true || req.body.stopTimeOff === 'true';
+            const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
 
             try {
-                const existingTimeOff = await TimeOffRequest.findOne({
-                    where: {
-                        staff_id: user.staffid,
-                        date: todayDateOnly,
-                        status: { [Op.in]: ['Pending', 'Approved'] }
-                    },
-                    order: [['start_time', 'ASC']]
-                });
+                const foundTo = await findRelevantTodayTimeOff(user.staffid, todayDateOnly, currentTimeStr);
+                if (foundTo && !foundTo.payload.isEnded) {
+                    const existingTimeOff = foundTo.record;
+                    const originalPayload = foundTo.payload;
+                    timeOffDetails = { ...originalPayload };
 
-                if (existingTimeOff) {
-                    timeOffDetails = {
-                        id: existingTimeOff.id,
-                        date: existingTimeOff.date,
-                        start_time: existingTimeOff.start_time,
-                        end_time: existingTimeOff.end_time,
-                        formattedStartTime: formatTime12h(existingTimeOff.start_time),
-                        formattedEndTime: formatTime12h(existingTimeOff.end_time),
-                        timeRange: `${formatTime12h(existingTimeOff.start_time)} – ${formatTime12h(existingTimeOff.end_time)}`,
-                        status: existingTimeOff.status,
-                        reason: existingTimeOff.reason
-                    };
-
-                    if (req.body.cancelTimeOff === true || req.body.cancelTimeOff === 'true') {
+                    if (cancelTimeOff) {
                         await existingTimeOff.destroy();
                         timeOffCancelled = true;
 
@@ -2232,7 +2253,27 @@ exports.wfhPunch = async (req, res) => {
                             entity: 'TimeOffRequest',
                             entity_id: existingTimeOff.id,
                             affected_user_id: user.staffid,
-                            description: `Time-Off (${timeOffDetails.timeRange}) on ${todayDateOnly} cancelled by employee upon early check-in`,
+                            description: `Time-Off (${originalPayload.timeRange}) on ${todayDateOnly} cancelled by employee upon early check-in`,
+                            ip_address: clientIp,
+                            user_agent: userAgent
+                        });
+                    } else if (stopTimeOff || originalPayload.isInProgress) {
+                        const oldEndTime = existingTimeOff.end_time;
+                        const newEndTime = formatToHHMMSS(currentTimeStr);
+                        existingTimeOff.end_time = newEndTime;
+                        await existingTimeOff.save();
+                        timeOffStopped = true;
+
+                        timeOffDetails = buildTodayTimeOffPayload(existingTimeOff, currentTimeStr);
+
+                        await logActivity({
+                            admin_id: user.staffid,
+                            action: 'STOP_TIMEOFF_ON_CHECKIN',
+                            entity: 'TimeOffRequest',
+                            entity_id: existingTimeOff.id,
+                            affected_user_id: user.staffid,
+                            description: `Time-off end time updated from ${oldEndTime} to ${newEndTime} upon WFH check-in`,
+                            new_values: { end_time: newEndTime },
                             ip_address: clientIp,
                             user_agent: userAgent
                         });
@@ -2245,6 +2286,8 @@ exports.wfhPunch = async (req, res) => {
             let punchMessage = `WFH Check-In recorded successfully at ${displayTime}.`;
             if (timeOffCancelled && timeOffDetails) {
                 punchMessage = `Check-In recorded at ${displayTime}. Scheduled time-off (${timeOffDetails.timeRange}) was cancelled and monthly quota preserved.`;
+            } else if (timeOffStopped && timeOffDetails) {
+                punchMessage = `Check-In recorded at ${displayTime}. Time-off stopped and end time updated to ${timeOffDetails.formattedEndTime} (${timeOffDetails.timeRange}).`;
             } else if (timeOffDetails) {
                 punchMessage = `Check-In recorded at ${displayTime}. Note: Scheduled time-off (${timeOffDetails.timeRange}) remains active.`;
             }
@@ -2259,6 +2302,7 @@ exports.wfhPunch = async (req, res) => {
                 checkInTime: displayTime,
                 checkInIso: newLog.check_in_time,
                 timeOffCancelled,
+                timeOffStopped,
                 activeTimeOff: timeOffCancelled ? null : timeOffDetails,
                 log: newLog
             });

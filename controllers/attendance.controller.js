@@ -47,7 +47,8 @@ exports.checkIn = async (req, res) => {
         const currentTimeStr = nowString.split(' ')[1] || '00:00:00';
         const conflictCheck = await checkAttendanceCheckInConflict(req.userId, todayDateOnly, currentTimeStr, {
             ip: getClientIp(req),
-            userAgent: getUserAgent(req)
+            userAgent: getUserAgent(req),
+            cancelTimeOff: req.body.cancelTimeOff === true || req.body.cancelTimeOff === 'true'
         });
 
         if (conflictCheck.conflict) {

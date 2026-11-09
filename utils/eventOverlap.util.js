@@ -404,6 +404,29 @@ async function checkAttendanceCheckInConflict(staffId, todayDateOnly, currentTim
         }
 
         if (inProgressTimeOff) {
+            if (reqInfo.previewOnly || reqInfo.skipTimeOffTruncation) {
+                return { conflict: false, inProgressTimeOff };
+            }
+
+            if (reqInfo.cancelTimeOff) {
+                await inProgressTimeOff.destroy();
+                try {
+                    await logActivity({
+                        admin_id: staffId,
+                        action: 'CANCEL_TIMEOFF_ON_CHECKIN',
+                        entity: 'TimeOffRequest',
+                        entity_id: inProgressTimeOff.id,
+                        affected_user_id: staffId,
+                        description: `Time-off (${inProgressTimeOff.start_time} – ${inProgressTimeOff.end_time}) on ${todayDateOnly} cancelled due to attendance check-in`,
+                        ip_address: reqInfo.ip,
+                        user_agent: reqInfo.userAgent
+                    });
+                } catch (logErr) {
+                    console.error("Error logging time-off cancellation:", logErr);
+                }
+                return { conflict: false, cancelledTimeOff: inProgressTimeOff };
+            }
+
             // Truncate time-off end_time to attendance check-in time
             const oldEndTime = inProgressTimeOff.end_time;
             const newEndTime = formatToHHMMSS(currentTimeStr);
