@@ -362,20 +362,6 @@ exports.updateTimeOffDetails = async (req, res) => {
 
         if (date || start_time || end_time) {
             const checkDate = String(newDate).split('T')[0].split(' ')[0];
-            const activeCheckIn = await AttendanceLog.findOne({
-                where: {
-                    staff_id: req.userId,
-                    date: checkDate,
-                    check_in_time: { [Op.ne]: null },
-                    check_out_time: null
-                }
-            });
-
-            if (activeCheckIn) {
-                return res.status(400).send({
-                    message: "You are currently checked in. Time-off can only be applied after checking out for the day."
-                });
-            }
 
             const validation = await validateTimeOffHours(req.userId, newDate, newStart, newEnd, id);
             if (!validation.valid) {
