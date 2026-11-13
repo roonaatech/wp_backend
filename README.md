@@ -1,4 +1,4 @@
-# WorkPulse Backend
+# WorkPulse Backend API
 
 A central API service for the WorkPulse attendance management system, built with Node.js, Express, and Sequelize.
 
