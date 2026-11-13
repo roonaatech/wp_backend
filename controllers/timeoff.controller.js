@@ -210,22 +210,7 @@ exports.applyTimeOff = async (req, res) => {
             return res.status(400).send({ message: validation.message });
         }
 
-        // If user is currently checked in, they cannot apply for time-off until check-out
         const dateOnly = String(date).split('T')[0].split(' ')[0];
-        const activeCheckIn = await AttendanceLog.findOne({
-            where: {
-                staff_id: req.userId,
-                date: dateOnly,
-                check_in_time: { [Op.ne]: null },
-                check_out_time: null
-            }
-        });
-
-        if (activeCheckIn) {
-            return res.status(400).send({
-                message: "You are currently checked in. Time-off can only be applied after checking out for the day."
-            });
-        }
 
         // Check for conflicting events (Leave applied, Live On-Duty, Existing On-Duty, or Existing Time-Off)
         const conflictCheck = await checkTimeOffConflict(req.userId, dateOnly);

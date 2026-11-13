@@ -245,7 +245,7 @@ describe('Event Overlap and Conflict Rules', () => {
             expect(reloadedTimeOff.end_time).toBe('15:15:00');
         });
 
-        test('Starting on-duty is blocked if time-off on that day is NOT in progress', async () => {
+        test('Starting on-duty is allowed after time-off on that day has already ended', async () => {
             await db.time_off_requests.create({
                 staff_id: testStaffId,
                 date: testDate,
@@ -255,8 +255,23 @@ describe('Event Overlap and Conflict Rules', () => {
                 status: 'Pending'
             });
 
-            // Attempting to start on-duty at 14:00 (outside 10:00-11:00)
+            // Starting on-duty at 14:00 (after 10:00-11:00 time-off has ended)
             const result = await checkOnDutyStartConflict(testStaffId, testDate, '14:00:00');
+            expect(result.conflict).toBe(false);
+        });
+
+        test('Starting on-duty is blocked if upcoming time-off on that day has not started yet', async () => {
+            await db.time_off_requests.create({
+                staff_id: testStaffId,
+                date: testDate,
+                start_time: '14:00:00',
+                end_time: '16:00:00',
+                reason: 'Afternoon errand',
+                status: 'Pending'
+            });
+
+            // Attempting to start on-duty at 10:00 (before 14:00-16:00 time-off)
+            const result = await checkOnDutyStartConflict(testStaffId, testDate, '10:00:00');
             expect(result.conflict).toBe(true);
             expect(result.type).toBe('TIME_OFF_EXISTS');
             expect(result.message).toContain('time-off has already been applied for today');

@@ -290,13 +290,18 @@ async function checkOnDutyStartConflict(staffId, todayStr, currentTimeStr, reqIn
     if (timeOffs.length > 0) {
         const currentMins = timeStringToMinutes(currentTimeStr);
         let inProgressTimeOff = null;
+        let upcomingTimeOff = null;
 
         for (const to of timeOffs) {
+            if (isTimeOffStopped(to.id)) continue;
             const startM = timeStringToMinutes(to.start_time);
             const endM = timeStringToMinutes(to.end_time);
             if (startM !== null && endM !== null && currentMins >= startM && currentMins <= endM) {
                 inProgressTimeOff = to;
                 break;
+            }
+            if (startM !== null && currentMins !== null && currentMins < startM) {
+                upcomingTimeOff = to;
             }
         }
 
@@ -306,6 +311,7 @@ async function checkOnDutyStartConflict(staffId, todayStr, currentTimeStr, reqIn
             const newEndTime = formatToHHMMSS(currentTimeStr);
             inProgressTimeOff.end_time = newEndTime;
             await inProgressTimeOff.save();
+            markTimeOffStopped(inProgressTimeOff.id);
 
             try {
                 await logActivity({
@@ -324,17 +330,30 @@ async function checkOnDutyStartConflict(staffId, todayStr, currentTimeStr, reqIn
             }
 
             return { conflict: false, truncatedTimeOff: inProgressTimeOff };
-        } else {
-            // Time-off exists on this day but is not in progress
+        } else if (upcomingTimeOff) {
+            // Upcoming time-off exists on this day and has not started yet
             return {
                 conflict: true,
                 type: 'TIME_OFF_EXISTS',
                 message: "Cannot start on-duty: time-off has already been applied for today."
             };
         }
+        // If time-off has already ended (currentMins > endM or stopped), allow starting on-duty after time-off
     }
 
     return { conflict: false };
+}
+
+// Track time-off IDs explicitly stopped during the day so same-minute re-queries recognize them as ended
+const stoppedTimeOffIds = new Set();
+function markTimeOffStopped(id) {
+    if (id !== undefined && id !== null) {
+        stoppedTimeOffIds.add(Number(id));
+    }
+}
+function isTimeOffStopped(id) {
+    if (id === undefined || id === null) return false;
+    return stoppedTimeOffIds.has(Number(id));
 }
 
 /**
@@ -395,6 +414,7 @@ async function checkAttendanceCheckInConflict(staffId, todayDateOnly, currentTim
         let inProgressTimeOff = null;
 
         for (const to of timeOffs) {
+            if (isTimeOffStopped(to.id)) continue;
             const startM = timeStringToMinutes(to.start_time);
             const endM = timeStringToMinutes(to.end_time);
             if (startM !== null && endM !== null && currentMins >= startM && currentMins <= endM) {
@@ -432,6 +452,7 @@ async function checkAttendanceCheckInConflict(staffId, todayDateOnly, currentTim
             const newEndTime = formatToHHMMSS(currentTimeStr);
             inProgressTimeOff.end_time = newEndTime;
             await inProgressTimeOff.save();
+            markTimeOffStopped(inProgressTimeOff.id);
 
             try {
                 await logActivity({
@@ -462,5 +483,7 @@ module.exports = {
     checkOnDutyStartConflict,
     checkAttendanceCheckInConflict,
     timeStringToMinutes,
-    formatToHHMMSS
+    formatToHHMMSS,
+    markTimeOffStopped,
+    isTimeOffStopped
 };

@@ -311,8 +311,9 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
             excessTimeOffMins = day.timeOffRequestedMins - creditedTimeOffMins;
         }
 
-        // --- Calculate On-Duty & Attendance Overlap ---
+        // --- Calculate On-Duty & Time-Off Overlap with Attendance ---
         let onDutyAttOverlapMins = 0;
+        let timeOffAttOverlapMins = 0;
         if (day.attSessions.length > 0 && day.onDutyRecords.length > 0) {
             for (const att of day.attSessions) {
                 const attRange = getIntervalTimeRange(att, 'check_in_time', 'check_out_time');
@@ -324,15 +325,27 @@ function calculateMonthlyCompliance(employeeRecords = {}, config = {}) {
                 }
             }
         }
-        // Actual attendance = total attendance hours minus on-duty overlap
-        const actualAttMins = Math.max(0, day.attMins - onDutyAttOverlapMins);
+        if (day.attSessions.length > 0 && day.timeOffRecords.length > 0) {
+            for (const att of day.attSessions) {
+                const attRange = getIntervalTimeRange(att, 'check_in_time', 'check_out_time');
+                if (!attRange) continue;
+                for (const to of day.timeOffRecords) {
+                    const toRange = getIntervalTimeRange(to, 'start_time', 'end_time');
+                    if (!toRange) continue;
+                    timeOffAttOverlapMins += calculateRangeOverlapMinutes(attRange, toRange);
+                }
+            }
+        }
+        // Actual attendance = total attendance hours minus on-duty & time-off overlap
+        const actualAttMins = Math.max(0, day.attMins - onDutyAttOverlapMins - timeOffAttOverlapMins);
+        const unoverlappedExcessTimeOffMins = Math.max(0, excessTimeOffMins - timeOffAttOverlapMins);
 
         // --- Calculate Effective Working Minutes ---
         // Effective Work Time:
         // - actual attendance + on-duty hours
         // - If time-off limit is not reached: credited time-off added
-        // - If time-off limit is reached: excess time-off reduced from attendance
-        const effectiveWorkMins = Math.max(0, actualAttMins + day.onDutyMins + creditedTimeOffMins - excessTimeOffMins);
+        // - If time-off limit is reached: unoverlapped excess time-off reduced from attendance
+        const effectiveWorkMins = Math.max(0, actualAttMins + day.onDutyMins + creditedTimeOffMins - unoverlappedExcessTimeOffMins);
 
         // --- Decide Day Compliance Outcome ---
         let isCompliant = false;

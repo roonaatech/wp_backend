@@ -21,7 +21,7 @@ const deviceSecurity = require("../services/device_security.service");
 const { normalizeWorkMode } = require("../utils/workmode.util");
 const { isDateHoliday } = require("../utils/holiday.helper");
 const { isAttendanceModuleEnabled } = require("../middleware/moduleGuard");
-const { checkAttendanceCheckInConflict, timeStringToMinutes, formatToHHMMSS } = require("../utils/eventOverlap.util");
+const { checkAttendanceCheckInConflict, timeStringToMinutes, formatToHHMMSS, markTimeOffStopped, isTimeOffStopped } = require("../utils/eventOverlap.util");
 
 // Cache of pending QR badge attendance confirmations (expires in 60 seconds)
 const pendingQrConfirmations = new Map();
@@ -72,15 +72,19 @@ const buildTodayTimeOffPayload = (activeTimeOff, currentTimeStr = null) => {
     const currentMins = currentTimeStr ? timeStringToMinutes(currentTimeStr) : null;
     const startM = timeStringToMinutes(activeTimeOff.start_time);
     const endM = timeStringToMinutes(activeTimeOff.end_time);
+    const stopped = isTimeOffStopped(activeTimeOff.id);
     const isInProgress = Boolean(
+        !stopped &&
         currentMins !== null && startM !== null && endM !== null &&
         currentMins >= startM && currentMins <= endM
     );
     const isUpcoming = Boolean(
+        !stopped &&
         currentMins !== null && startM !== null && currentMins < startM
     );
     const isEnded = Boolean(
-        currentMins !== null && endM !== null && currentMins > endM
+        stopped ||
+        (currentMins !== null && endM !== null && currentMins > endM)
     );
     return {
         id: activeTimeOff.id,
@@ -272,8 +276,8 @@ exports.getAttendanceStatus = async (req, res) => {
 
         if (openLog) {
             const checkInFormatted = formatDateInTimezone(openLog.check_in_time, tz);
-            return res.status(200).send({ 
-                status: 'CHECKED_IN', 
+            return res.status(200).send({
+                status: 'CHECKED_IN',
                 employeeName: `${user.firstname} ${user.lastname}`,
                 checkInTime: checkInFormatted,
                 checkInRaw: openLog.check_in_time
@@ -596,13 +600,22 @@ exports.getAttendanceLogsReport = async (req, res) => {
             whereClause.staff_id = { [Op.in]: allowedStaffIds };
         }
 
-        // Specific employee filter
+        // Specific employee filter (supports single ID or comma-separated IDs)
         if (userId) {
-            const targetUserId = parseInt(userId);
-            if (!canViewAllReports && !allowedStaffIds.includes(targetUserId)) {
-                return res.status(403).send({ message: "Access denied to target employee details." });
+            const requestedIds = String(userId)
+                .split(',')
+                .map(id => parseInt(id.trim(), 10))
+                .filter(id => !isNaN(id));
+
+            if (requestedIds.length > 0) {
+                if (!canViewAllReports) {
+                    const unauthorized = requestedIds.some(id => !allowedStaffIds.includes(id));
+                    if (unauthorized) {
+                        return res.status(403).send({ message: "Access denied to target employee details." });
+                    }
+                }
+                whereClause.staff_id = requestedIds.length === 1 ? requestedIds[0] : { [Op.in]: requestedIds };
             }
-            whereClause.staff_id = targetUserId;
         }
 
         // Date range filter
@@ -666,13 +679,18 @@ exports.getAttendanceLogsReport = async (req, res) => {
 
             timeOffs.forEach(to => {
                 const k = `${to.staff_id}_${to.date}`;
-                if (!dayActivityMap[k]) dayActivityMap[k] = { timeoffMins: 0, ondutyMins: 0 };
+                if (!dayActivityMap[k]) dayActivityMap[k] = { timeoffMins: 0, ondutyMins: 0, ranges: [] };
                 let m = 0;
                 if (to.start_time && to.end_time) {
                     const [sh, sm] = to.start_time.split(':').map(Number);
                     const [eh, em] = to.end_time.split(':').map(Number);
-                    const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
-                    if (diff > 0) m = diff;
+                    const sM = sh * 60 + (sm || 0);
+                    const eM = eh * 60 + (em || 0);
+                    const diff = eM - sM;
+                    if (diff > 0) {
+                        m = diff;
+                        dayActivityMap[k].ranges.push([sM, eM]);
+                    }
                 }
                 dayActivityMap[k].timeoffMins += m;
             });
@@ -691,22 +709,29 @@ exports.getAttendanceLogsReport = async (req, res) => {
                 const dStr = getDateInTimezone(od.start_time, tz);
                 if (!distinctDates.includes(dStr)) return;
                 const k = `${od.staff_id}_${dStr}`;
-                if (!dayActivityMap[k]) dayActivityMap[k] = { timeoffMins: 0, ondutyMins: 0 };
+                if (!dayActivityMap[k]) dayActivityMap[k] = { timeoffMins: 0, ondutyMins: 0, ranges: [] };
                 const diffMs = new Date(endT).getTime() - new Date(od.start_time).getTime();
                 if (diffMs > 0) {
                     dayActivityMap[k].ondutyMins += Math.floor(diffMs / 60000);
+                    const sTimeStr = (formatDateInTimezone(od.start_time, tz) || '').split(' ')[1];
+                    const eTimeStr = (formatDateInTimezone(endT, tz) || '').split(' ')[1];
+                    const sM = timeStringToMinutes(sTimeStr);
+                    const eM = timeStringToMinutes(eTimeStr);
+                    if (sM !== null && eM !== null && eM > sM) {
+                        dayActivityMap[k].ranges.push([sM, eM]);
+                    }
                 }
             });
         }
 
-        // Format dates, snapshots, and calculate compliance based on captured hours (attendance + on-duty + time-off)
+        // Format dates, snapshots, and calculate compliance based on captured hours (attendance + on-duty + time-off minus overlap)
         const reportsList = rows.map(item => {
             const plain = item.get({ plain: true });
-            
+
             // Format times to target timezone
             plain.check_in_time = formatDateInTimezone(plain.check_in_time, tz);
             plain.check_out_time = formatDateInTimezone(plain.check_out_time, tz);
-            
+
             // Format snapshot path for client consumption
             if (plain.snapshot_path) {
                 // Serve via direct URL
@@ -714,13 +739,30 @@ exports.getAttendanceLogsReport = async (req, res) => {
             }
 
             const k = `${plain.staff_id}_${plain.date}`;
-            const extra = dayActivityMap[k] || { timeoffMins: 0, ondutyMins: 0 };
+            const extra = dayActivityMap[k] || { timeoffMins: 0, ondutyMins: 0, ranges: [] };
 
             // Calculate work minutes for this session
             let sessionMins = 0;
+            let overlapMins = 0;
             if (item.check_in_time && item.check_out_time) {
                 const diffMs = new Date(item.check_out_time).getTime() - new Date(item.check_in_time).getTime();
                 if (diffMs > 0) sessionMins = Math.floor(diffMs / 60000);
+
+                if (extra.ranges && extra.ranges.length > 0) {
+                    const inTimeStr = (plain.check_in_time || '').split(' ')[1];
+                    const outTimeStr = (plain.check_out_time || '').split(' ')[1];
+                    const inM = timeStringToMinutes(inTimeStr);
+                    const outM = timeStringToMinutes(outTimeStr);
+                    if (inM !== null && outM !== null && outM > inM) {
+                        for (const [rStart, rEnd] of extra.ranges) {
+                            const oStart = Math.max(inM, rStart);
+                            const oEnd = Math.min(outM, rEnd);
+                            if (oEnd > oStart) {
+                                overlapMins += (oEnd - oStart);
+                            }
+                        }
+                    }
+                }
             }
 
             const empType = plain.user?.employment_type || 'Full-time';
@@ -728,12 +770,14 @@ exports.getAttendanceLogsReport = async (req, res) => {
             const empTargetHours = isPartTime ? ptHours : ftHours;
             const empTargetMins = Math.round(empTargetHours * 60);
 
-            // Captured effective work minutes for the day (attendance + onduty + timeoff)
-            const effectiveWorkMins = sessionMins + extra.ondutyMins + extra.timeoffMins;
+            // Captured effective work minutes for the day (actual attendance + onduty + timeoff)
+            const actualSessionMins = Math.max(0, sessionMins - overlapMins);
+            const effectiveWorkMins = actualSessionMins + extra.ondutyMins + extra.timeoffMins;
 
             plain.employment_type = empType;
             plain.target_compliance_hours = empTargetHours;
             plain.session_work_minutes = sessionMins;
+            plain.day_overlap_minutes = overlapMins;
             plain.day_onduty_minutes = extra.ondutyMins;
             plain.day_timeoff_minutes = extra.timeoffMins;
             plain.day_effective_work_minutes = effectiveWorkMins;
@@ -1244,7 +1288,7 @@ exports.getMyBadgeData = async (req, res) => {
                 if (empProfile.image_path) profileImage = empProfile.image_path.replace(/\\/g, '/');
                 if (empProfile.department) department = empProfile.department;
             }
-        } catch (_) {}
+        } catch (_) { }
 
         // Get today's attendance status
         const tz = await getAppTimezone();
@@ -1254,7 +1298,7 @@ exports.getMyBadgeData = async (req, res) => {
             try {
                 Intl.DateTimeFormat(undefined, { timeZone: clientTz });
                 displayTz = clientTz;
-            } catch (_) {}
+            } catch (_) { }
         }
         const nowString = timezoneUtil.getNowStringInTimezone(tz);
         const todayDateOnly = nowString.split(' ')[0];
@@ -1593,6 +1637,7 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                                 const newEndTime = formatToHHMMSS(currentTimeStr);
                                 toRecord.end_time = newEndTime;
                                 await toRecord.save();
+                                markTimeOffStopped(toRecord.id);
                                 timeOffStopped = true;
                                 const updatedRange = `${formatTime12h(toRecord.start_time)} – ${formatTime12h(newEndTime)}`;
                                 timeOffNote = ` Time-off stopped and end time updated to ${formatTime12h(newEndTime)} (${updatedRange}).`;
@@ -1629,7 +1674,7 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                     message: `Welcome, ${user.firstname}! Check-in recorded at ${displayTime}.${timeOffNote}`
                 });
             } else {
-                // Perform CHECK_OUT
+                // Perform CHECK_OUT or Resume Work from mid-day Time-Off
                 const existingOpenLog = await AttendanceLog.findOne({
                     where: {
                         staff_id: user.staffid,
@@ -1643,6 +1688,85 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                     return res.status(400).send({
                         success: false,
                         message: "No active check-in found to check out."
+                    });
+                }
+
+                const cancelTimeOff = req.body.cancelTimeOff === true || req.body.cancelTimeOff === 'true';
+                const stopTimeOff = req.body.stopTimeOff === true || req.body.stopTimeOff === 'true';
+                const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
+
+                let durationText = '';
+                if (existingOpenLog.check_in_time) {
+                    const diffMs = now.getTime() - new Date(existingOpenLog.check_in_time).getTime();
+                    const totalMinutes = Math.floor(diffMs / 60000);
+                    const hrs = Math.floor(totalMinutes / 60);
+                    const mins = totalMinutes % 60;
+                    durationText = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} mins`;
+                }
+
+                // If user chose to Stop Time-Off or Cancel Time-Off when returning from mid-day time-off:
+                // Keep existingOpenLog open (do NOT check out) and update/cancel the time-off request!
+                if ((stopTimeOff || cancelTimeOff) && pending.todayTimeOff) {
+                    let timeOffCancelled = false;
+                    let timeOffStopped = false;
+                    let resumeMessage = `Welcome back, ${user.firstname}! You remain checked in.`;
+
+                    try {
+                        const toRecord = await TimeOffRequest.findByPk(pending.todayTimeOff.id);
+                        if (toRecord) {
+                            if (cancelTimeOff) {
+                                await toRecord.destroy();
+                                timeOffCancelled = true;
+                                resumeMessage = `Welcome back, ${user.firstname}! Scheduled time-off (${pending.todayTimeOff.timeRange}) was cancelled and you remain checked in.`;
+                                await logActivity({
+                                    admin_id: req.userId || pending.adminId || user.staffid,
+                                    action: 'CANCEL_TIMEOFF_ON_RESUME',
+                                    entity: 'TimeOffRequest',
+                                    entity_id: pending.todayTimeOff.id,
+                                    affected_user_id: user.staffid,
+                                    description: `Time-Off (${pending.todayTimeOff.timeRange}) on ${todayDateOnly} cancelled by employee upon returning to work via QR badge scan`,
+                                    ip_address: getClientIp(req),
+                                    user_agent: getUserAgent(req)
+                                });
+                            } else if (stopTimeOff) {
+                                const oldEndTime = toRecord.end_time;
+                                const newEndTime = formatToHHMMSS(currentTimeStr);
+                                toRecord.end_time = newEndTime;
+                                await toRecord.save();
+                                markTimeOffStopped(toRecord.id);
+                                timeOffStopped = true;
+                                const updatedRange = `${formatTime12h(toRecord.start_time)} – ${formatTime12h(newEndTime)}`;
+                                resumeMessage = `Welcome back, ${user.firstname}! Time-off stopped at ${formatTime12h(newEndTime)} (${updatedRange}) and you remain checked in.`;
+                                await logActivity({
+                                    admin_id: req.userId || pending.adminId || user.staffid,
+                                    action: 'STOP_TIMEOFF_ON_RESUME',
+                                    entity: 'TimeOffRequest',
+                                    entity_id: toRecord.id,
+                                    affected_user_id: user.staffid,
+                                    description: `Time-off end time updated from ${oldEndTime} to ${newEndTime} upon returning to work via QR badge scan`,
+                                    new_values: { end_time: newEndTime },
+                                    ip_address: getClientIp(req),
+                                    user_agent: getUserAgent(req)
+                                });
+                            }
+                        }
+                    } catch (toErr) {
+                        console.error("Error stopping/cancelling time-off on QR resume scan:", toErr);
+                    }
+
+                    return res.status(200).send({
+                        success: true,
+                        type: 'STOP_TIMEOFF',
+                        todayStatus: 'CHECKED_IN',
+                        employeeName: `${user.firstname} ${user.lastname}`,
+                        email: user.email,
+                        timestamp: formattedNowTime,
+                        time: displayTime,
+                        avatarUrl: pending.avatarUrl,
+                        duration: durationText,
+                        timeOffCancelled,
+                        timeOffStopped,
+                        message: resumeMessage
                     });
                 }
 
@@ -1668,15 +1792,6 @@ exports.scanQrBadgeAttendance = async (req, res) => {
                     ip_address: getClientIp(req),
                     user_agent: getUserAgent(req)
                 });
-
-                let durationText = '';
-                if (existingOpenLog.check_in_time) {
-                    const diffMs = now.getTime() - new Date(existingOpenLog.check_in_time).getTime();
-                    const totalMinutes = Math.floor(diffMs / 60000);
-                    const hrs = Math.floor(totalMinutes / 60);
-                    const mins = totalMinutes % 60;
-                    durationText = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} mins`;
-                }
 
                 return res.status(200).send({
                     success: true,
@@ -1764,7 +1879,7 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             if (empProfile && empProfile.image_path) {
                 avatarUrl = empProfile.image_path.replace(/\\/g, '/');
             }
-        } catch (_) {}
+        } catch (_) { }
 
         // 3. Determine whether next action is CHECK_IN or CHECK_OUT
         const existingOpenLog = await AttendanceLog.findOne({
@@ -1830,18 +1945,20 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             }
         }
 
-        // Check for today's time-off request (Pending or Approved) on Check-In
+        // Check for today's time-off request (Pending or Approved) on Check-In or mid-day Check-Out/Resume
         let todayTimeOff = null;
-        if (actionType === 'CHECK_IN') {
-            try {
-                const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
-                const foundTo = await findRelevantTodayTimeOff(user.staffid, todayDateOnly, currentTimeStr);
-                if (foundTo && !foundTo.payload.isEnded) {
+        try {
+            const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
+            const foundTo = await findRelevantTodayTimeOff(user.staffid, todayDateOnly, currentTimeStr);
+            if (foundTo) {
+                if (actionType === 'CHECK_IN' && !foundTo.payload.isEnded) {
+                    todayTimeOff = foundTo.payload;
+                } else if (actionType === 'CHECK_OUT' && foundTo.payload.isInProgress) {
                     todayTimeOff = foundTo.payload;
                 }
-            } catch (toErr) {
-                console.error("Error querying time-off for QR scan:", toErr);
             }
+        } catch (toErr) {
+            console.error("Error querying time-off for QR scan:", toErr);
         }
 
         // Generate a secure, short-lived confirmation token (60 seconds)
@@ -1875,9 +1992,11 @@ exports.scanQrBadgeAttendance = async (req, res) => {
             todayTimeOff,
             hasTimeOff: Boolean(todayTimeOff),
             message: todayTimeOff
-                ? (todayTimeOff.isInProgress
-                    ? `Time-off (${todayTimeOff.timeRange}) is currently in progress. Cancel time-off or stop time-off and check in?`
-                    : `Scheduled time-off (${todayTimeOff.timeRange}) is active today. Confirm check-in?`)
+                ? (actionType === 'CHECK_OUT'
+                    ? `Time-off (${todayTimeOff.timeRange}) is currently in progress. Stop time-off to resume work, cancel time-off, or check out for the day?`
+                    : (todayTimeOff.isInProgress
+                        ? `Time-off (${todayTimeOff.timeRange}) is currently in progress. Cancel time-off or stop time-off and check in?`
+                        : `Scheduled time-off (${todayTimeOff.timeRange}) is active today. Confirm check-in?`))
                 : `Do you want to ${actionType === 'CHECK_IN' ? 'Check In' : 'Check Out'} as ${user.firstname} ${user.lastname}?`
         });
 
@@ -1989,7 +2108,7 @@ exports.getWfhAttendanceStatus = async (req, res) => {
                 if (empProfile.image_path) profileImage = empProfile.image_path.replace(/\\/g, '/');
                 if (empProfile.department) department = empProfile.department;
             }
-        } catch (_) {}
+        } catch (_) { }
 
         // Fetch system configured office hours
         const { getAttendanceConfig } = require('../utils/attendanceConfig');
@@ -2045,10 +2164,10 @@ exports.wfhPunch = async (req, res) => {
     const { action, latitude, longitude, notes } = req.body;
     const userId = req.userId;
 
-    if (!['CHECK_IN', 'CHECK_OUT'].includes(action)) {
+    if (!['CHECK_IN', 'CHECK_OUT', 'STOP_TIMEOFF'].includes(action)) {
         return res.status(400).send({
             success: false,
-            message: "Invalid action. Must be 'CHECK_IN' or 'CHECK_OUT'."
+            message: "Invalid action. Must be 'CHECK_IN', 'CHECK_OUT', or 'STOP_TIMEOFF'."
         });
     }
 
@@ -2070,7 +2189,7 @@ exports.wfhPunch = async (req, res) => {
             try {
                 Intl.DateTimeFormat(undefined, { timeZone: clientTz });
                 displayTz = clientTz;
-            } catch (_) {}
+            } catch (_) { }
         }
         const nowString = timezoneUtil.getNowStringInTimezone(tz);
         const todayDateOnly = nowString.split(' ')[0];
@@ -2262,6 +2381,7 @@ exports.wfhPunch = async (req, res) => {
                         const newEndTime = formatToHHMMSS(currentTimeStr);
                         existingTimeOff.end_time = newEndTime;
                         await existingTimeOff.save();
+                        markTimeOffStopped(existingTimeOff.id);
                         timeOffStopped = true;
 
                         timeOffDetails = buildTodayTimeOffPayload(existingTimeOff, currentTimeStr);
@@ -2303,12 +2423,12 @@ exports.wfhPunch = async (req, res) => {
                 checkInIso: newLog.check_in_time,
                 timeOffCancelled,
                 timeOffStopped,
-                activeTimeOff: timeOffCancelled ? null : timeOffDetails,
+                activeTimeOff: (timeOffCancelled || timeOffStopped) ? null : timeOffDetails,
                 log: newLog
             });
 
         } else {
-            // CHECK_OUT
+            // CHECK_OUT or STOP_TIMEOFF (Resume Work from mid-day time-off while checked in)
             let activeLog = await AttendanceLog.findOne({
                 where: {
                     staff_id: user.staffid,
@@ -2333,6 +2453,76 @@ exports.wfhPunch = async (req, res) => {
                 return res.status(400).send({
                     success: false,
                     message: "No active check-in found for today to check out."
+                });
+            }
+
+            const cancelTimeOff = req.body.cancelTimeOff === true || req.body.cancelTimeOff === 'true';
+            const stopTimeOff = req.body.stopTimeOff === true || req.body.stopTimeOff === 'true';
+
+            if (action === 'STOP_TIMEOFF' || cancelTimeOff || stopTimeOff) {
+                const currentTimeStr = (formatDateInTimezone(now, tz) || '').split(' ')[1] || '00:00:00';
+                const foundTo = await findRelevantTodayTimeOff(user.staffid, todayDateOnly, currentTimeStr);
+
+                if (!foundTo || foundTo.payload.isEnded) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "No active time-off found for today to stop or cancel."
+                    });
+                }
+
+                const existingTimeOff = foundTo.record;
+                const originalPayload = foundTo.payload;
+                let timeOffCancelled = false;
+                let timeOffStopped = false;
+                let resumeMessage = `Time-off stopped and work resumed at ${displayTime}.`;
+
+                if (cancelTimeOff) {
+                    await existingTimeOff.destroy();
+                    timeOffCancelled = true;
+                    resumeMessage = `Scheduled time-off (${originalPayload.timeRange}) was cancelled and you remain checked in.`;
+                    await logActivity({
+                        admin_id: user.staffid,
+                        action: 'CANCEL_TIMEOFF_ON_RESUME',
+                        entity: 'TimeOffRequest',
+                        entity_id: existingTimeOff.id,
+                        affected_user_id: user.staffid,
+                        description: `Time-Off (${originalPayload.timeRange}) on ${todayDateOnly} cancelled by employee upon resuming WFH work`,
+                        ip_address: clientIp,
+                        user_agent: userAgent
+                    });
+                } else {
+                    const oldEndTime = existingTimeOff.end_time;
+                    const newEndTime = formatToHHMMSS(currentTimeStr);
+                    existingTimeOff.end_time = newEndTime;
+                    await existingTimeOff.save();
+                    markTimeOffStopped(existingTimeOff.id);
+                    timeOffStopped = true;
+                    const updatedRange = `${formatTime12h(existingTimeOff.start_time)} – ${formatTime12h(newEndTime)}`;
+                    resumeMessage = `Time-off stopped at ${formatTime12h(newEndTime)} (${updatedRange}). You remain checked in.`;
+                    await logActivity({
+                        admin_id: user.staffid,
+                        action: 'STOP_TIMEOFF_ON_RESUME',
+                        entity: 'TimeOffRequest',
+                        entity_id: existingTimeOff.id,
+                        affected_user_id: user.staffid,
+                        description: `Time-off end time updated from ${oldEndTime} to ${newEndTime} upon resuming WFH work`,
+                        new_values: { end_time: newEndTime },
+                        ip_address: clientIp,
+                        user_agent: userAgent
+                    });
+                }
+
+                return res.status(200).send({
+                    success: true,
+                    type: 'STOP_TIMEOFF',
+                    todayStatus: 'CHECKED_IN',
+                    message: resumeMessage,
+                    timestamp: formattedNowTime,
+                    time: displayTime,
+                    timeOffCancelled,
+                    timeOffStopped,
+                    activeTimeOff: null,
+                    log: activeLog
                 });
             }
 

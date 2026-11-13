@@ -116,9 +116,16 @@ exports.startOnDuty = async (req, res) => {
                 user_agent: getUserAgent(req)
             });
 
+            const stoppedTo = conflictCheck.truncatedTimeOff;
+            const timeOffMsg = stoppedTo
+                ? ` In-progress time-off was stopped at ${stoppedTo.end_time}.`
+                : '';
+
             res.status(200).send({
-                message: "On-duty started successfully",
-                data: onDuty
+                message: `On-duty started successfully.${timeOffMsg}`,
+                data: onDuty,
+                timeOffStopped: Boolean(stoppedTo),
+                truncatedTimeOff: stoppedTo || null
             });
         })
         .catch(err => {
